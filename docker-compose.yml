@@ -1,0 +1,50 @@
+services:
+  db:
+    image: postgres:15
+    container_name: rag_kb_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kb
+      POSTGRES_PASSWORD: kb
+      POSTGRES_DB: kb
+    ports:
+      - "5435:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  api:
+    build: .
+    container_name: rag_kb_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://kb:kb@db:5432/kb}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      # 清除代理，避免影响容器间通信
+      http_proxy: ""
+      https_proxy: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+    # 允许容器访问宿主机服务（Ollama）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8020"]
+    ports:
+      - "8020:8020"
+    depends_on:
+      - db
+      - qdrant
+
+  qdrant:
+    image: qdrant/qdrant:v1.9.0
+    container_name: rag_kb_qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+volumes:
+  pgdata:
+  qdrant_storage:
