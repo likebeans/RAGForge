@@ -10,8 +10,11 @@ Self-RAG Pipeline 是一个多租户知识库检索服务，提供 OpenAI 兼容
 - 租户管理（创建、禁用、配额）
 - 知识库管理（创建、删除）
 - 文档摄取（上传、切分、向量化）
-- 语义检索（向量/BM25/混合）
+- 语义检索（向量/BM25/混合/Rerank）
+- RAG 生成（多 LLM 提供商）
 - API Key 认证与限流（角色权限）
+- 可观测性（结构化日志、请求追踪）
+- 审计日志（全链路访问记录）
 
 **技术栈**：
 - Python 3.11+ / FastAPI / SQLAlchemy 2.0 (async)
@@ -68,9 +71,6 @@ app/
 │   └── api_key.py   # API Key 认证、限流
 ├── models/          # SQLAlchemy ORM 模型
 ├── schemas/         # Pydantic 请求/响应模型
-├── services/        # 业务逻辑层
-│   ├── ingestion.py # 文档摄取
-│   └── query.py     # 检索服务
 ├── pipeline/        # 可插拔算法模块
 │   ├── base.py      # 基础协议定义
 │   ├── registry.py  # 算法注册表
@@ -79,15 +79,26 @@ app/
 │   ├── query_transforms/  # 查询变换（HyDE/Router/RAGFusion）
 │   ├── enrichers/   # 文档增强（Summary/ChunkEnricher）
 │   └── postprocessors/    # 后处理（ContextWindow）
+├── middleware/      # 中间件
+│   └── request_trace.py # 请求追踪（X-Request-ID）
 ├── infra/           # 基础设施
 │   ├── llm.py           # LLM 客户端（多提供商支持）
 │   ├── embeddings.py    # 向量化（多提供商支持）
 │   ├── rerank.py        # 重排模块（多提供商支持）
+│   ├── logging.py       # 结构化日志（JSON/Console）
 │   ├── vector_store.py  # Qdrant 操作
 │   ├── bm25_store.py    # BM25 内存存储
 │   ├── llamaindex.py    # LlamaIndex 集成（Qdrant/Milvus/ES 构建器）
 │   └── db/              # 异步会话管理
-└── services/config_validation.py  # KB 配置校验
+├── services/
+│   ├── ingestion.py     # 文档摄取
+│   ├── query.py         # 检索服务（含 Rerank 后处理）
+│   ├── rag.py           # RAG 生成服务
+│   ├── audit.py         # 审计日志服务
+│   └── config_validation.py  # KB 配置校验
+└── models/
+    ├── audit_log.py     # 审计日志模型
+    └── ...
 
 sdk/                 # Python SDK
 alembic/             # 数据库迁移脚本
