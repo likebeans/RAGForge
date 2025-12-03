@@ -48,6 +48,16 @@ class RetrieveRequest(BaseModel):
             ]
         },
     )
+    rerank: bool = Field(
+        default=False,
+        description="可选：是否启用 Rerank 后处理（使用配置的 Rerank 提供商）",
+    )
+    rerank_top_k: int | None = Field(
+        default=None,
+        ge=1,
+        le=100,
+        description="可选：Rerank 后返回的结果数量，默认等于 top_k",
+    )
 
 
 class ChunkHit(BaseModel):

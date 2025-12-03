@@ -53,6 +53,8 @@ async def retrieve(
         score_threshold=payload.score_threshold,
         metadata_filter=payload.metadata_filter,
         retriever_override=payload.retriever_override,
+        rerank=payload.rerank,
+        rerank_top_k=payload.rerank_top_k,
     )
     
     try:
@@ -78,9 +80,12 @@ async def retrieve(
     llm_retrievers = {"hyde", "multi_query", "self_query"}
     uses_llm = retriever_name in llm_retrievers
     
-    # 判断是否使用 Rerank（fusion 检索器可能使用）
+    # 判断是否使用 Rerank（fusion 检索器内置 rerank 或用户显式启用 rerank 参数）
     rerank_retrievers = {"fusion"}
-    uses_rerank = retriever_name in rerank_retrievers and rerank_config.get("provider") != "none"
+    uses_rerank = (
+        (retriever_name in rerank_retrievers or payload.rerank) 
+        and rerank_config.get("provider") != "none"
+    )
     
     model_info = ModelInfo(
         embedding_provider=embed_config["provider"],

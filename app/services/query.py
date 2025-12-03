@@ -91,6 +91,15 @@ async def retrieve_chunks(
     if session is not None:
         raw_hits = await _attach_parent_context(raw_hits, tenant_id=tenant_id, session=session)
 
+    # Rerank 后处理（使用配置的 Rerank 提供商）
+    rerank_applied = False
+    if params.rerank and raw_hits:
+        raw_hits, rerank_applied = await _apply_rerank(
+            query=params.query,
+            hits=raw_hits,
+            top_k=params.rerank_top_k or params.top_k,
+        )
+
     def _metadata_match(hit_meta: dict, filter_meta: dict) -> bool:
         if not filter_meta:
             return True
@@ -224,6 +233,57 @@ async def _attach_parent_context(raw_hits: list[dict], *, tenant_id: str, sessio
             hit = {**hit, "context_text": parent_chunk.text}
         enriched.append(hit)
     return enriched
+
+
+async def _apply_rerank(
+    query: str,
+    hits: list[dict],
+    top_k: int,
+) -> tuple[list[dict], bool]:
+    """
+    应用 Rerank 后处理
+    
+    Args:
+        query: 原始查询
+        hits: 检索结果
+        top_k: 返回数量
+    
+    Returns:
+        (reranked_hits, applied): 重排结果和是否成功应用
+    """
+    import logging
+    from app.infra.rerank import rerank_results
+    
+    logger = logging.getLogger(__name__)
+    
+    if not hits:
+        return hits, False
+    
+    documents = [hit["text"] for hit in hits]
+    
+    try:
+        reranked = await rerank_results(
+            query=query,
+            documents=documents,
+            top_k=top_k,
+        )
+        
+        # 根据 rerank 结果重排原始 hits
+        result = []
+        for r in reranked:
+            idx = r["index"]
+            if idx < len(hits):
+                hit = hits[idx].copy()
+                hit["score"] = r["score"]
+                hit["source"] = hit.get("source", "unknown") + "+rerank"
+                result.append(hit)
+        
+        logger.info(f"Rerank 完成: {len(hits)} -> {len(result)} 条结果")
+        return result, True
+        
+    except Exception as e:
+        logger.warning(f"Rerank 失败，返回原始结果: {e}")
+        return hits[:top_k], False
 
 
 async def collect_chunks_for_kbs(tenant_id: str, kb_ids: list[str], limit: int | None = None) -> list[dict]:

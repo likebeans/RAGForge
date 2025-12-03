@@ -131,14 +131,12 @@ class FusionRetriever(BaseRetrieverOperator):
         self.bm25_weight = bm25_weight
         self.rrf_k = rrf_k
         self.rerank_enabled = rerank
-        self.rerank_model = rerank_model
         self.rerank_top_n = rerank_top_n
         self.default_top_k = top_k
         
         # 延迟初始化子检索器
         self._dense = None
         self._bm25 = None
-        self._reranker = None
 
     def _get_dense(self):
         if self._dense is None:
@@ -149,25 +147,6 @@ class FusionRetriever(BaseRetrieverOperator):
         if self._bm25 is None:
             self._bm25 = operator_registry.get("retriever", "llama_bm25")()
         return self._bm25
-
-    def _get_reranker(self):
-        if self._reranker is None and self.rerank_enabled:
-            # 延迟导入以避免未安装时报错
-            try:
-                from llama_index.postprocessor.cohere_rerank import CohereRerank
-            except ImportError:
-                pass
-            try:
-                from sentence_transformers import CrossEncoder
-                self._reranker = CrossEncoder(self.rerank_model)
-            except ImportError:
-                import logging
-                logging.warning(
-                    f"sentence-transformers 未安装，Rerank 功能不可用。"
-                    f"请运行: uv add sentence-transformers"
-                )
-                self.rerank_enabled = False
-        return self._reranker
 
     async def retrieve(
         self,
@@ -198,24 +177,34 @@ class FusionRetriever(BaseRetrieverOperator):
                 [self.dense_weight, self.bm25_weight]
             )
         
-        # Rerank
+        # Rerank（使用 infra.rerank 多提供商支持）
         if self.rerank_enabled:
-            reranker = self._get_reranker()
-            if reranker is not None:
-                # 取前 N 个进行 rerank（控制成本）
-                candidates = fused[:min(len(fused), self.rerank_top_n * 3)]
-                
-                # 构建 query-doc pairs
-                pairs = [(query, doc["text"]) for doc in candidates]
-                
-                # 计算相关性分数
-                scores = reranker.predict(pairs)
+            from app.infra.rerank import rerank_results
+            
+            # 取前 N 个进行 rerank（控制成本）
+            candidates = fused[:min(len(fused), self.rerank_top_n * 3)]
+            documents = [doc["text"] for doc in candidates]
+            
+            try:
+                reranked = await rerank_results(
+                    query=query,
+                    documents=documents,
+                    top_k=self.rerank_top_n,
+                )
                 
                 # 更新分数并重排
-                for doc, score in zip(candidates, scores):
-                    doc["score"] = float(score)
-                    doc["source"] = "rerank"
+                result = []
+                for r in reranked:
+                    idx = r["index"]
+                    if idx < len(candidates):
+                        doc = candidates[idx].copy()
+                        doc["score"] = r["score"]
+                        doc["source"] = "rerank"
+                        result.append(doc)
                 
-                fused = sorted(candidates, key=lambda x: x["score"], reverse=True)
+                fused = result
+            except Exception as e:
+                import logging
+                logging.warning(f"Rerank 失败，使用融合结果: {e}")
         
         return fused[:final_top_k]

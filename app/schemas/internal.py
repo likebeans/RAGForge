@@ -75,6 +75,16 @@ class RetrieveParams(BaseModel):
         default=None,
         description="上下文窗口配置，None 表示使用默认配置"
     )
+    rerank: bool = Field(
+        default=False,
+        description="是否启用 Rerank 后处理（使用配置的 Rerank 提供商）"
+    )
+    rerank_top_k: int | None = Field(
+        default=None,
+        ge=1,
+        le=100,
+        description="Rerank 后返回的结果数量，默认等于 top_k"
+    )
     
     def to_retriever_override_dict(self) -> dict | None:
         """转换 retriever_override 为 dict 格式"""

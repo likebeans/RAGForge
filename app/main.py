@@ -5,6 +5,7 @@ FastAPI 应用实例
 1. 创建 FastAPI 应用实例
 2. 配置应用生命周期（启动/关闭时的初始化逻辑）
 3. 注册所有 API 路由
+4. 配置结构化日志和请求追踪
 """
 
 from contextlib import asynccontextmanager
@@ -16,6 +17,12 @@ from fastapi.responses import JSONResponse
 from app.api.routes import api_router
 from app.config import get_settings
 from app.db.session import init_models
+from app.infra.logging import setup_logging, get_logger
+from app.middleware import RequestTraceMiddleware
+
+# 配置结构化日志
+setup_logging()
+logger = get_logger(__name__)
 
 # 获取全局配置（单例模式，整个应用共享同一个配置实例）
 settings = get_settings()
@@ -35,15 +42,15 @@ async def lifespan(app: FastAPI):
         - 生产环境：应该使用 Alembic 进行数据库迁移
     """
     # ========== 启动时执行 ==========
+    logger.info(f"应用启动中... 环境: {settings.environment}")
+    
     # 初始化数据库表（仅开发环境，生产环境请使用 Alembic 迁移）
     if settings.environment in ("dev", "development", "test"):
         await init_models()
+        logger.info("数据库表初始化完成（开发模式）")
     else:
         # 生产环境：仅打印警告，不自动建表
-        import logging
-        logging.getLogger(__name__).info(
-            f"环境: {settings.environment}，跳过自动建表，请使用 Alembic 迁移"
-        )
+        logger.info(f"跳过自动建表，请使用 Alembic 迁移")
     
     # 这里可以添加其他启动逻辑，例如：
     # - 初始化向量数据库连接
@@ -69,6 +76,9 @@ app = FastAPI(
     # docs_url="/docs",       # Swagger UI 路径
     # redoc_url="/redoc",     # ReDoc 路径
 )
+
+# 注册请求追踪中间件
+app.add_middleware(RequestTraceMiddleware)
 
 # 注册所有 API 路由
 # api_router 包含了所有的 API 端点（知识库、文档、查询等）
