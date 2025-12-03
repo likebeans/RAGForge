@@ -8,11 +8,17 @@
 - 每个租户有独立的数据空间
 - API Key 绑定到租户
 - 知识库、文档、用户都属于某个租户
+
+租户状态（在 schemas/tenant.py 中用 Literal 验证）：
+- active: 正常运行
+- disabled: 已禁用（API 请求被拒绝）
+- pending: 待审核（用于自助注册流程）
 """
 
+from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import String
+from sqlalchemy import DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -30,6 +36,8 @@ class Tenant(TimestampMixin, Base):
     - id: 租户唯一标识（UUID 格式）
     - name: 租户名称，全局唯一
     - plan: 订阅计划，影响功能权限和资源配额
+    - status: 租户状态（active/disabled/pending）
+    - quota_*: 资源配额限制
     """
     __tablename__ = "tenants"
 
@@ -46,3 +54,28 @@ class Tenant(TimestampMixin, Base):
     # 订阅计划：决定租户的功能权限和资源限制
     # 可选值：free（免费）、standard（标准）、enterprise（企业）
     plan: Mapped[str] = mapped_column(String(50), default="standard", nullable=False)
+    
+    # ==================== 新增字段 ====================
+    
+    # 租户状态：active/disabled/pending（Pydantic 层验证）
+    status: Mapped[str] = mapped_column(
+        String(20), 
+        default="active", 
+        nullable=False,
+        index=True,
+    )
+    
+    # 资源配额：知识库数量限制（-1 表示无限制）
+    quota_kb_count: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    
+    # 资源配额：文档数量限制（-1 表示无限制）
+    quota_doc_count: Mapped[int] = mapped_column(Integer, default=1000, nullable=False)
+    
+    # 资源配额：存储空间限制（MB，-1 表示无限制）
+    quota_storage_mb: Mapped[int] = mapped_column(Integer, default=1024, nullable=False)
+    
+    # 禁用时间：记录租户被禁用的时间
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    
+    # 禁用原因：记录禁用原因，便于审计
+    disabled_reason: Mapped[str | None] = mapped_column(Text)

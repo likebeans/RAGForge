@@ -124,10 +124,22 @@ class MultiQueryRetriever(BaseRetrieverOperator):
         # RRF 融合
         fused = self._rrf_fuse(all_results, top_k)
         
-        # 标记来源
+        # 构建每个查询的详细检索结果
+        retrieval_details = [
+            {
+                "query": queries[i],
+                "hits_count": len(all_results[i]),
+                "hits": all_results[i],  # 完整的检索结果
+            }
+            for i in range(len(queries))
+        ]
+        
+        # 标记来源和生成的查询
         for hit in fused:
             hit["source"] = "multi_query"
             hit["queries_count"] = len(queries)
+            hit["generated_queries"] = queries
+            hit["retrieval_details"] = retrieval_details  # 每个查询的完整检索结果
         
         return fused
     

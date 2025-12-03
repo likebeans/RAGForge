@@ -13,10 +13,11 @@
 | 文件 | 前缀 | 说明 |
 |------|------|------|
 | `health.py` | `/health` | 健康检查，无需认证 |
+| `admin.py` | `/admin` | 管理员接口（租户/API Key 管理） |
 | `api_keys.py` | `/v1/api-keys` | API Key CRUD |
 | `kb.py` | `/v1/knowledge-bases` | 知识库 CRUD |
 | `documents.py` | `/v1/documents` | 文档上传和管理 |
-| `query.py` | `/v1/query` | 知识库检索 |
+| `query.py` | `/v1/retrieve` | 知识库检索 |
 
 ## API 端点一览
 
@@ -25,7 +26,21 @@
 GET  /health              # 服务状态
 ```
 
-### API Key 管理
+### 管理员接口 (需要 X-Admin-Token 认证)
+```
+POST   /admin/tenants                          # 创建租户（返回初始 API Key）
+GET    /admin/tenants                          # 列出租户（分页）
+GET    /admin/tenants/{id}                     # 租户详情
+PATCH  /admin/tenants/{id}                     # 更新租户
+POST   /admin/tenants/{id}/disable             # 禁用租户
+POST   /admin/tenants/{id}/enable              # 启用租户
+DELETE /admin/tenants/{id}                     # 删除租户
+GET    /admin/tenants/{id}/api-keys            # 列出租户 API Keys
+POST   /admin/tenants/{id}/api-keys            # 创建 API Key
+DELETE /admin/tenants/{id}/api-keys/{key_id}   # 删除 API Key
+```
+
+### API Key 管理 (租户自管理)
 ```
 POST   /v1/api-keys       # 创建 Key
 GET    /v1/api-keys       # 列出 Keys
@@ -42,14 +57,14 @@ DELETE /v1/knowledge-bases/{id}  # 删除知识库
 
 ### 文档管理
 ```
-POST   /v1/documents              # 上传文档
-GET    /v1/documents              # 列出文档
-DELETE /v1/documents/{id}         # 删除文档
+POST   /v1/knowledge-bases/{kb_id}/documents   # 上传文档
+GET    /v1/knowledge-bases/{kb_id}/documents   # 列出文档
+DELETE /v1/documents/{id}                      # 删除文档
 ```
 
 ### 检索
 ```
-POST   /v1/query                  # 执行检索
+POST   /v1/retrieve               # 执行检索
 ```
 
 ## 路由模板

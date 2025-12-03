@@ -13,12 +13,17 @@ API Key 格式示例：
     kb_sk_xxxxxxxxxxxxxxxxxxxx
     ├─────┤└──────────────────┤
     prefix      随机部分
+
+角色权限（在 schemas/api_key.py 中用 Literal 验证）：
+- admin: 全部权限 + 管理 API Key
+- write: 创建/删除 KB、上传文档、检索
+- read: 仅检索和列表
 """
 
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -80,3 +85,17 @@ class APIKey(TimestampMixin, Base):
     
     # 单独的限流配置：覆盖全局限流设置，为空使用默认值
     rate_limit_per_minute: Mapped[int | None] = mapped_column()
+    
+    # ==================== 新增字段 ====================
+    
+    # 角色权限：admin/write/read（Pydantic 层验证）
+    role: Mapped[str] = mapped_column(String(20), default="write", nullable=False)
+    
+    # KB 白名单：限制只能访问指定 KB（JSON 数组），空表示不限制
+    scope_kb_ids: Mapped[list | None] = mapped_column(JSON)
+    
+    # 是否为初始管理员 Key：创建租户时自动生成的第一个 Key
+    is_initial: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    
+    # Key 描述/备注
+    description: Mapped[str | None] = mapped_column(Text)

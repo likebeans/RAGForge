@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     api_rate_limit_per_minute: int = 120     # 每分钟请求限制数
     api_rate_limit_window_seconds: int = 60  # 限流时间窗口（秒）
     
+    # ==================== 管理员配置 ====================
+    # 管理员 Token，用于访问 /admin/* 接口
+    # 生产环境必须设置，建议使用随机生成的长字符串
+    admin_token: str | None = None
+    
     # ==================== Redis 配置（限流用） ====================
     redis_url: str | None = None  # Redis 连接 URL，如 redis://localhost:6379/0
     # 未配置时使用内存限流（单实例模式）
@@ -140,13 +145,15 @@ class Settings(BaseSettings):
     # ==================== Document Summary 配置 ====================
     doc_summary_enabled: bool = False      # 是否启用文档摘要（需要 LLM）
     doc_summary_min_tokens: int = 500      # 触发摘要生成的最小 token 数
-    doc_summary_max_tokens: int = 300      # 摘要最大 token 数
+    doc_summary_max_tokens: int = 500      # 摘要最大 token 数（qwen3 thinking 需要更多）
+    doc_summary_model: str | None = None   # 摘要使用的模型，None 使用默认 openai_model
     
     # ==================== Chunk Enrichment 配置 ====================
     # 注意：Chunk Enrichment 默认关闭，因为会显著增加 LLM 调用成本
     chunk_enrichment_enabled: bool = False   # 是否启用 Chunk 增强（默认关闭）
-    chunk_enrichment_max_tokens: int = 512   # 增强文本最大 token 数
+    chunk_enrichment_max_tokens: int = 800   # 增强文本最大 token 数（qwen3 thinking 需要更多）
     chunk_enrichment_context_chunks: int = 1 # 上下文 chunk 数量（前后各 N 个）
+    chunk_enrichment_model: str | None = None  # 增强使用的模型，None 使用默认 openai_model
 
     class Config:
         """Pydantic 配置"""

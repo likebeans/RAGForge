@@ -2,6 +2,8 @@
 
 from pydantic import BaseModel, Field
 
+from app.schemas.config import RetrieverConfig
+
 
 class ModelInfo(BaseModel):
     """模型配置信息"""
@@ -15,12 +17,37 @@ class ModelInfo(BaseModel):
 
 
 class RetrieveRequest(BaseModel):
-    """检索请求"""
+    """检索请求
+
+    示例:
+    ```json
+    {
+        "query": "什么是机器学习",
+        "knowledge_base_ids": ["kb-id-1"],
+        "top_k": 5,
+        "retriever_override": {"name": "hyde", "params": {"base_retriever": "dense"}}
+    }
+    ```
+    """
     query: str = Field(..., min_length=1, description="查询语句")
     knowledge_base_ids: list[str] = Field(..., min_length=1, description="要搜索的知识库 ID 列表")
     top_k: int = Field(default=5, ge=1, le=50, description="返回结果数量")
     score_threshold: float | None = Field(default=None, ge=0.0, le=1.0, description="可选：过滤低于阈值的结果")
     metadata_filter: dict | None = Field(default=None, description="可选：按元数据精确匹配过滤结果")
+    retriever_override: RetrieverConfig | None = Field(
+        default=None,
+        description="可选：临时覆盖知识库配置的检索器",
+        json_schema_extra={
+            "examples": [
+                {"name": "dense"},
+                {"name": "bm25"},
+                {"name": "hybrid"},
+                {"name": "hyde", "params": {"base_retriever": "dense"}},
+                {"name": "multi_query", "params": {"num_queries": 3}},
+                {"name": "ensemble", "params": {"retrievers": ["dense", "bm25"], "weights": [0.6, 0.4]}},
+            ]
+        },
+    )
 
 
 class ChunkHit(BaseModel):
@@ -38,6 +65,10 @@ class ChunkHit(BaseModel):
     # HyDE 相关可选字段
     hyde_queries: list[str] | None = None
     hyde_queries_count: int | None = None
+    # multi_query 相关可选字段
+    generated_queries: list[str] | None = None
+    queries_count: int | None = None
+    retrieval_details: list[dict] | None = None  # 每个查询的完整检索结果
 
 
 class RetrieveResponse(BaseModel):

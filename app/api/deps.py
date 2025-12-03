@@ -13,10 +13,13 @@ FastAPI 的依赖注入系统会自动调用这些函数，并将结果注入到
         pass
 """
 
-from fastapi import Depends
+from typing import Literal
+
+from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.api_key import APIKeyContext, get_api_key_context
+from app.config import get_settings
 from app.db.session import get_db
 from app.models import Tenant
 
@@ -36,6 +39,75 @@ async def get_current_api_key(
 ) -> APIKeyContext:
     """获取当前 API Key 的完整上下文信息"""
     return context
+
+
+# ==================== 管理员认证 ====================
+
+async def verify_admin_token(
+    x_admin_token: str | None = Header(None, alias="X-Admin-Token"),
+) -> str:
+    """
+    验证管理员 Token
+    
+    管理员接口使用独立的 Token 认证，通过 X-Admin-Token 请求头传递。
+    Token 值从环境变量 ADMIN_TOKEN 读取。
+    """
+    settings = get_settings()
+    
+    if not settings.admin_token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Admin API is not configured. Set ADMIN_TOKEN environment variable.",
+        )
+    
+    if not x_admin_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing X-Admin-Token header",
+        )
+    
+    if x_admin_token != settings.admin_token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid admin token",
+        )
+    
+    return x_admin_token
+
+
+# ==================== 角色权限检查 ====================
+
+def require_role(*allowed_roles: Literal["admin", "write", "read"]):
+    """
+    创建角色权限检查依赖
+    
+    用法：
+        @router.post("/create")
+        async def create_item(
+            context: APIKeyContext = Depends(require_role("admin", "write")),
+        ):
+            pass
+    """
+    async def check_role(
+        context: APIKeyContext = Depends(get_api_key_context),
+    ) -> APIKeyContext:
+        # 检查租户状态
+        if context.tenant.status != "active":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Tenant is {context.tenant.status}",
+            )
+        
+        # 检查角色权限
+        if context.api_key.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Role '{context.api_key.role}' not allowed. Required: {allowed_roles}",
+            )
+        
+        return context
+    
+    return check_role
 
 
 # 重新导出数据库会话获取函数，方便路由模块导入

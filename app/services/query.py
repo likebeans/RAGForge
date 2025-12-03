@@ -49,7 +49,8 @@ async def retrieve_chunks(
     context_window: ContextWindowConfig | None = None,
     score_threshold: float | None = None,
     metadata_filter: dict | None = None,
-) -> list[ChunkHit]:
+    retriever_override: dict | None = None,
+) -> tuple[list[ChunkHit], str]:
     """
     检索文档片段
     
@@ -66,11 +67,12 @@ async def retrieve_chunks(
         top_k: 返回结果数量
         session: 数据库会话（用于 Context Window）
         context_window: 上下文窗口配置，None 表示使用默认配置（启用）
+        retriever_override: 检索器覆盖配置，格式 {"name": "hyde", "params": {...}}
     
     Returns:
-        list[ChunkHit]: 检索结果列表，按相似度降序
+        (list[ChunkHit], retriever_name): 检索结果列表和使用的检索器名称
     """
-    retriever = _resolve_retriever(kbs)
+    retriever, retriever_name = _resolve_retriever(kbs, retriever_override)
     raw_hits = await retriever.retrieve(
         query=query,
         tenant_id=tenant_id,
@@ -112,7 +114,7 @@ async def retrieve_chunks(
             continue
         filtered_hits.append(hit)
 
-    return [
+    results = [
         ChunkHit(
             chunk_id=hit["chunk_id"],
             text=hit["text"],
@@ -125,28 +127,43 @@ async def retrieve_chunks(
             context_after=hit.get("context_after"),
             hyde_queries=hit.get("hyde_queries"),
             hyde_queries_count=hit.get("hyde_queries_count"),
+            generated_queries=hit.get("generated_queries"),
+            queries_count=hit.get("queries_count"),
+            retrieval_details=hit.get("retrieval_details"),
         )
         for hit in filtered_hits
     ]
+    return results, retriever_name
 
 
-def _resolve_retriever(kbs: list[KnowledgeBase]):
+def _resolve_retriever(kbs: list[KnowledgeBase], override: dict | None = None) -> tuple:
     """
-    选择检索算子：若 KB 配置存在 query.retriever，则优先使用第一个 KB 的配置；否则默认 dense。
-    如果多个 KB 配置不一致，将抛出 KBConfigError。
+    选择检索算子：优先使用 override，否则使用 KB 配置，默认 dense。
+    
+    Args:
+        kbs: 知识库列表
+        override: 检索器覆盖配置，格式 {"name": "hyde", "params": {...}}
+    
+    Returns:
+        (retriever, retriever_name): 检索器实例和名称
     """
     name = "dense"
     params: dict = {}
     allow_mixed = False
-    if kbs:
+    
+    # 优先使用 override
+    if override:
+        name = override.get("name", "dense")
+        params = override.get("params", {}) or {}
+    elif kbs:
         name, params, allow_mixed = _validate_retriever_config(kbs)
 
     factory = operator_registry.get("retriever", name)
     if not factory:
-        return DenseRetriever(**params)
+        return DenseRetriever(**params), "dense"
     retriever = factory(**params)
     retriever.allow_mixed = allow_mixed if hasattr(retriever, "allow_mixed") else allow_mixed
-    return retriever
+    return retriever, name
 
 
 def _validate_retriever_config(kbs: list[KnowledgeBase]) -> tuple[str, dict, bool]:

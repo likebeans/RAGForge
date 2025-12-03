@@ -9,11 +9,12 @@ API 路由汇总
 - documents.py : 文档管理（上传、删除）
 - query.py     : 检索接口（向量检索）
 - api_keys.py  : API Key 管理
+- admin.py     : 管理员接口（租户管理）
 """
 
 from fastapi import APIRouter
 
-from app.api.routes import api_keys, documents, health, kb, query
+from app.api.routes import admin, api_keys, documents, health, kb, query
 
 # 主路由器，包含所有 API 端点
 api_router = APIRouter()
@@ -24,3 +25,4 @@ api_router.include_router(kb.router, tags=["knowledge-bases"])
 api_router.include_router(documents.router, tags=["documents"])
 api_router.include_router(query.router, tags=["retrieve"])
 api_router.include_router(api_keys.router, tags=["api-keys"])
+api_router.include_router(admin.router)  # admin 路由自带 tags

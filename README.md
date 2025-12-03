@@ -23,17 +23,24 @@
 ## 功能特性
 
 ### 核心功能
+- **👥 租户管理** - 创建、禁用、配额控制（Admin API）
 - **🗂️ 知识库管理** - 创建、配置、删除知识库
 - **📄 文档摄取** - 上传文档，自动切分、向量化、索引
 - **🔍 语义检索** - 支持稠密向量、BM25、混合检索
-- **🔑 API Key 认证** - 多租户隔离，请求限流
+- **🔑 API Key 认证** - 多租户隔离，角色权限（admin/write/read），请求限流
 
 ### 技术亮点
 - **可插拔算法框架** - 切分器、检索器、查询变换可配置替换
 - **多向量存储后端** - 支持 Qdrant（默认）、Milvus、Elasticsearch
 - **LlamaIndex 集成** - 可选使用 LlamaIndex 的切分和检索能力
 - **异步架构** - 基于 FastAPI + asyncpg，高并发性能
-- **高级 RAG 功能** - HyDE、RAG Fusion、上下文窗口、文档摘要、查询路由
+- **高级 RAG 功能**:
+  - **HyDE** - LLM 生成假设文档，提升语义检索效果
+  - **Multi-Query** - LLM 生成查询变体，RRF 融合，返回完整检索详情
+  - **Rerank** - 支持多种重排模型（bge-reranker、Cohere 等）
+  - **文档摘要** - 摄取时自动生成文档摘要
+  - **Chunk Enrichment** - LLM 增强 Chunk 上下文语义
+  - **上下文窗口** - 检索结果自动扩展前后文
 
 ---
 
@@ -132,6 +139,29 @@ uv run uvicorn app.main:app --reload --port 8020
 
 ### 生成 API Key
 
+**方式一：使用 Admin API（推荐）**
+
+```bash
+# 1. 确保设置了 ADMIN_TOKEN 环境变量（在 docker-compose.yml 或 .env 中）
+export ADMIN_TOKEN="your-secure-admin-token"
+
+# 2. 创建租户（自动返回初始 admin API Key）
+curl -X POST "http://localhost:8020/admin/tenants" \
+  -H "X-Admin-Token: $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "demo-tenant"}'
+
+# 响应示例:
+# {
+#   "id": "xxx-xxx-xxx",
+#   "name": "demo-tenant",
+#   "status": "active",
+#   "initial_api_key": "kb_sk_xxxxx..."  # 保存此 Key！
+# }
+```
+
+**方式二：脚本生成（兼容旧方式）**
+
 ```bash
 # 在容器内执行
 cat <<'PY' | docker compose exec -T api uv run python -
@@ -154,6 +184,8 @@ async def main():
             name="default",
             prefix=prefix,
             hashed_key=hashed,
+            role="admin",
+            is_initial=True,
             revoked=False
         ))
         await s.commit()
@@ -193,7 +225,17 @@ uv run pytest test/test_live_e2e.py -v
 | 方法 | 端点 | 说明 |
 |------|------|------|
 | `GET` | `/health` | 健康检查 |
-| **API Key 管理** |
+| **管理员接口** (需要 `X-Admin-Token` 头) |
+| `POST` | `/admin/tenants` | 创建租户（返回初始 API Key） |
+| `GET` | `/admin/tenants` | 列出租户 |
+| `GET` | `/admin/tenants/{id}` | 租户详情 |
+| `PATCH` | `/admin/tenants/{id}` | 更新租户 |
+| `POST` | `/admin/tenants/{id}/disable` | 禁用租户 |
+| `POST` | `/admin/tenants/{id}/enable` | 启用租户 |
+| `DELETE` | `/admin/tenants/{id}` | 删除租户 |
+| `GET` | `/admin/tenants/{id}/api-keys` | 列出租户 API Keys |
+| `POST` | `/admin/tenants/{id}/api-keys` | 创建 API Key |
+| **API Key 管理** (租户自管理) |
 | `POST` | `/v1/api-keys` | 创建 API Key |
 | `GET` | `/v1/api-keys` | 列出 API Keys |
 | `DELETE` | `/v1/api-keys/{id}` | 删除 API Key |
@@ -204,8 +246,8 @@ uv run pytest test/test_live_e2e.py -v
 | `PATCH` | `/v1/knowledge-bases/{id}` | 更新知识库配置 |
 | `DELETE` | `/v1/knowledge-bases/{id}` | 删除知识库 |
 | **文档管理** |
-| `POST` | `/v1/documents` | 上传文档 |
-| `GET` | `/v1/documents` | 列出文档 |
+| `POST` | `/v1/knowledge-bases/{kb_id}/documents` | 上传文档 |
+| `GET` | `/v1/knowledge-bases/{kb_id}/documents` | 列出文档 |
 | `DELETE` | `/v1/documents/{id}` | 删除文档 |
 | **检索** |
 | `POST` | `/v1/retrieve` | 执行检索（返回模型信息） |
@@ -263,17 +305,19 @@ curl -X POST "http://localhost:8020/v1/retrieve" \
       "score": 0.85,
       "metadata": {...},
       "knowledge_base_id": "kb_id",
-      "hyde_queries": ["LLM生成的假设文档..."]  // HyDE 检索器返回
+      "hyde_queries": ["LLM生成的假设文档..."],      // HyDE 检索器返回
+      "generated_queries": ["查询变体1", "查询变体2"],  // multi_query 检索器返回
+      "retrieval_details": [...]                     // multi_query 每个查询的完整检索结果
     }
   ],
   "model": {
     "embedding_provider": "ollama",
     "embedding_model": "bge-m3",
-    "llm_provider": "ollama",      // 使用 LLM 的检索器返回
+    "llm_provider": "ollama",      // 使用 LLM 的检索器返回（hyde/multi_query）
     "llm_model": "qwen3:14b",
-    "rerank_provider": null,
+    "rerank_provider": null,       // fusion + rerank 时返回
     "rerank_model": null,
-    "retriever": "hyde"
+    "retriever": "hyde"            // 使用的检索器名称
   }
 }
 ```

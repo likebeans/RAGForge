@@ -12,10 +12,12 @@ Pydantic 请求/响应模型定义。
 
 | 文件 | 说明 |
 |------|------|
-| `api_key.py` | API Key 相关 schema |
+| `tenant.py` | 租户相关 schema（Admin API） |
+| `api_key.py` | API Key 相关 schema（含角色） |
 | `kb.py` | 知识库相关 schema |
 | `document.py` | 文档相关 schema |
 | `query.py` | 检索相关 schema |
+| `config.py` | 知识库配置 schema（Chunker/Retriever） |
 
 ## Schema 命名规范
 

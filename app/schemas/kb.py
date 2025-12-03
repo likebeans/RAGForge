@@ -2,12 +2,31 @@
 
 from pydantic import BaseModel, Field
 
+from app.schemas.config import KBConfig
+
 
 class KnowledgeBaseCreate(BaseModel):
-    """创建知识库请求"""
+    """创建知识库请求
+
+    示例:
+    ```json
+    {
+        "name": "技术文档库",
+        "description": "存放技术文档",
+        "config": {
+            "ingestion": {
+                "chunker": {"name": "markdown", "params": {"chunk_size": 512}}
+            },
+            "query": {
+                "retriever": {"name": "hybrid"}
+            }
+        }
+    }
+    ```
+    """
     name: str = Field(..., max_length=255, description="知识库名称")
     description: str | None = Field(default=None, max_length=500, description="描述信息")
-    config: dict | None = Field(default=None, description="配置信息（分块策略等）")
+    config: KBConfig | None = Field(default=None, description="配置信息（分块/检索策略）")
 
 
 class KnowledgeBaseResponse(BaseModel):
@@ -25,7 +44,7 @@ class KnowledgeBaseUpdate(BaseModel):
     """更新知识库请求"""
     name: str | None = Field(default=None, max_length=255, description="知识库名称")
     description: str | None = Field(default=None, max_length=500, description="描述信息")
-    config: dict | None = Field(default=None, description="配置信息（分块/检索策略等）")
+    config: KBConfig | None = Field(default=None, description="配置信息（分块/检索策略）")
 
 
 class KnowledgeBaseListResponse(BaseModel):

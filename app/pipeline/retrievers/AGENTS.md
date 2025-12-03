@@ -18,7 +18,8 @@
 | `bm25` | `BM25Retriever` | 基于内存 BM25 的稀疏检索 |
 | `hybrid` | `HybridRetriever` | Dense + BM25 加权融合 |
 | `fusion` | `FusionRetriever` | 融合检索（RRF/加权 + 可选 Rerank） |
-| `hyde` | `HyDERetriever` | HyDE 检索器（假设文档嵌入） |
+| `hyde` | `HyDERetriever` | HyDE 检索器（LLM 生成假设文档嵌入） |
+| `multi_query` | `MultiQueryRetriever` | 多查询扩展（LLM 生成查询变体，RRF 融合） |
 
 ### LlamaIndex 实现
 | 名称 | 类 | 说明 |
@@ -69,9 +70,16 @@
 - `rerank_model`: Rerank 模型名称
 
 ### HyDERetriever
-- `hyde_config`: HyDE 配置（模型、最大 token 等）
-- `base_retriever`: 底层检索器类型，默认 "hybrid"
-- `num_hypotheses`: 生成假设文档数量，默认 1
+- `base_retriever`: 底层检索器类型，默认 "dense"
+- `num_queries`: 生成假设文档数量，默认 3
+- `include_original`: 是否保留原始查询，默认 True
+- `max_tokens`: LLM 生成最大 token 数，默认 2000（qwen3 thinking 模式需要）
+
+### MultiQueryRetriever
+- `base_retriever`: 底层检索器名称，默认 "dense"
+- `num_queries`: 生成的查询变体数量，默认 3
+- `include_original`: 是否保留原始查询，默认 True
+- `rrf_k`: RRF 融合常数，默认 60
 
 ## 使用示例
 
@@ -97,6 +105,33 @@ retriever = operator_registry.get("retriever", "llama_dense")(
         "index_params": {"index_type": "IVF_PQ", "metric_type": "COSINE", "params": {"nlist": 128, "m": 16}}
     }
 )
+
+# HyDE 检索（LLM 生成假设文档）
+retriever = operator_registry.get("retriever", "hyde")(
+    base_retriever="dense",
+    num_queries=3,
+)
+results = await retriever.retrieve(
+    query="这个药物有什么禁忌？",
+    tenant_id="tenant_001",
+    kb_ids=["kb_medical"],
+    top_k=5
+)
+# results[0]["hyde_queries"] 包含 LLM 生成的假设文档
+
+# MultiQuery 检索（LLM 生成查询变体）
+retriever = operator_registry.get("retriever", "multi_query")(
+    base_retriever="dense",
+    num_queries=3,
+)
+results = await retriever.retrieve(
+    query="这个药物的用法用量是什么？",
+    tenant_id="tenant_001",
+    kb_ids=["kb_medical"],
+    top_k=5
+)
+# results[0]["generated_queries"] 包含 LLM 生成的查询变体
+# results[0]["retrieval_details"] 包含每个查询的完整检索结果
 ```
 
 ## 输出格式
@@ -111,7 +146,34 @@ retriever = operator_registry.get("retriever", "llama_dense")(
     "metadata": dict,          # 元数据
     "knowledge_base_id": str,  # 所属知识库 ID
     "document_id": str | None, # 所属文档 ID
-    "source": str,             # 来源标记（"dense" | "bm25"）
+    "source": str,             # 来源标记（"dense" | "bm25" | "hyde" | "multi_query"）
+}
+```
+
+### HyDE 检索器扩展字段
+
+```python
+{
+    "hyde_queries": list[str],      # LLM 生成的假设文档列表
+    "hyde_queries_count": int,      # 假设文档数量
+}
+```
+
+### MultiQuery 检索器扩展字段
+
+```python
+{
+    "generated_queries": list[str],  # LLM 生成的查询变体列表
+    "queries_count": int,            # 查询变体数量
+    "retrieval_details": [           # 每个查询的完整检索结果
+        {
+            "query": str,            # 查询文本
+            "hits_count": int,       # 检索到的 chunk 数量
+            "hits": [                # 完整的检索结果列表
+                {"chunk_id": ..., "text": ..., "score": ...}
+            ]
+        }
+    ]
 }
 ```
 

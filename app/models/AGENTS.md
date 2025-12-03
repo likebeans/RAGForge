@@ -13,19 +13,29 @@ SQLAlchemy ORM 模型定义。
 | 文件 | 说明 |
 |------|------|
 | `mixins.py` | 通用 Mixin（TimestampMixin, SoftDeleteMixin） |
-| `tenant.py` | 租户模型 |
+| `tenant.py` | 租户模型（含状态、配额管理） |
 | `user.py` | 用户模型 |
-| `api_key.py` | API Key 模型 |
+| `api_key.py` | API Key 模型（含角色、作用域） |
 | `knowledge_base.py` | 知识库模型 |
 | `document.py` | 文档模型 |
 | `chunk.py` | 文档片段模型 |
+| `usage_log.py` | 用量日志模型 |
 
 ## 数据模型关系
 
 ```
 Tenant (租户)
+├── status              # active/disabled/pending
+├── quota_kb_count      # 知识库配额
+├── quota_doc_count     # 文档配额
+├── quota_storage_mb    # 存储配额
+├── disabled_at/reason  # 禁用信息
 ├── User (用户)
 ├── ApiKey (API 密钥)
+│   ├── role            # admin/write/read
+│   ├── scope_kb_ids    # KB 访问白名单
+│   └── is_initial      # 初始管理员 Key
+├── UsageLog (用量日志)
 └── KnowledgeBase (知识库)
     └── Document (文档)
         │   ├── summary            # 文档摘要
@@ -34,6 +44,26 @@ Tenant (租户)
             ├── enriched_text      # 增强后的文本（可选）
             └── enrichment_status  # 增强状态
 ```
+
+## Tenant 模型字段
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `status` | String(20) | 状态: active/disabled/pending |
+| `quota_kb_count` | Integer | 知识库数量限制，-1=无限 |
+| `quota_doc_count` | Integer | 文档数量限制，-1=无限 |
+| `quota_storage_mb` | Integer | 存储限制(MB)，-1=无限 |
+| `disabled_at` | DateTime | 禁用时间 |
+| `disabled_reason` | Text | 禁用原因 |
+
+## APIKey 模型字段
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `role` | String(20) | 角色: admin/write/read |
+| `scope_kb_ids` | JSON | KB 白名单，null=全部 |
+| `is_initial` | Boolean | 是否为初始管理员 Key |
+| `description` | Text | 描述/备注 |
 
 ## 模型示例
 

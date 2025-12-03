@@ -28,12 +28,13 @@ class HyDEConfig:
     enabled: bool = True
     num_queries: int = 4           # 生成的假设答案数量
     include_original: bool = True  # 是否保留原始查询
-    max_tokens: int = 256          # 假设答案最大 token 数
+    max_tokens: int = 2000         # 假设答案最大 token 数（qwen3 thinking 需要较多 token）
     model: str | None = None       # 使用的模型，None 使用默认配置
 
 
-# 默认 HyDE 提示词
-DEFAULT_HYDE_PROMPT = """请根据以下问题，写一段可能包含答案的文档内容。
+# 默认 HyDE 提示词（/no_think 放在开头禁用 qwen3 的 thinking 模式）
+DEFAULT_HYDE_PROMPT = """/no_think
+请根据以下问题，写一段可能包含答案的文档内容。
 不要直接回答问题，而是假设你在写一篇包含该问题答案的文档片段。
 保持内容简洁、专业，像是从技术文档或知识库中摘录的。
 

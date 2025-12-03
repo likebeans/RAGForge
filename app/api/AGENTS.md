@@ -13,7 +13,7 @@ FastAPI 路由层，定义 HTTP 接口和请求处理逻辑。
 
 | 文件 | 说明 |
 |------|------|
-| `deps.py` | 依赖注入函数（get_db, get_current_tenant） |
+| `deps.py` | 依赖注入函数（get_db, verify_admin_token, require_role） |
 | `routes/` | 各功能路由模块 |
 
 ## 路由端点
@@ -21,10 +21,11 @@ FastAPI 路由层，定义 HTTP 接口和请求处理逻辑。
 | 路由文件 | 前缀 | 功能 |
 |----------|------|------|
 | `health.py` | `/health` | 健康检查 |
-| `api_keys.py` | `/v1/api-keys` | API Key 管理（创建、列表、删除） |
-| `kb.py` | `/v1/knowledge-bases` | 知识库管理（创建、列表、删除） |
-| `documents.py` | `/v1/documents` | 文档上传和管理 |
-| `query.py` | `/v1/query` | 知识库检索 |
+| `admin.py` | `/admin` | 租户/API Key 管理（需 Admin Token） |
+| `api_keys.py` | `/v1/api-keys` | API Key 管理（租户自管理） |
+| `kb.py` | `/v1/knowledge-bases` | 知识库管理 |
+| `documents.py` | `/v1/knowledge-bases/{kb_id}/documents` | 文档上传和管理 |
+| `query.py` | `/v1/retrieve` | 知识库检索 |
 
 ## 依赖注入
 

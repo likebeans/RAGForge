@@ -27,12 +27,13 @@ class FusionConfig:
     enabled: bool = True
     num_queries: int = 3        # 生成的查询变体数量
     include_original: bool = True  # 是否保留原始查询
-    max_tokens: int = 100       # 每个查询变体的最大 token 数
+    max_tokens: int = 500       # 每个查询变体的最大 token 数（qwen3 thinking 需要更多）
     model: str | None = None    # 使用的模型
 
 
-# 查询扩展提示词
-QUERY_EXPANSION_PROMPT = """你是一个查询扩展助手。给定一个用户查询，生成 {num_queries} 个不同的查询变体，用于提高信息检索的覆盖率。
+# 查询扩展提示词（/no_think 禁用 qwen3 thinking 模式）
+QUERY_EXPANSION_PROMPT = """/no_think
+你是一个查询扩展助手。给定一个用户查询，生成 {num_queries} 个不同的查询变体，用于提高信息检索的覆盖率。
 
 原始查询：{query}
 
@@ -66,7 +67,7 @@ class RAGFusionTransform:
         self,
         num_queries: int = 3,
         include_original: bool = True,
-        max_tokens: int = 100,
+        max_tokens: int = 500,
         model: str | None = None,
     ):
         """

@@ -45,8 +45,13 @@ async def retrieve(
             detail={"code": "KB_NOT_FOUND", "detail": "One or more knowledge bases not found for tenant"},
         )
     
+    # 构建 retriever_override（如果请求中指定了）
+    retriever_override = None
+    if payload.retriever_override:
+        retriever_override = payload.retriever_override.model_dump()
+    
     try:
-        results = await retrieve_chunks(
+        results, retriever_name = await retrieve_chunks(
             tenant_id=tenant.id,
             kbs=kbs,
             query=payload.query,
@@ -54,6 +59,7 @@ async def retrieve(
             score_threshold=payload.score_threshold,
             metadata_filter=payload.metadata_filter,
             session=db,  # 传入 session 用于 Context Window
+            retriever_override=retriever_override,
         )
     except KBConfigError as e:
         raise HTTPException(
@@ -66,13 +72,6 @@ async def retrieve(
     embed_config = settings.get_embedding_config()
     llm_config = settings.get_llm_config()
     rerank_config = settings.get_rerank_config()
-    
-    # 获取检索器名称（从第一个 KB 配置中获取）
-    retriever_name = "dense"  # 默认
-    if kbs:
-        kb_config = kbs[0].config or {}
-        if isinstance(kb_config, dict):
-            retriever_name = kb_config.get("query", {}).get("retriever", {}).get("name", "dense")
     
     # 判断是否使用了 LLM（hyde、multi_query、self_query 等检索器需要 LLM）
     llm_retrievers = {"hyde", "multi_query", "self_query"}

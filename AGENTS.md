@@ -7,10 +7,11 @@
 Self-RAG Pipeline 是一个多租户知识库检索服务，提供 OpenAI 兼容的 API 接口。
 
 **核心功能**：
+- 租户管理（创建、禁用、配额）
 - 知识库管理（创建、删除）
 - 文档摄取（上传、切分、向量化）
 - 语义检索（向量/BM25/混合）
-- API Key 认证与限流
+- API Key 认证与限流（角色权限）
 
 **技术栈**：
 - Python 3.11+ / FastAPI / SQLAlchemy 2.0 (async)
@@ -160,6 +161,50 @@ results = await retriever.retrieve(query="问题", tenant_id="xxx", kb_ids=["kb1
 - 所有数据表包含 `tenant_id` 字段
 - 向量库按租户隔离（每租户一个 Collection）
 - 查询时强制过滤 `tenant_id`
+- 租户可被禁用，禁用后所有 API Key 失效
+
+## 租户管理 (Admin API)
+
+通过 `X-Admin-Token` 头认证的管理接口：
+
+```bash
+# 配置管理员 Token
+export ADMIN_TOKEN=your-secure-token
+
+# 创建租户（返回初始 admin API Key）
+curl -X POST http://localhost:8020/admin/tenants \
+  -H "X-Admin-Token: $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-company"}'
+
+# 禁用租户
+curl -X POST http://localhost:8020/admin/tenants/{id}/disable \
+  -H "X-Admin-Token: $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "Payment overdue"}'
+```
+
+### Admin API 端点
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/admin/tenants` | 创建租户 |
+| GET | `/admin/tenants` | 列出租户 |
+| GET | `/admin/tenants/{id}` | 租户详情 |
+| PATCH | `/admin/tenants/{id}` | 更新租户 |
+| POST | `/admin/tenants/{id}/disable` | 禁用租户 |
+| POST | `/admin/tenants/{id}/enable` | 启用租户 |
+| DELETE | `/admin/tenants/{id}` | 删除租户 |
+| GET | `/admin/tenants/{id}/api-keys` | 列出 API Keys |
+| POST | `/admin/tenants/{id}/api-keys` | 创建 API Key |
+
+## API Key 角色权限
+
+| 角色 | 说明 |
+|------|------|
+| `admin` | 全部权限 + 管理 API Key |
+| `write` | 创建/删除 KB、上传文档、检索 |
+| `read` | 仅检索和列表 |
 
 ## 常见问题
 

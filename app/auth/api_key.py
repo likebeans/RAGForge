@@ -212,6 +212,13 @@ async def get_api_key_context(
 
     api_key, tenant = row
 
+    # 检查租户状态
+    if tenant.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "TENANT_DISABLED", "detail": f"Tenant is {tenant.status}"},
+        )
+
     limit_allowed = rate_limiter.allow(
         key=api_key.id,
         limit_override=api_key.rate_limit_per_minute,

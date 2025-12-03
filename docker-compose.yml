@@ -21,6 +21,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://kb:kb@db:5432/kb}
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       # 清除代理，避免影响容器间通信
       http_proxy: ""
       https_proxy: ""
