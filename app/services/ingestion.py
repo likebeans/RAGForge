@@ -10,21 +10,75 @@
 """
 
 import logging
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infra.vector_store import vector_store
 from app.infra.bm25_store import bm25_store
+from app.infra.bm25_cache import get_bm25_cache
 from app.infra.llamaindex import build_index_by_store, nodes_from_chunks
 from app.models import Chunk, Document, KnowledgeBase
 from app.pipeline import operator_registry
+from app.schemas.internal import IngestionParams
 from app.pipeline.base import BaseChunkerOperator
 from app.pipeline.chunkers.simple import SimpleChunker
 from app.pipeline.enrichers.summarizer import generate_summary, SummaryConfig
 from app.pipeline.enrichers.chunk_enricher import get_chunk_enricher, EnrichmentConfig
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class IndexingResult:
+    """
+    多后端写入结果
+    
+    用于结构化返回各向量存储后端的写入状态，
+    替代简单的日志打印，便于上层处理和告警。
+    """
+    store_type: str
+    success: bool
+    chunks_count: int = 0
+    error: str | None = None
+    
+    def to_dict(self) -> dict:
+        return {
+            "store_type": self.store_type,
+            "success": self.success,
+            "chunks_count": self.chunks_count,
+            "error": self.error,
+        }
+
+
+@dataclass
+class IngestionResult:
+    """
+    文档摄取结果
+    
+    包含主存储（Qdrant）和可选的多后端存储（Milvus/ES）的写入状态。
+    """
+    document: "Document"
+    chunks: list["Chunk"]
+    indexing_results: list[IndexingResult] = field(default_factory=list)
+    
+    @property
+    def all_success(self) -> bool:
+        """所有后端写入是否都成功"""
+        return all(r.success for r in self.indexing_results)
+    
+    @property
+    def primary_success(self) -> bool:
+        """主存储（qdrant）是否写入成功"""
+        for r in self.indexing_results:
+            if r.store_type == "qdrant":
+                return r.success
+        return True  # 如果没有 qdrant 结果，认为成功
+    
+    def failed_stores(self) -> list[IndexingResult]:
+        """获取失败的后端列表"""
+        return [r for r in self.indexing_results if not r.success]
 
 
 async def ensure_kb_belongs_to_tenant(
@@ -47,45 +101,38 @@ async def ingest_document(
     *,
     tenant_id: str,
     kb: KnowledgeBase,
-    title: str,
-    content: str,
-    metadata: dict | None,
-    source: str | None,
-    generate_doc_summary: bool = True,
-    enrich_chunks: bool = False,
-) -> tuple[Document, list[Chunk]]:
+    params: IngestionParams,
+) -> IngestionResult:
     """
     摄取文档
     
     Args:
         session: 数据库会话
         tenant_id: 租户 ID
-        kb: 知识库
-        title: 文档标题
-        content: 文档内容
-        metadata: 扩展元数据
-        source: 来源类型
-        generate_doc_summary: 是否生成文档摘要（默认 True）
-        enrich_chunks: 是否增强 chunks（默认 False，需显式开启）
+        kb: 知识库（已验证）
+        params: 摄取参数对象，包含标题、内容、元数据等配置
+    
+    Returns:
+        IngestionResult: 包含文档、chunks 和各后端写入状态的结果对象
     """
     chunker = _resolve_chunker(kb)
 
     doc = Document(
         tenant_id=tenant_id,
         knowledge_base_id=kb.id,
-        title=title,
-        extra_metadata=metadata or {},
-        source=source,
+        title=params.title,
+        extra_metadata=params.metadata or {},
+        source=params.source,
         summary_status="pending",
     )
     session.add(doc)
     await session.flush()
     
     # 异步生成文档摘要（不阻塞主流程）
-    if generate_doc_summary:
-        await _generate_document_summary(doc, content)
+    if params.generate_doc_summary:
+        await _generate_document_summary(doc, params.content)
 
-    chunk_pieces = chunker.chunk(content, metadata=metadata or {})
+    chunk_pieces = chunker.chunk(params.content, metadata=params.metadata or {})
     chunks: list[Chunk] = []
     for idx, piece in enumerate(chunk_pieces):
         # 添加 chunk_index 到 metadata，用于 Context Window 扩展
@@ -108,7 +155,7 @@ async def ingest_document(
     await session.flush()
     
     # Chunk Enrichment（可选，默认关闭）
-    if enrich_chunks:
+    if params.enrich_chunks:
         await _enrich_chunks(chunks, doc)
 
     store_cfg = _get_store_config(kb)
@@ -130,8 +177,8 @@ async def ingest_document(
                 "metadata": {
                     "document_id": doc.id,
                     "title": doc.title,
-                    "source": source,
-                } | (metadata or {}),
+                    "source": params.source,
+                } | (params.metadata or {}),
             }
             for chunk in chunks
         ]
@@ -152,14 +199,28 @@ async def ingest_document(
                 "metadata": {
                     "document_id": doc.id,
                     "title": doc.title,
-                    "source": source,
+                    "source": params.source,
                 }
-                | (metadata or {}),
+                | (params.metadata or {}),
             }
             for chunk in chunks
         ],
     )
 
+    # 收集写入结果
+    indexing_results: list[IndexingResult] = []
+    
+    # Qdrant 写入结果
+    if not skip_qdrant:
+        if indexing_error:
+            indexing_results.append(IndexingResult(
+                store_type="qdrant", success=False, chunks_count=0, error=indexing_error
+            ))
+        else:
+            indexing_results.append(IndexingResult(
+                store_type="qdrant", success=True, chunks_count=len(chunks)
+            ))
+    
     # 更新索引状态
     for chunk in chunks:
         if indexing_error:
@@ -170,9 +231,19 @@ async def ingest_document(
             chunk.indexing_status = "indexed"
             chunk.indexing_error = None
 
-    _maybe_upsert_llamaindex(store_config=store_cfg, kb=kb, tenant_id=tenant_id, chunks=chunks)
+    # 多后端写入（Milvus/ES），返回结构化结果
+    extra_result = _maybe_upsert_llamaindex(store_config=store_cfg, kb=kb, tenant_id=tenant_id, chunks=chunks)
+    if extra_result is not None:
+        indexing_results.append(extra_result)
+        # 如果多后端写入失败，记录警告但不影响主流程
+        if not extra_result.success:
+            logger.warning(f"[{extra_result.store_type}] 写入失败: {extra_result.error}")
 
-    return doc, chunks
+    # 失效 BM25 缓存（文档更新后需要重新加载）
+    cache = get_bm25_cache()
+    await cache.invalidate(tenant_id=tenant_id, kb_id=kb.id)
+
+    return IngestionResult(document=doc, chunks=chunks, indexing_results=indexing_results)
 
 
 async def retry_failed_chunks(
@@ -276,16 +347,31 @@ def _get_store_config(kb: KnowledgeBase) -> dict:
     return store_cfg
 
 
-def _maybe_upsert_llamaindex(store_config: dict, kb: KnowledgeBase, tenant_id: str, chunks: list[Chunk]) -> None:
+def _maybe_upsert_llamaindex(
+    store_config: dict, kb: KnowledgeBase, tenant_id: str, chunks: list[Chunk]
+) -> IndexingResult | None:
+    """
+    写入 LlamaIndex 多后端存储（Milvus/ES）
+    
+    返回结构化的写入结果，失败时不抛异常而是返回错误信息。
+    Qdrant 已通过 vector_store 写入，此函数跳过。
+    """
     store_type = store_config.get("type", "qdrant").lower()
     params = store_config.get("params", {}) if isinstance(store_config.get("params"), dict) else {}
+    
     # qdrant 已通过 vector_store 写入，可跳过
     if store_type == "qdrant":
-        return
+        return None
+    
+    # 构建索引
     try:
         index = build_index_by_store(store_type, tenant_id=tenant_id, kb_id=kb.id, params=params)
     except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"llamaindex upsert failed for store={store_type}: {exc}") from exc
+        error_msg = f"构建索引失败: {exc}"
+        logger.error(f"[{store_type}] {error_msg}")
+        return IndexingResult(store_type=store_type, success=False, error=error_msg)
+    
+    # 转换为 LlamaIndex nodes
     nodes = nodes_from_chunks(
         chunks=[
             {
@@ -296,7 +382,16 @@ def _maybe_upsert_llamaindex(store_config: dict, kb: KnowledgeBase, tenant_id: s
             for ch in chunks
         ]
     )
-    index.insert_nodes(nodes)
+    
+    # 写入节点
+    try:
+        index.insert_nodes(nodes)
+        logger.info(f"[{store_type}] 写入成功: {len(nodes)} chunks")
+        return IndexingResult(store_type=store_type, success=True, chunks_count=len(nodes))
+    except Exception as exc:  # noqa: BLE001
+        error_msg = f"写入失败: {exc}"
+        logger.error(f"[{store_type}] {error_msg}")
+        return IndexingResult(store_type=store_type, success=False, chunks_count=0, error=error_msg)
 
 
 async def _generate_document_summary(doc: Document, content: str) -> None:

@@ -251,6 +251,8 @@ uv run pytest test/test_live_e2e.py -v
 | `DELETE` | `/v1/documents/{id}` | 删除文档 |
 | **检索** |
 | `POST` | `/v1/retrieve` | 执行检索（返回模型信息） |
+| **RAG 生成** |
+| `POST` | `/v1/rag` | RAG 生成（检索 + LLM 生成） |
 
 ### 请求示例
 
@@ -318,6 +320,42 @@ curl -X POST "http://localhost:8020/v1/retrieve" \
     "rerank_provider": null,       // fusion + rerank 时返回
     "rerank_model": null,
     "retriever": "hyde"            // 使用的检索器名称
+  }
+}
+```
+
+#### RAG 生成
+```bash
+curl -X POST "http://localhost:8020/v1/rag" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Python 有什么特点？",
+    "knowledge_base_ids": ["<kb_id>"],
+    "top_k": 5,
+    "temperature": 0.7
+  }'
+```
+
+#### RAG 响应示例
+```json
+{
+  "answer": "Python 是一种解释型、面向对象的高级编程语言...",
+  "sources": [
+    {
+      "chunk_id": "xxx",
+      "text": "检索到的文本...",
+      "score": 0.85,
+      "document_id": "doc_xxx",
+      "knowledge_base_id": "kb_xxx"
+    }
+  ],
+  "model": {
+    "embedding_provider": "ollama",
+    "embedding_model": "bge-m3",
+    "llm_provider": "ollama",
+    "llm_model": "qwen3:14b",
+    "retriever": "dense"
   }
 }
 ```
@@ -478,9 +516,11 @@ self_rag_pipeline/
 │   │   └── api_key.py       # API Key 认证
 │   ├── models/              # SQLAlchemy ORM 模型
 │   ├── schemas/             # Pydantic 数据模型
+│   │   └── internal.py      # 服务层内部参数模型
 │   ├── services/            # 业务逻辑层
 │   │   ├── ingestion.py     # 文档摄取
-│   │   └── query.py         # 检索服务
+│   │   ├── query.py         # 检索服务
+│   │   └── rag.py           # RAG 生成服务
 │   ├── pipeline/            # 算法框架
 │   │   ├── base.py          # 基础协议
 │   │   ├── registry.py      # 算法注册表

@@ -27,6 +27,7 @@ from app.schemas import (
     DocumentResponse,
 )
 from app.schemas.document import BatchIngestRequest, BatchIngestResponse, BatchIngestResult
+from app.schemas.internal import IngestionParams
 from app.services.ingestion import ensure_kb_belongs_to_tenant, ingest_document
 
 logger = logging.getLogger(__name__)
@@ -79,19 +80,28 @@ async def ingest_document_endpoint(
             detail={"code": "VALIDATION_ERROR", "detail": "content 不能为空"},
         )
 
-    # 执行文档摄取（切分、向量化、存储）
-    doc, chunks = await ingest_document(
-        db,
-        tenant_id=tenant.id,
-        kb=kb,
+    # 构建摄取参数对象
+    params = IngestionParams(
         title=payload.title,
         content=content,
         metadata=payload.metadata,
         source=payload.source or ("url" if payload.source_url else payload.source),
     )
+    
+    # 执行文档摄取（切分、向量化、存储）
+    result = await ingest_document(
+        db,
+        tenant_id=tenant.id,
+        kb=kb,
+        params=params,
+    )
     await db.commit()
+    
+    # 记录多后端写入失败（不阻塞响应）
+    for failed in result.failed_stores():
+        logger.warning(f"文档 {result.document.id} 多后端写入失败: [{failed.store_type}] {failed.error}")
 
-    return DocumentIngestResponse(document_id=doc.id, chunk_count=len(chunks))
+    return DocumentIngestResponse(document_id=result.document.id, chunk_count=len(result.chunks))
 
 
 @router.get("/v1/knowledge-bases/{kb_id}/documents", response_model=DocumentListResponse)
@@ -379,20 +389,29 @@ async def upload_file_endpoint(
     doc_title = title or filename.rsplit(".", 1)[0]
     doc_source = source or f"file:{ext.lstrip('.')}"
 
-    # 执行文档摄取
-    doc, chunks = await ingest_document(
-        db,
-        tenant_id=tenant.id,
-        kb=kb,
+    # 构建摄取参数对象
+    params = IngestionParams(
         title=doc_title,
         content=content,
         metadata={"original_filename": filename},
         source=doc_source,
     )
+    
+    # 执行文档摄取
+    result = await ingest_document(
+        db,
+        tenant_id=tenant.id,
+        kb=kb,
+        params=params,
+    )
     await db.commit()
+    
+    # 记录多后端写入失败
+    for failed in result.failed_stores():
+        logger.warning(f"文档 {result.document.id} 多后端写入失败: [{failed.store_type}] {failed.error}")
 
-    logger.info(f"Uploaded file '{filename}' as document {doc.id} with {len(chunks)} chunks")
-    return DocumentIngestResponse(document_id=doc.id, chunk_count=len(chunks))
+    logger.info(f"Uploaded file '{filename}' as document {result.document.id} with {len(result.chunks)} chunks")
+    return DocumentIngestResponse(document_id=result.document.id, chunk_count=len(result.chunks))
 
 
 @router.post("/v1/knowledge-bases/{kb_id}/documents/batch", response_model=BatchIngestResponse)
@@ -422,20 +441,28 @@ async def batch_ingest_endpoint(
 
     for item in payload.documents:
         try:
-            doc, chunks = await ingest_document(
-                db,
-                tenant_id=tenant.id,
-                kb=kb,
+            params = IngestionParams(
                 title=item.title,
                 content=item.content,
                 metadata=item.metadata,
                 source=item.source,
             )
+            result = await ingest_document(
+                db,
+                tenant_id=tenant.id,
+                kb=kb,
+                params=params,
+            )
             await db.commit()
+            
+            # 记录多后端写入失败
+            for failed_store in result.failed_stores():
+                logger.warning(f"文档 {result.document.id} 多后端写入失败: [{failed_store.store_type}] {failed_store.error}")
+            
             results.append(BatchIngestResult(
                 title=item.title,
-                document_id=doc.id,
-                chunk_count=len(chunks),
+                document_id=result.document.id,
+                chunk_count=len(result.chunks),
                 success=True,
             ))
             succeeded += 1

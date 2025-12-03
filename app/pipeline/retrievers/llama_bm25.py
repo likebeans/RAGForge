@@ -2,17 +2,15 @@
 LlamaIndex BM25 检索器
 
 使用 LlamaIndex 封装的 BM25 检索，从数据库加载 chunks 构建内存索引。
-为避免重复构建，加入简单的内存缓存（按租户+KB 集合 + TTL）。
+使用全局缓存避免跨请求重复加载数据库。
 """
-
-import time
 
 from llama_index.retrievers.bm25 import BM25Retriever as LlamaIndexBM25Retriever
 
+from app.infra.bm25_cache import get_bm25_cache
 from app.infra.llamaindex import nodes_from_chunks
 from app.pipeline.base import BaseRetrieverOperator
 from app.pipeline.registry import register_operator
-# 延迟导入以避免循环依赖，在函数内部导入 collect_chunks_for_kbs
 
 
 @register_operator("retriever", "llama_bm25")
@@ -21,11 +19,14 @@ class LlamaBM25Retriever(BaseRetrieverOperator):
     LlamaIndex BM25 检索器
     
     工作流程：
-    1. 从数据库加载指定知识库的所有 chunks
+    1. 从全局缓存获取 chunks（命中）或从数据库加载（未命中）
     2. 转换为 LlamaIndex TextNode
-    3. 构建内存 BM25 索引并检索
+    3. 构建 BM25 索引并检索
     
-    注意：每次检索都会重建索引，适合小规模数据
+    缓存策略：
+    - 全局单例缓存，跨请求共享
+    - TTL 自动过期（默认 60 秒）
+    - 文档更新时可手动失效
     """
     name = "llama_bm25"
     kind = "retriever"
@@ -34,7 +35,6 @@ class LlamaBM25Retriever(BaseRetrieverOperator):
         self.default_top_k = top_k
         self.max_chunks = max_chunks
         self.cache_ttl = cache_ttl
-        self._cache: dict[tuple, tuple[float, list[dict]]] = {}  # key -> (ts, chunks)
 
     async def retrieve(
         self,
@@ -44,8 +44,18 @@ class LlamaBM25Retriever(BaseRetrieverOperator):
         kb_ids: list[str],
         top_k: int,
     ):
-        # 从数据库加载 chunks
-        chunks = await self._get_chunks_cached(tenant_id=tenant_id, kb_ids=kb_ids)
+        # 从全局缓存获取 chunks
+        cache = get_bm25_cache(ttl=self.cache_ttl)
+        chunks = await cache.get(tenant_id, kb_ids)
+        
+        if chunks is None:
+            # 缓存未命中，从数据库加载
+            from app.services.query import collect_chunks_for_kbs
+            chunks = await collect_chunks_for_kbs(tenant_id=tenant_id, kb_ids=kb_ids, limit=self.max_chunks)
+            await cache.set(tenant_id, kb_ids, chunks, ttl=self.cache_ttl)
+        
+        if not chunks:
+            return []
         
         # 转换为 LlamaIndex 节点
         nodes = nodes_from_chunks(chunks=chunks)
@@ -68,16 +78,3 @@ class LlamaBM25Retriever(BaseRetrieverOperator):
                 }
             )
         return results
-
-    async def _get_chunks_cached(self, tenant_id: str, kb_ids: list[str]) -> list[dict]:
-        key = (tenant_id, tuple(sorted(kb_ids)))
-        now = time.time()
-        ts_chunks = self._cache.get(key)
-        if ts_chunks and now - ts_chunks[0] < self.cache_ttl:
-            return ts_chunks[1]
-
-        # 延迟导入以避免循环依赖
-        from app.services.query import collect_chunks_for_kbs
-        chunks = await collect_chunks_for_kbs(tenant_id=tenant_id, kb_ids=kb_ids, limit=self.max_chunks)
-        self._cache[key] = (now, chunks)
-        return chunks

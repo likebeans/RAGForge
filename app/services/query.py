@@ -19,6 +19,7 @@ from app.pipeline.postprocessors.context_window import (
     ContextWindowConfig,
 )
 from app.models import Chunk, KnowledgeBase
+from app.schemas.internal import RetrieveParams
 from app.schemas.query import ChunkHit
 from app.db.session import SessionLocal
 from app.exceptions import KBConfigError
@@ -43,13 +44,8 @@ async def retrieve_chunks(
     *,
     tenant_id: str,
     kbs: list[KnowledgeBase],
-    query: str,
-    top_k: int,
+    params: RetrieveParams,
     session: AsyncSession | None = None,
-    context_window: ContextWindowConfig | None = None,
-    score_threshold: float | None = None,
-    metadata_filter: dict | None = None,
-    retriever_override: dict | None = None,
 ) -> tuple[list[ChunkHit], str]:
     """
     检索文档片段
@@ -62,25 +58,24 @@ async def retrieve_chunks(
     
     Args:
         tenant_id: 租户 ID（用于数据隔离）
-        kbs: 要搜索的知识库列表
-        query: 查询语句
-        top_k: 返回结果数量
+        kbs: 要搜索的知识库列表（已验证）
+        params: 检索参数对象，包含查询、检索器、过滤等配置
         session: 数据库会话（用于 Context Window）
-        context_window: 上下文窗口配置，None 表示使用默认配置（启用）
-        retriever_override: 检索器覆盖配置，格式 {"name": "hyde", "params": {...}}
     
     Returns:
         (list[ChunkHit], retriever_name): 检索结果列表和使用的检索器名称
     """
+    retriever_override = params.to_retriever_override_dict()
     retriever, retriever_name = _resolve_retriever(kbs, retriever_override)
     raw_hits = await retriever.retrieve(
-        query=query,
+        query=params.query,
         tenant_id=tenant_id,
         kb_ids=[kb.id for kb in kbs],
-        top_k=top_k,
+        top_k=params.top_k,
     )
 
     # Context Window 后处理
+    context_window = params.context_window
     if context_window is None:
         context_window = ContextWindowConfig()  # 默认启用
     
@@ -107,10 +102,10 @@ async def retrieve_chunks(
     filtered_hits = []
     for hit in raw_hits:
         score = hit.get("score", 0.0)
-        if score_threshold is not None and score < score_threshold:
+        if params.score_threshold is not None and score < params.score_threshold:
             continue
         hit_meta = hit.get("metadata", {}) or {}
-        if not _metadata_match(hit_meta, metadata_filter or {}):
+        if not _metadata_match(hit_meta, params.metadata_filter or {}):
             continue
         filtered_hits.append(hit)
 

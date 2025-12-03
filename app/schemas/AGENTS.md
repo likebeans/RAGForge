@@ -17,7 +17,9 @@ Pydantic 请求/响应模型定义。
 | `kb.py` | 知识库相关 schema |
 | `document.py` | 文档相关 schema |
 | `query.py` | 检索相关 schema |
+| `rag.py` | RAG 生成相关 schema |
 | `config.py` | 知识库配置 schema（Chunker/Retriever） |
+| `internal.py` | **服务层内部参数模型**（与 API Schema 解耦） |
 
 ## Schema 命名规范
 
@@ -89,3 +91,120 @@ class MySchema(BaseModel):
 - 响应模型设置 `from_attributes = True` 以支持 ORM 转换
 - 敏感字段（如密码哈希）不应出现在响应模型中
 - 使用 `Field` 提供字段描述，自动生成 OpenAPI 文档
+
+---
+
+## 服务层内部参数模型 (internal.py)
+
+`internal.py` 定义服务层函数的参数对象，与 API Schema 解耦，提供更好的参数验证和文档化。
+
+### 设计目的
+
+- **解耦**：服务层参数与 API 请求/响应模型分离，便于独立演进
+- **验证**：使用 Pydantic `Field` 提供参数验证（范围、长度等）
+- **文档化**：每个字段带描述，提升代码可读性
+
+### 内部参数模型
+
+| 模型 | 说明 | 对应服务函数 |
+|------|------|-------------|
+| `LLMParams` | LLM 调用参数 | 通用 LLM 调用 |
+| `RetrieveParams` | 检索参数 | `services.query.retrieve_chunks` |
+| `RAGParams` | RAG 生成参数 | `services.rag.generate_rag_response` |
+| `IngestionParams` | 文档摄取参数 | `services.ingestion.ingest_document` |
+| `RetryChunksParams` | 重试失败 chunks 参数 | `services.ingestion.retry_failed_chunks` |
+
+### 使用示例
+
+```python
+from app.schemas.internal import RAGParams, RetrieveParams, IngestionParams
+
+# RAG 生成
+params = RAGParams(
+    query="问题内容",
+    kb_ids=["kb1", "kb2"],
+    top_k=5,
+    temperature=0.7,
+)
+result = await generate_rag_response(session, tenant_id, params)
+
+# 检索
+params = RetrieveParams(
+    query="搜索内容",
+    top_k=10,
+    score_threshold=0.5,
+    metadata_filter={"source": "pdf"},
+)
+chunks, retriever_name = await retrieve_chunks(
+    tenant_id=tenant_id,
+    kbs=kbs,
+    params=params,
+    session=session,
+)
+
+# 文档摄取
+params = IngestionParams(
+    title="文档标题",
+    content="文档内容...",
+    metadata={"author": "张三"},
+    source="manual",
+    generate_doc_summary=True,
+)
+result = await ingest_document(session, tenant_id=tenant_id, kb=kb, params=params)
+```
+
+### 字段定义规范
+
+```python
+from pydantic import BaseModel, Field
+
+class MyParams(BaseModel):
+    """参数描述"""
+    
+    # 必填字段，带验证
+    query: str = Field(
+        ...,                    # ... 表示必填
+        min_length=1,           # 最小长度
+        description="查询语句"   # 字段描述
+    )
+    
+    # 带范围的数值
+    top_k: int = Field(
+        default=5,              # 默认值
+        ge=1, le=100,           # 范围限制
+        description="返回数量"
+    )
+    
+    # 可选字段
+    score_threshold: float | None = Field(
+        default=None,
+        ge=0.0, le=1.0,
+        description="分数阈值"
+    )
+```
+
+### API 路由中的使用模式
+
+```python
+# routes/query.py
+from app.schemas.internal import RetrieveParams
+
+@router.post("/v1/retrieve")
+async def retrieve(payload: RetrieveRequest, ...):
+    # 从 API 请求构建内部参数对象
+    params = RetrieveParams(
+        query=payload.query,
+        top_k=payload.top_k,
+        score_threshold=payload.score_threshold,
+        metadata_filter=payload.metadata_filter,
+        retriever_override=payload.retriever_override,
+    )
+    
+    # 调用服务层
+    results, retriever_name = await retrieve_chunks(
+        tenant_id=tenant.id,
+        kbs=kbs,
+        params=params,
+        session=db,
+    )
+```

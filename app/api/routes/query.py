@@ -13,6 +13,7 @@ from app.auth.api_key import APIKeyContext
 from app.config import get_settings
 from app.exceptions import KBConfigError
 from app.schemas import RetrieveRequest, RetrieveResponse
+from app.schemas.internal import RetrieveParams
 from app.schemas.query import ModelInfo
 from app.services.query import get_tenant_kbs, retrieve_chunks
 
@@ -45,21 +46,21 @@ async def retrieve(
             detail={"code": "KB_NOT_FOUND", "detail": "One or more knowledge bases not found for tenant"},
         )
     
-    # 构建 retriever_override（如果请求中指定了）
-    retriever_override = None
-    if payload.retriever_override:
-        retriever_override = payload.retriever_override.model_dump()
+    # 构建检索参数对象
+    params = RetrieveParams(
+        query=payload.query,
+        top_k=payload.top_k,
+        score_threshold=payload.score_threshold,
+        metadata_filter=payload.metadata_filter,
+        retriever_override=payload.retriever_override,
+    )
     
     try:
         results, retriever_name = await retrieve_chunks(
             tenant_id=tenant.id,
             kbs=kbs,
-            query=payload.query,
-            top_k=payload.top_k,
-            score_threshold=payload.score_threshold,
-            metadata_filter=payload.metadata_filter,
+            params=params,
             session=db,  # 传入 session 用于 Context Window
-            retriever_override=retriever_override,
         )
     except KBConfigError as e:
         raise HTTPException(
