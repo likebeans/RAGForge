@@ -26,8 +26,32 @@ from app.pipeline.base import BaseChunkerOperator
 from app.pipeline.chunkers.simple import SimpleChunker
 from app.pipeline.enrichers.summarizer import generate_summary, SummaryConfig
 from app.pipeline.enrichers.chunk_enricher import get_chunk_enricher, EnrichmentConfig
+from app.services.acl import build_acl_metadata_for_chunk
 
 logger = logging.getLogger(__name__)
+
+
+def _is_parent_chunk(metadata: dict) -> bool:
+    """
+    判断是否为父块（用于父子分块模式）
+    
+    父块特征：有 parent_id 但没有 child 标记或 child=False
+    子块特征：有 parent_id 且 child=True
+    普通块：没有 parent_id
+    
+    只有子块需要被向量化，父块只存 DB 作为上下文。
+    """
+    parent_id = metadata.get("parent_id")
+    if not parent_id:
+        return False  # 普通块，需要向量化
+    
+    # 有 parent_id 的情况：检查是否是子块
+    is_child = metadata.get("child", False)
+    if isinstance(is_child, str):
+        is_child = is_child.lower() == "true"
+    
+    # 父块 = 有 parent_id 但不是 child
+    return not is_child
 
 
 @dataclass
@@ -124,6 +148,11 @@ async def ingest_document(
         extra_metadata=params.metadata or {},
         source=params.source,
         summary_status="pending",
+        # ACL 字段（模型中属性名为 acl_allow_*）
+        sensitivity_level=params.sensitivity_level,
+        acl_allow_users=params.acl_users,
+        acl_allow_roles=params.acl_roles,
+        acl_allow_groups=params.acl_groups,
     )
     session.add(doc)
     await session.flush()
@@ -167,8 +196,18 @@ async def ingest_document(
     await session.flush()
 
     # 批量写入向量库（异步，带错误处理）
+    # 父子分块模式下：只对子块向量化，父块只存 DB 作为上下文
     indexing_error = None
     if not skip_qdrant:
+        # 构建 ACL metadata（从文档继承）
+        acl_metadata = build_acl_metadata_for_chunk(
+            document_id=doc.id,
+            sensitivity_level=getattr(doc, "sensitivity_level", "internal"),
+            allow_users=getattr(doc, "acl_allow_users", None),
+            allow_roles=getattr(doc, "acl_allow_roles", None),
+            allow_groups=getattr(doc, "acl_allow_groups", None),
+        )
+        
         chunk_data = [
             {
                 "chunk_id": chunk.id,
@@ -178,9 +217,11 @@ async def ingest_document(
                     "document_id": doc.id,
                     "title": doc.title,
                     "source": params.source,
-                } | (params.metadata or {}),
+                } | (chunk.extra_metadata or {}) | acl_metadata,
             }
             for chunk in chunks
+            # 父块（有 parent_id 但没有 child 标记）不写入向量库
+            if not _is_parent_chunk(chunk.extra_metadata or {})
         ]
         try:
             await vector_store.upsert_chunks(tenant_id=tenant_id, chunks=chunk_data)
@@ -189,28 +230,32 @@ async def ingest_document(
             logger.error(f"向量库写入失败: {e}")
     
     # 写入 BM25 索引（同步，内存操作）
+    # 同样只索引子块，父块不参与 BM25 检索
+    bm25_chunks = [
+        {
+            "chunk_id": chunk.id,
+            "text": chunk.text,
+            "metadata": {
+                "document_id": doc.id,
+                "title": doc.title,
+                "source": params.source,
+            }
+            | (chunk.extra_metadata or {}),
+        }
+        for chunk in chunks
+        if not _is_parent_chunk(chunk.extra_metadata or {})
+    ]
     bm25_store.upsert_chunks(
         tenant_id=tenant_id,
         knowledge_base_id=kb.id,
-        chunks=[
-            {
-                "chunk_id": chunk.id,
-                "text": chunk.text,
-                "metadata": {
-                    "document_id": doc.id,
-                    "title": doc.title,
-                    "source": params.source,
-                }
-                | (params.metadata or {}),
-            }
-            for chunk in chunks
-        ],
+        chunks=bm25_chunks,
     )
 
     # 收集写入结果
     indexing_results: list[IndexingResult] = []
     
-    # Qdrant 写入结果
+    # Qdrant 写入结果（计数使用实际索引的 chunk 数量，不含父块）
+    indexed_count = len(chunk_data) if not skip_qdrant else 0
     if not skip_qdrant:
         if indexing_error:
             indexing_results.append(IndexingResult(
@@ -218,7 +263,7 @@ async def ingest_document(
             ))
         else:
             indexing_results.append(IndexingResult(
-                store_type="qdrant", success=True, chunks_count=len(chunks)
+                store_type="qdrant", success=True, chunks_count=indexed_count
             ))
     
     # 更新索引状态
@@ -371,7 +416,11 @@ def _maybe_upsert_llamaindex(
         logger.error(f"[{store_type}] {error_msg}")
         return IndexingResult(store_type=store_type, success=False, error=error_msg)
     
-    # 转换为 LlamaIndex nodes
+    # 转换为 LlamaIndex nodes（过滤父块，只索引子块）
+    indexable_chunks = [
+        ch for ch in chunks
+        if not _is_parent_chunk(ch.extra_metadata or {})
+    ]
     nodes = nodes_from_chunks(
         chunks=[
             {
@@ -379,7 +428,7 @@ def _maybe_upsert_llamaindex(
                 "text": ch.text,
                 "metadata": (ch.extra_metadata or {}) | {"knowledge_base_id": kb.id, "document_id": ch.document_id},
             }
-            for ch in chunks
+            for ch in indexable_chunks
         ]
     )
     

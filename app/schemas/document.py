@@ -2,7 +2,13 @@
 
 from datetime import datetime
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
+
+
+# 敏感度级别
+SensitivityLevel = Literal["public", "internal", "restricted"]
 
 
 class DocumentIngestRequest(BaseModel):
@@ -12,6 +18,11 @@ class DocumentIngestRequest(BaseModel):
     source_url: str | None = Field(default=None, description="可选：从 URL 拉取文本内容")
     metadata: dict | None = Field(default=None, description="扩展元数据")
     source: str | None = Field(default=None, max_length=50, description="来源类型: pdf/docx/url")
+    # ACL 相关字段
+    sensitivity_level: SensitivityLevel = Field(default="internal", description="敏感度级别: public/internal/restricted")
+    acl_users: list[str] | None = Field(default=None, description="ACL 白名单用户列表")
+    acl_roles: list[str] | None = Field(default=None, description="ACL 白名单角色列表")
+    acl_groups: list[str] | None = Field(default=None, description="ACL 白名单用户组列表")
 
     @model_validator(mode="after")
     def ensure_content_or_url(self):

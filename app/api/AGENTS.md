@@ -75,3 +75,4 @@ async def list_items(
 - 所有接口需要 API Key 认证（除 `/health`）
 - 使用 Pydantic schemas 定义请求/响应模型
 - 业务逻辑应放在 `services/` 层，路由层只做参数处理
+- 检索接口 `/v1/retrieve` 会先完成向量/BM25 检索，再做 ACL 过滤；如果命中但被 ACL 全部过滤，会返回 `403` (`code=NO_PERMISSION`)，请检查文档敏感度与 API Key 的 identity/clearance 或调整文档 ACL。

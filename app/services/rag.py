@@ -97,12 +97,14 @@ async def generate_rag_response(
         score_threshold=params.score_threshold,
         retriever_override=params.retriever_override,
     )
-    chunks, retriever_name = await retrieve_chunks(
+    chunks, retriever_name, acl_blocked = await retrieve_chunks(
         tenant_id=tenant_id,
         kbs=kbs,
         params=retrieve_params,
         session=session,
     )
+    if acl_blocked:
+        raise PermissionError("检索结果因 ACL 权限控制被过滤，请检查文档敏感度或 API Key 权限")
     
     logger.info(f"RAG: 检索到 {len(chunks)} 个相关片段，使用检索器 {retriever_name}")
     

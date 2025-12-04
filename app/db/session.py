@@ -38,6 +38,11 @@ engine = create_async_engine(
     future=True,            # 使用 SQLAlchemy 2.0 风格
     pool_pre_ping=True,     # 每次从连接池获取连接前先测试连接是否有效
                             # 这可以避免使用已断开的连接导致的错误
+    # 连接池配置（生产环境优化）
+    pool_size=10,           # 连接池保持的连接数
+    max_overflow=20,        # 允许超出 pool_size 的额外连接数
+    pool_timeout=30,        # 获取连接的超时时间（秒）
+    pool_recycle=1800,      # 连接回收时间（秒），防止数据库端超时断开
 )
 
 # ==================== 创建会话工厂 ====================

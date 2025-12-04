@@ -181,6 +181,27 @@ def _parse_authorization_header(header_val: str | None) -> str:
 class APIKeyContext:
     api_key: APIKey
     tenant: Tenant
+    
+    def get_user_context(self):
+        """
+        从 API Key 的 identity 字段生成 UserContext
+        
+        用于 Security Trimming 文档过滤。如果 API Key 没有 identity 字段，
+        则生成一个最低权限的 UserContext（只能访问 public 文档）。
+        
+        Returns:
+            UserContext: 用户上下文对象
+        """
+        from app.services.acl import UserContext
+        
+        identity = self.api_key.identity or {}
+        return UserContext(
+            user_id=identity.get("user_id"),
+            roles=identity.get("roles"),
+            groups=identity.get("groups"),
+            sensitivity_clearance=identity.get("clearance", "public"),
+            is_admin=(self.api_key.role == "admin"),
+        )
 
 
 async def get_api_key_context(

@@ -86,3 +86,30 @@ class Document(TimestampMixin, Base):
     
     # 摘要状态：pending / generating / completed / failed / skipped
     summary_status: Mapped[str | None] = mapped_column(String(20), default="pending")
+    
+    # ==================== ACL 权限控制 ====================
+    # 敏感度级别（简化为两级）：
+    # - public: 公开，租户内所有 API Key 可访问
+    # - restricted: 受限，需要 ACL 白名单匹配才能访问
+    #
+    # 注意：数据库中可能存在旧值 internal/confidential/secret，
+    # 在 ACL 检查时会被视为 restricted 处理
+    sensitivity_level: Mapped[str] = mapped_column(
+        String(20),
+        default="public",
+        nullable=False,
+        index=True,
+    )
+    
+    # ACL 白名单：允许访问的用户 ID 列表
+    # 为 null 时，根据 sensitivity_level 决定访问权限
+    # 格式：["user_id_1", "user_id_2", ...]
+    acl_allow_users: Mapped[list | None] = mapped_column("acl_users", JSON)
+    
+    # ACL 白名单：允许访问的角色列表
+    # 格式：["admin", "editor", "viewer", ...]
+    acl_allow_roles: Mapped[list | None] = mapped_column("acl_roles", JSON)
+    
+    # ACL 白名单：允许访问的组/部门列表
+    # 格式：["sales", "engineering", "hr", ...]
+    acl_allow_groups: Mapped[list | None] = mapped_column("acl_groups", JSON)

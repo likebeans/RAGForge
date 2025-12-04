@@ -199,6 +199,23 @@ class IngestionParams(BaseModel):
         default=False,
         description="是否增强 chunks（添加上下文信息，调用 LLM）"
     )
+    # ACL 相关字段
+    sensitivity_level: str = Field(
+        default="internal",
+        description="敏感度级别: public/internal/restricted"
+    )
+    acl_users: list[str] | None = Field(
+        default=None,
+        description="ACL 白名单用户列表"
+    )
+    acl_roles: list[str] | None = Field(
+        default=None,
+        description="ACL 白名单角色列表"
+    )
+    acl_groups: list[str] | None = Field(
+        default=None,
+        description="ACL 白名单用户组列表"
+    )
 
 
 class RetryChunksParams(BaseModel):

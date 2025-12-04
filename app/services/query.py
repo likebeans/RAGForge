@@ -9,6 +9,8 @@
 5. 组装返回结果
 """
 
+import time
+
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +25,8 @@ from app.schemas.internal import RetrieveParams
 from app.schemas.query import ChunkHit
 from app.db.session import SessionLocal
 from app.exceptions import KBConfigError
+from app.infra.metrics import metrics_collector
+from app.services.acl import UserContext, filter_results_by_acl
 
 
 async def get_tenant_kbs(session: AsyncSession, tenant_id: str, kb_ids: list[str]) -> list[KnowledgeBase]:
@@ -46,7 +50,8 @@ async def retrieve_chunks(
     kbs: list[KnowledgeBase],
     params: RetrieveParams,
     session: AsyncSession | None = None,
-) -> tuple[list[ChunkHit], str]:
+    user_context: UserContext | None = None,
+) -> tuple[list[ChunkHit], str, bool]:
     """
     检索文档片段
     
@@ -54,24 +59,38 @@ async def retrieve_chunks(
     1. 将查询语句向量化
     2. 在向量数据库中搜索最相似的片段
     3. （可选）Context Window 上下文扩展
-    4. 按相似度分数排序返回
+    4. Security Trimming（ACL 权限过滤）
+    5. 按相似度分数排序返回
     
     Args:
         tenant_id: 租户 ID（用于数据隔离）
         kbs: 要搜索的知识库列表（已验证）
         params: 检索参数对象，包含查询、检索器、过滤等配置
         session: 数据库会话（用于 Context Window）
+        user_context: 用户上下文（用于 ACL 权限过滤）
     
     Returns:
-        (list[ChunkHit], retriever_name): 检索结果列表和使用的检索器名称
+        (list[ChunkHit], retriever_name, acl_blocked): 检索结果列表、使用的检索器名称、是否因 ACL 过滤导致无结果
     """
     retriever_override = params.to_retriever_override_dict()
     retriever, retriever_name = _resolve_retriever(kbs, retriever_override)
+    
+    # 执行检索并记录指标
+    start_time = time.perf_counter()
     raw_hits = await retriever.retrieve(
         query=params.query,
         tenant_id=tenant_id,
         kb_ids=[kb.id for kb in kbs],
         top_k=params.top_k,
+    )
+    latency_ms = (time.perf_counter() - start_time) * 1000
+    
+    # 记录检索质量指标
+    metrics_collector.record_retrieval(
+        retriever=retriever_name,
+        query=params.query,
+        results=raw_hits,
+        latency_ms=latency_ms,
     )
 
     # Context Window 后处理
@@ -118,6 +137,15 @@ async def retrieve_chunks(
             continue
         filtered_hits.append(hit)
 
+    # Security Trimming: ACL 权限过滤（二次安全修整）
+    # 在向量库过滤的基础上，进行后处理过滤确保权限正确
+    has_hits_before_acl = bool(filtered_hits)
+    acl_blocked = False
+    if user_context is not None:
+        filtered_hits = filter_results_by_acl(filtered_hits, user_context)
+        if has_hits_before_acl and not filtered_hits:
+            acl_blocked = True
+
     results = [
         ChunkHit(
             chunk_id=hit["chunk_id"],
@@ -137,7 +165,7 @@ async def retrieve_chunks(
         )
         for hit in filtered_hits
     ]
-    return results, retriever_name
+    return results, retriever_name, acl_blocked
 
 
 def _resolve_retriever(kbs: list[KnowledgeBase], override: dict | None = None) -> tuple:

@@ -18,7 +18,7 @@
 import logging
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import SessionLocal
@@ -82,15 +82,36 @@ class ParentDocumentRetriever(BaseRetrieverOperator):
         tenant_id: str,
         kb_ids: list[str],
     ) -> dict[str, dict]:
-        """从数据库获取父块"""
+        """
+        从数据库获取父块
+        
+        父块特征：
+        - 有 parent_id 但没有 child 标记（或 child=False）
+        - parent_id 的值是父块的标识
+        
+        Args:
+            session: 数据库会话
+            parent_ids: 需要查找的 parent_id 集合
+            tenant_id: 租户 ID
+            kb_ids: 知识库 ID 列表
+        
+        Returns:
+            parent_id -> 父块信息的映射
+        """
         if not parent_ids:
             return {}
         
-        # 查询父块（通过 chunk_id 或 metadata 中的标识）
-        # 父块的 chunk_id 通常包含 parent_id 信息
+        # 查询父块：有 parent_id 但没有 child 标记
         stmt = select(Chunk).where(
             Chunk.tenant_id == tenant_id,
             Chunk.knowledge_base_id.in_(kb_ids),
+            Chunk.extra_metadata["parent_id"].astext.in_(parent_ids),
+            # 父块没有 child 标记或 child=False
+            or_(
+                Chunk.extra_metadata["child"].astext.is_(None),
+                Chunk.extra_metadata["child"].astext == "false",
+                ~Chunk.extra_metadata.has_key("child"),
+            ),
         )
         
         result = await session.execute(stmt)
@@ -100,10 +121,8 @@ class ParentDocumentRetriever(BaseRetrieverOperator):
         for chunk in chunks:
             meta = chunk.extra_metadata or {}
             chunk_parent_id = meta.get("parent_id")
-            # 如果是父块本身（没有 child 标记或 parent_id 等于自己的标识）
-            is_parent = not meta.get("child", False)
             
-            if is_parent and chunk_parent_id in parent_ids:
+            if chunk_parent_id and chunk_parent_id in parent_ids:
                 parent_map[chunk_parent_id] = {
                     "chunk_id": str(chunk.id),
                     "text": chunk.text,

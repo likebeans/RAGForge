@@ -99,3 +99,14 @@ class APIKey(TimestampMixin, Base):
     
     # Key 描述/备注
     description: Mapped[str | None] = mapped_column(Text)
+    
+    # ==================== 身份信息（用于文档 ACL）====================
+    # 可选的身份信息，用于 Security Trimming 文档过滤
+    # 格式：{
+    #   "user_id": "zhang_san",           # 用于匹配 acl_allow_users
+    #   "roles": ["sales", "viewer"],     # 用于匹配 acl_allow_roles
+    #   "groups": ["dept_sales"],         # 用于匹配 acl_allow_groups
+    #   "clearance": "restricted"         # 敏感度访问级别 (public/restricted)
+    # }
+    # 如果为空，则只能访问 sensitivity_level=public 的文档
+    identity: Mapped[dict | None] = mapped_column(JSON)

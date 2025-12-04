@@ -19,6 +19,7 @@ from app.config import get_settings
 from app.db.session import init_models
 from app.infra.logging import setup_logging, get_logger
 from app.middleware import RequestTraceMiddleware
+from app.middleware.audit import AuditLogMiddleware
 
 # 配置结构化日志
 setup_logging()
@@ -77,8 +78,9 @@ app = FastAPI(
     # redoc_url="/redoc",     # ReDoc 路径
 )
 
-# 注册请求追踪中间件
-app.add_middleware(RequestTraceMiddleware)
+# 注册中间件（注意顺序：后添加的先执行）
+app.add_middleware(AuditLogMiddleware)  # 审计日志
+app.add_middleware(RequestTraceMiddleware)  # 请求追踪
 
 # 注册所有 API 路由
 # api_router 包含了所有的 API 端点（知识库、文档、查询等）

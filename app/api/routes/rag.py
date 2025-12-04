@@ -90,7 +90,11 @@ async def rag_generate(
         )
         
         return response
-        
+    except PermissionError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "NO_PERMISSION", "detail": str(e)},
+        )
     except Exception as e:
         logger.error(f"RAG 生成失败: {e}", exc_info=True)
         raise HTTPException(

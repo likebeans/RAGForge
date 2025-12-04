@@ -18,6 +18,7 @@ class APIKeyCreate(BaseModel):
     rate_limit_per_minute: int | None = Field(default=None, ge=1, description="独立限流配置")
     scope_kb_ids: list[str] | None = Field(default=None, description="KB 白名单，空表示不限制")
     description: str | None = Field(default=None, max_length=500, description="描述/备注")
+    identity: dict | None = Field(default=None, description="用户身份信息，用于 ACL 权限控制")
 
 
 class APIKeyInfo(BaseModel):
@@ -33,6 +34,7 @@ class APIKeyInfo(BaseModel):
     is_initial: bool = False  # 是否为初始管理员 Key
     scope_kb_ids: list[str] | None = None  # KB 白名单
     description: str | None = None
+    identity: dict | None = None  # 用户身份信息（用于 ACL）
 
     class Config:
         from_attributes = True

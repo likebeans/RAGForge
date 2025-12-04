@@ -53,6 +53,7 @@ RetrieverName = Literal[
     "llama_dense",
     "llama_bm25",
     "llama_hybrid",
+    "raptor",  # RAPTOR 多层次索引检索
 ]
 
 

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 # 类型定义（用于验证）
 TenantStatus = Literal["active", "disabled", "pending"]
 TenantPlan = Literal["free", "standard", "enterprise"]
+IsolationStrategy = Literal["partition", "collection", "auto"]
 
 
 class TenantCreate(BaseModel):
@@ -27,6 +28,7 @@ class TenantUpdate(BaseModel):
     quota_kb_count: int | None = Field(default=None, ge=-1)
     quota_doc_count: int | None = Field(default=None, ge=-1)
     quota_storage_mb: int | None = Field(default=None, ge=-1)
+    isolation_strategy: IsolationStrategy | None = Field(default=None, description="存储隔离策略: partition/collection/auto")
 
 
 class TenantResponse(BaseModel):
@@ -35,6 +37,7 @@ class TenantResponse(BaseModel):
     name: str
     plan: str
     status: TenantStatus
+    isolation_strategy: str = Field(default="auto", description="存储隔离策略")
     quota_kb_count: int
     quota_doc_count: int
     quota_storage_mb: int

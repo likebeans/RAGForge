@@ -59,7 +59,11 @@ class Settings(BaseSettings):
     # ==================== 向量数据库配置 (Qdrant) ====================
     qdrant_url: str = "http://localhost:6333"  # Qdrant 服务地址
     qdrant_api_key: str | None = None          # Qdrant API Key（云服务需要）
-    qdrant_collection_prefix: str = "kb_"      # Collection 名称前缀，用于多租户隔离
+    qdrant_collection_prefix: str = "kb_"      # Collection 名称前缀，用于 collection 隔离模式
+    qdrant_shared_collection: str = "kb_shared"  # 共享 Collection 名称，用于 partition 隔离模式
+    
+    # 自动隔离策略阈值：向量数超过此值自动切换到 collection 模式
+    isolation_auto_threshold: int = 10000
     
     # ==================== 模型提供商 API 配置 ====================
     # 支持的提供商: openai / ollama / gemini / qwen / kimi / deepseek / zhipu

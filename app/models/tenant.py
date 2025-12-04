@@ -79,3 +79,15 @@ class Tenant(TimestampMixin, Base):
     
     # 禁用原因：记录禁用原因，便于审计
     disabled_reason: Mapped[str | None] = mapped_column(Text)
+    
+    # ==================== 存储隔离配置 ====================
+    
+    # 向量库隔离策略：
+    # - partition: 共享 Collection，按 tenant_id 过滤（适合小客户，节省资源）
+    # - collection: 独立 Collection（适合中大客户，性能更好）
+    # - auto: 根据数据量自动选择（默认，<10K vectors 用 partition）
+    isolation_strategy: Mapped[str] = mapped_column(
+        String(20),
+        default="auto",
+        nullable=False,
+    )

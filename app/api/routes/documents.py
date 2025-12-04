@@ -86,6 +86,11 @@ async def ingest_document_endpoint(
         content=content,
         metadata=payload.metadata,
         source=payload.source or ("url" if payload.source_url else payload.source),
+        # ACL 字段
+        sensitivity_level=payload.sensitivity_level,
+        acl_users=payload.acl_users,
+        acl_roles=payload.acl_roles,
+        acl_groups=payload.acl_groups,
     )
     
     # 执行文档摄取（切分、向量化、存储）

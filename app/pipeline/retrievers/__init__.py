@@ -14,6 +14,7 @@
 - SelfQueryRetriever     : 自查询检索（LLM 解析元数据过滤）
 - ParentDocumentRetriever: 父文档检索（检索小块返回父块）
 - EnsembleRetriever      : 集成检索（任意组合多个检索器）
+- RaptorRetriever        : RAPTOR 检索（多层次摘要树检索）
 """
 
 from app.pipeline.retrievers.bm25 import BM25Retriever  # noqa: F401
@@ -28,6 +29,7 @@ from app.pipeline.retrievers.multi_query import MultiQueryRetriever  # noqa: F40
 from app.pipeline.retrievers.self_query import SelfQueryRetriever  # noqa: F401
 from app.pipeline.retrievers.parent_document import ParentDocumentRetriever  # noqa: F401
 from app.pipeline.retrievers.ensemble import EnsembleRetriever  # noqa: F401
+from app.pipeline.retrievers.raptor import RaptorRetriever  # noqa: F401
 
 __all__ = [
     "DenseRetriever",
@@ -42,4 +44,5 @@ __all__ = [
     "SelfQueryRetriever",
     "ParentDocumentRetriever",
     "EnsembleRetriever",
+    "RaptorRetriever",
 ]

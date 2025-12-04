@@ -15,7 +15,7 @@ FastAPI 的依赖注入系统会自动调用这些函数，并将结果注入到
 
 from typing import Literal
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.api_key import APIKeyContext, get_api_key_context
@@ -24,13 +24,20 @@ from app.db.session import get_db
 from app.models import Tenant
 
 
-async def get_tenant(context: APIKeyContext = Depends(get_api_key_context)) -> Tenant:
+async def get_tenant(
+    request: Request,
+    context: APIKeyContext = Depends(get_api_key_context),
+) -> Tenant:
     """
     获取当前请求的租户
     
     通过 API Key 认证后，从上下文中提取租户信息。
     用于实现多租户数据隔离。
+    同时设置 request.state 供审计日志中间件使用。
     """
+    # 设置 request.state 供审计日志中间件使用
+    request.state.tenant_id = context.tenant.id
+    request.state.api_key_id = context.api_key.id
     return context.tenant
 
 

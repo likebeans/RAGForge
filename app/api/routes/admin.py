@@ -292,6 +292,7 @@ async def create_tenant_api_key(
         rate_limit_per_minute=data.rate_limit_per_minute,
         scope_kb_ids=data.scope_kb_ids,
         description=data.description,
+        identity=data.identity,
     )
     db.add(api_key)
     await db.commit()
@@ -309,6 +310,7 @@ async def create_tenant_api_key(
         is_initial=api_key.is_initial,
         scope_kb_ids=api_key.scope_kb_ids,
         description=api_key.description,
+        identity=api_key.identity,
         api_key=raw_key,
     )
 

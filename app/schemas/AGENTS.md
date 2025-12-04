@@ -135,12 +135,14 @@ params = RetrieveParams(
     score_threshold=0.5,
     metadata_filter={"source": "pdf"},
 )
-chunks, retriever_name = await retrieve_chunks(
+chunks, retriever_name, acl_blocked = await retrieve_chunks(
     tenant_id=tenant_id,
     kbs=kbs,
     params=params,
     session=session,
 )
+if acl_blocked:
+    print("检索结果被 ACL 过滤")
 
 # 文档摄取
 params = IngestionParams(
@@ -201,10 +203,12 @@ async def retrieve(payload: RetrieveRequest, ...):
     )
     
     # 调用服务层
-    results, retriever_name = await retrieve_chunks(
+    results, retriever_name, acl_blocked = await retrieve_chunks(
         tenant_id=tenant.id,
         kbs=kbs,
         params=params,
         session=db,
     )
+    if acl_blocked:
+        raise HTTPException(status_code=403, detail="检索结果被 ACL 过滤")
 ```

@@ -132,6 +132,7 @@ tests/               # 测试文件
 - `llama_dense`: LlamaIndex 稠密检索（真实 Embedding）
 - `llama_bm25`: LlamaIndex BM25 检索（从 DB 加载）
 - `llama_hybrid`: LlamaIndex 混合检索
+- `raptor`: RAPTOR 多层次索引检索（递归聚类+摘要树）
 
 ### 查询增强 (Query Transforms)
 - `HyDEQueryTransform`: 假设文档嵌入查询变换
@@ -303,3 +304,54 @@ RERANK_PROVIDER=none
 - `model.llm_*`: 仅 hyde/multi_query/self_query 检索器返回
 - `model.rerank_*`: 仅 fusion 检索器且启用 rerank 时返回
 - `hyde_queries`: HyDE 检索器返回 LLM 生成的假设文档
+
+## RAPTOR 索引器
+
+RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval) 是一种多层次索引方法。
+
+### 原理
+
+1. 将文档切分为 chunks
+2. 对 chunks 进行向量聚类
+3. 对每个聚类使用 LLM 生成摘要
+4. 递归处理摘要，直到达到最大层数
+
+### 使用示例
+
+```python
+from app.pipeline.indexers.raptor import create_raptor_indexer_from_config
+
+# 创建索引器
+indexer = create_raptor_indexer_from_config()
+
+# 从文本构建索引
+result = indexer.build_from_texts([
+    "文档1内容...",
+    "文档2内容...",
+])
+print(f"总节点: {result.total_nodes}, 层数: {result.levels}")
+
+# 检索
+retriever = indexer.get_retriever(mode="collapsed", top_k=5)
+results = retriever.retrieve("查询问题")
+for r in results:
+    print(f"[Level {r['raptor_level']}] {r['text'][:50]}...")
+```
+
+### 检索模式
+
+- `collapsed`: 扁平化检索，所有层级节点一起 top-k（默认）
+- `tree_traversal`: 树遍历检索，从顶层向下逐层筛选
+
+### 返回字段
+
+- `raptor_level`: 节点层级（-1=原始文档，0/1/2=摘要层级）
+
+### 依赖
+
+```toml
+# pyproject.toml
+"llama-index-packs-raptor>=0.1.3"
+"llama-index-llms-ollama>=0.1.0"
+"llama-index-embeddings-ollama>=0.1.0"
+```

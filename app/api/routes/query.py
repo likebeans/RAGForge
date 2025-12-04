@@ -24,7 +24,7 @@ router = APIRouter()
 async def retrieve(
     payload: RetrieveRequest,
     tenant=Depends(get_tenant),
-    _: APIKeyContext = Depends(get_current_api_key),
+    api_key_ctx: APIKeyContext = Depends(get_current_api_key),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -57,17 +57,27 @@ async def retrieve(
         rerank_top_k=payload.rerank_top_k,
     )
     
+    # 从 API Key 构建用户上下文（用于 ACL 权限过滤）
+    user_context = api_key_ctx.get_user_context()
+    
     try:
-        results, retriever_name = await retrieve_chunks(
+        results, retriever_name, acl_blocked = await retrieve_chunks(
             tenant_id=tenant.id,
             kbs=kbs,
             params=params,
             session=db,  # 传入 session 用于 Context Window
+            user_context=user_context,  # 传入用户上下文用于 Security Trimming
         )
     except KBConfigError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "KB_CONFIG_ERROR", "detail": str(e)},
+        )
+
+    if acl_blocked:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "NO_PERMISSION", "detail": "检索结果已被权限控制过滤，请检查文档敏感度或 API Key 权限"},
         )
 
     # 构建模型信息

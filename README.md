@@ -28,9 +28,12 @@
 - **📄 文档摄取** - 上传文档，自动切分、向量化、索引
 - **🔍 语义检索** - 支持稠密向量、BM25、混合检索、Rerank
 - **🤖 RAG 生成** - 多 LLM 提供商支持，检索增强生成
-- **🔑 API Key 认证** - 多租户隔离，角色权限（admin/write/read），请求限流
-- **📊 可观测性** - 结构化日志、请求追踪（X-Request-ID）
+- **🔑 企业权限系统** - 三层权限模型（操作权限 + KB范围 + 文档ACL）
+- **🔒 Security Trimming** - 检索时自动过滤无权限文档
+- **🏢 多租户存储隔离** - Partition/Collection/Auto 三种策略
+- **📊 可观测性** - 结构化日志、请求追踪、指标收集
 - **📝 审计日志** - 全链路 API 访问记录，支持查询统计
+- **🛠️ 运维接口** - 健康检查、就绪检查、系统指标
 
 ### 技术亮点
 - **可插拔算法框架** - 切分器、检索器、查询变换可配置替换
@@ -39,11 +42,22 @@
 - **异步架构** - 基于 FastAPI + asyncpg，高并发性能
 - **高级 RAG 功能**:
   - **HyDE** - LLM 生成假设文档，提升语义检索效果
-  - **Multi-Query** - LLM 生成查询变体，RRF 融合，返回完整检索详情
+  - **Multi-Query** - LLM 生成查询变体，RRF 融合
+  - **RAPTOR** - 递归聚类 + LLM 摘要构建多层次索引树
+  - **Parent-Child Chunking** - 父子分块，大块上下文 + 小块精确匹配
   - **Rerank** - 支持多种重排模型（bge-reranker、Cohere 等）
   - **文档摘要** - 摄取时自动生成文档摘要
   - **Chunk Enrichment** - LLM 增强 Chunk 上下文语义
   - **上下文窗口** - 检索结果自动扩展前后文
+
+---
+
+## 权限过滤流程（重要）
+
+- 检索会先完成向量/BM25 等搜索，再做 ACL Security Trimming；不会提前拒绝。
+- ACL 过滤依据 API Key 的 identity（user/roles/groups/clearance）与文档的 `sensitivity_level`/ACL 白名单。
+- 命中结果但被 ACL 全部过滤时，接口返回 `403`，`code=NO_PERMISSION`（检索日志仍会记录命中数量）。
+- 解决办法：使用具备更高 clearance 的 Key、调整文档 `sensitivity_level` 为 `public`，或在文档 ACL 白名单中加入该 Key 的用户/角色/用户组并重新索引。
 
 ---
 
@@ -227,7 +241,9 @@ uv run pytest test/test_live_e2e.py -v
 
 | 方法 | 端点 | 说明 |
 |------|------|------|
-| `GET` | `/health` | 健康检查 |
+| `GET` | `/health` | 存活检查（Liveness） |
+| `GET` | `/ready` | 就绪检查（Readiness，检查 DB/Qdrant） |
+| `GET` | `/metrics` | 系统指标（运行时间、调用统计） |
 | **管理员接口** (需要 `X-Admin-Token` 头) |
 | `POST` | `/admin/tenants` | 创建租户（返回初始 API Key） |
 | `GET` | `/admin/tenants` | 列出租户 |
@@ -435,6 +451,64 @@ curl -X POST "http://localhost:8020/v1/rag" \
 | API | 8020 | 8020 |
 | PostgreSQL | 5432 | 5435 |
 | Qdrant | 6333 | 6333 |
+
+---
+
+## 权限系统
+
+### 三层权限模型
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 第一层：操作权限 (APIKey.role)                               │
+│   admin → 全部权限 + 管理 API Key                           │
+│   write → 创建 KB、上传文档、检索                            │
+│   read  → 仅检索和列表                                      │
+├─────────────────────────────────────────────────────────────┤
+│ 第二层：KB 范围 (APIKey.scope_kb_ids)                       │
+│   白名单模式，null 表示不限制                                │
+├─────────────────────────────────────────────────────────────┤
+│ 第三层：文档过滤 (sensitivity + ACL)                         │
+│   public     → 租户内所有 Key 可访问                         │
+│   restricted → 需要 ACL 白名单匹配                           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 创建带身份的 API Key
+
+```bash
+curl -X POST "http://localhost:8020/admin/tenants/{id}/api-keys" \
+  -H "X-Admin-Token: $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "销售部专用 Key",
+    "role": "read",
+    "scope_kb_ids": ["kb_sales", "kb_products"],
+    "identity": {
+      "user_id": "sales_team",
+      "roles": ["sales", "viewer"],
+      "groups": ["dept_sales"],
+      "clearance": "restricted"
+    }
+  }'
+```
+
+### 文档敏感度设置
+
+```bash
+# 上传受限文档（需要 ACL 匹配）
+curl -X POST "http://localhost:8020/v1/documents" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "knowledge_base_id": "<kb_id>",
+    "title": "销售策略文档",
+    "content": "机密内容...",
+    "sensitivity_level": "restricted",
+    "acl_allow_roles": ["sales", "manager"],
+    "acl_allow_groups": ["dept_sales"]
+  }'
+```
 
 ---
 
