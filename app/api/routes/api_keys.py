@@ -161,3 +161,28 @@ async def update_api_key(
     await db.commit()
     await db.refresh(api_key)
     return api_key
+
+
+@router.delete("/v1/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_api_key(
+    key_id: str = Path(...),
+    tenant=Depends(get_tenant),
+    _: APIKeyContext = Depends(get_current_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """删除 API Key"""
+    result = await db.execute(
+        select(APIKey).where(
+            APIKey.id == key_id,
+            APIKey.tenant_id == tenant.id,
+        )
+    )
+    api_key = result.scalar_one_or_none()
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "API_KEY_NOT_FOUND", "detail": "API key not found"},
+        )
+
+    await db.delete(api_key)
+    await db.commit()

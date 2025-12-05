@@ -1,6 +1,6 @@
 # Self-RAG Pipeline
 
-多租户知识库检索服务，提供 OpenAI 兼容的 API 接口。
+多租户知识库检索服务，提供 OpenAI 兼容的 API 接口和完整的 Python SDK。
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
@@ -34,6 +34,8 @@
 - **📊 可观测性** - 结构化日志、请求追踪、指标收集
 - **📝 审计日志** - 全链路 API 访问记录，支持查询统计
 - **🛠️ 运维接口** - 健康检查、就绪检查、系统指标
+- **🔌 OpenAI 兼容接口** - Embeddings、Chat Completions（RAG 模式）
+- **📦 Python SDK** - 完整的客户端库，支持所有功能
 
 ### 技术亮点
 - **可插拔算法框架** - 切分器、检索器、查询变换可配置替换
@@ -272,6 +274,9 @@ uv run pytest test/test_live_e2e.py -v
 | `POST` | `/v1/retrieve` | 执行检索（返回模型信息） |
 | **RAG 生成** |
 | `POST` | `/v1/rag` | RAG 生成（检索 + LLM 生成） |
+| **OpenAI 兼容接口** |
+| `POST` | `/v1/embeddings` | OpenAI Embeddings API |
+| `POST` | `/v1/chat/completions` | OpenAI Chat Completions API（RAG 模式） |
 
 ### 请求示例
 

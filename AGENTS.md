@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-Self-RAG Pipeline 是一个多租户知识库检索服务，提供 OpenAI 兼容的 API 接口。
+Self-RAG Pipeline 是一个多租户知识库检索服务，提供 OpenAI 兼容的 API 接口和完整的 Python SDK。
 
 **核心功能**：
 - 租户管理（创建、禁用、配额）
@@ -15,6 +15,8 @@ Self-RAG Pipeline 是一个多租户知识库检索服务，提供 OpenAI 兼容
 - API Key 认证与限流（角色权限）
 - 可观测性（结构化日志、请求追踪）
 - 审计日志（全链路访问记录）
+- **OpenAI 兼容接口**（Embeddings、Chat Completions）
+- **Python SDK**（完整的客户端库）
 
 **技术栈**：
 - Python 3.11+ / FastAPI / SQLAlchemy 2.0 (async)
@@ -354,4 +356,30 @@ for r in results:
 "llama-index-packs-raptor>=0.1.3"
 "llama-index-llms-ollama>=0.1.0"
 "llama-index-embeddings-ollama>=0.1.0"
+```
+
+---
+
+## OpenAI 兼容接口与 Python SDK
+
+项目提供完整的 OpenAI 兼容 API 和 Python SDK，详见：
+
+- **详细文档**: `AGENTS_OPENAI_SDK.md`
+- **SDK 文档**: `sdk/README.md`
+- **测试脚本**: `test_openai_sdk.py`
+- **测试总结**: `docs/OpenAI接口和SDK测试总结.md`
+
+### 快速示例
+
+```python
+from kb_service_sdk import KBServiceClient
+
+client = KBServiceClient(api_key="kb_sk_xxx", base_url="http://localhost:8020")
+
+# OpenAI 兼容接口
+response = client.openai.chat_completions(
+    messages=[{"role": "user", "content": "Python 有什么应用？"}],
+    model="gpt-4",
+    knowledge_base_ids=["kb1"]  # 启用 RAG
+)
 ```
