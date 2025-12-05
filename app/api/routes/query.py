@@ -46,6 +46,22 @@ async def retrieve(
             detail={"code": "KB_NOT_FOUND", "detail": "One or more knowledge bases not found for tenant"},
         )
     
+    # 检查 API Key 的 KB 白名单 (scope_kb_ids)
+    scope_kb_ids = api_key_ctx.api_key.scope_kb_ids
+    if scope_kb_ids:
+        # 如果设置了白名单，检查请求的 KB 是否都在白名单中
+        requested_kb_ids = set(payload.knowledge_base_ids)
+        allowed_kb_ids = set(scope_kb_ids)
+        unauthorized_kbs = requested_kb_ids - allowed_kb_ids
+        if unauthorized_kbs:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "KB_NOT_IN_SCOPE",
+                    "detail": f"API Key 无权访问以下知识库: {list(unauthorized_kbs)}"
+                },
+            )
+    
     # 构建检索参数对象
     params = RetrieveParams(
         query=payload.query,

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Query, 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_api_key, get_db_session, get_tenant
+from app.api.deps import get_current_api_key, get_db_session, get_tenant, require_role
 from app.auth.api_key import APIKeyContext
 from app.infra.bm25_store import bm25_store
 from app.infra.vector_store import vector_store
@@ -40,7 +40,7 @@ async def ingest_document_endpoint(
     payload: DocumentIngestRequest,
     kb_id: str = Path(..., description="Knowledge base ID"),
     tenant=Depends(get_tenant),
-    _: APIKeyContext = Depends(get_current_api_key),
+    context: APIKeyContext = Depends(require_role("admin", "write")),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -281,7 +281,7 @@ async def list_document_chunks(
 async def delete_document(
     doc_id: str = Path(..., description="Document ID"),
     tenant=Depends(get_tenant),
-    _: APIKeyContext = Depends(get_current_api_key),
+    context: APIKeyContext = Depends(require_role("admin", "write")),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -347,7 +347,7 @@ async def upload_file_endpoint(
     title: str | None = Form(default=None, description="文档标题（可选，默认使用文件名）"),
     source: str | None = Form(default=None, description="来源类型"),
     tenant=Depends(get_tenant),
-    _: APIKeyContext = Depends(get_current_api_key),
+    context: APIKeyContext = Depends(require_role("admin", "write")),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -424,7 +424,7 @@ async def batch_ingest_endpoint(
     payload: BatchIngestRequest,
     kb_id: str = Path(..., description="Knowledge base ID"),
     tenant=Depends(get_tenant),
-    _: APIKeyContext = Depends(get_current_api_key),
+    context: APIKeyContext = Depends(require_role("admin", "write")),
     db: AsyncSession = Depends(get_db_session),
 ):
     """

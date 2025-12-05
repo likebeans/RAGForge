@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_api_key, get_db_session, get_tenant
+from app.api.deps import get_current_api_key, get_db_session, get_tenant, require_role
 from app.auth.api_key import APIKeyContext
 from app.exceptions import KBConfigError
 from app.infra.vector_store import vector_store
@@ -33,7 +33,7 @@ router = APIRouter()
 async def create_knowledge_base(
     payload: KnowledgeBaseCreate,
     tenant=Depends(get_tenant),
-    _: APIKeyContext = Depends(get_current_api_key),
+    context: APIKeyContext = Depends(require_role("admin", "write")),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -142,7 +142,7 @@ async def update_knowledge_base(
     payload: KnowledgeBaseUpdate,
     kb_id: str,
     tenant=Depends(get_tenant),
-    _: APIKeyContext = Depends(get_current_api_key),
+    context: APIKeyContext = Depends(require_role("admin", "write")),
     db: AsyncSession = Depends(get_db_session),
 ):
     result = await db.execute(
@@ -182,7 +182,7 @@ async def update_knowledge_base(
 async def delete_knowledge_base(
     kb_id: str,
     tenant=Depends(get_tenant),
-    _: APIKeyContext = Depends(get_current_api_key),
+    context: APIKeyContext = Depends(require_role("admin", "write")),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
