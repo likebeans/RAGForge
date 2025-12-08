@@ -1,0 +1,647 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { useDropzone } from "react-dropzone";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  ChevronLeft,
+  Upload,
+  FileText,
+  Trash2,
+  RefreshCw,
+  Loader2,
+  File,
+  Plus,
+  Database,
+  BookOpen,
+  Sparkles,
+  Brain,
+  Lightbulb,
+  ScrollText,
+  Settings,
+  GraduationCap,
+  FolderOpen,
+  Archive,
+  Search,
+  MoreHorizontal,
+  Calendar,
+  Layers,
+  Eye,
+} from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useAppStore } from "@/lib/store";
+import { Document } from "@/lib/api";
+import { cn } from "@/lib/utils";
+
+// 与列表页面共享的封面图标
+const COVER_ICONS = [
+  { id: "database", icon: Database, color: "bg-blue-500" },
+  { id: "book", icon: BookOpen, color: "bg-green-500" },
+  { id: "sparkles", icon: Sparkles, color: "bg-purple-500" },
+  { id: "brain", icon: Brain, color: "bg-pink-500" },
+  { id: "lightbulb", icon: Lightbulb, color: "bg-yellow-500" },
+  { id: "graduation", icon: GraduationCap, color: "bg-indigo-500" },
+  { id: "folder", icon: FolderOpen, color: "bg-orange-500" },
+  { id: "archive", icon: Archive, color: "bg-teal-500" },
+];
+
+const getKbCover = (kbId: string): string => {
+  if (typeof window === "undefined") return "database";
+  const covers = JSON.parse(localStorage.getItem("kb_covers") || "{}");
+  return covers[kbId] || "database";
+};
+
+// 左侧导航菜单项
+const NAV_ITEMS = [
+  { id: "files", label: "文件列表", icon: FileText },
+  { id: "search", label: "检索测试", icon: Search },
+  { id: "logs", label: "日志", icon: ScrollText },
+  { id: "config", label: "配置", icon: Settings },
+];
+
+export default function KnowledgeBaseDetailPage() {
+  const params = useParams();
+  const router = useRouter();
+  const kbId = params.id as string;
+  
+  const { client, isConnected, knowledgeBases } = useAppStore();
+  
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
+  const [coverIconId, setCoverIconId] = useState("database");
+  const [activeNav, setActiveNav] = useState("files");
+  const [searchQuery, setSearchQuery] = useState("");
+  
+  // 上传文件对话框
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [parseOnCreate, setParseOnCreate] = useState(false);
+  
+  // 新增空文件对话框
+  const [newFileDialogOpen, setNewFileDialogOpen] = useState(false);
+  const [newFileName, setNewFileName] = useState("");
+  
+  // 删除确认
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
+
+  const kb = knowledgeBases.find((k) => k.id === kbId);
+  
+  // 获取封面
+  useEffect(() => {
+    setCoverIconId(getKbCover(kbId));
+  }, [kbId]);
+  
+  const coverIcon = COVER_ICONS.find((c) => c.id === coverIconId) || COVER_ICONS[0];
+  const CoverIconComponent = coverIcon.icon;
+  
+  // 过滤文档
+  const filteredDocuments = documents.filter((doc) =>
+    doc.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  // 加载文档列表
+  const loadDocuments = useCallback(async () => {
+    if (!client || !kbId) return;
+    setIsLoading(true);
+    try {
+      const result = await client.listDocuments(kbId);
+      setDocuments(result.items || []);
+    } catch (error) {
+      toast.error(`加载文档失败: ${(error as Error).message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [client, kbId]);
+
+  useEffect(() => {
+    if (client && isConnected && kbId) {
+      loadDocuments();
+    }
+  }, [client, isConnected, kbId, loadDocuments]);
+
+  // 文件上传
+  const onDrop = useCallback(async (acceptedFiles: File[]) => {
+    if (!client) return;
+    
+    setIsUploading(true);
+    const newProgress: Record<string, number> = {};
+    
+    for (const file of acceptedFiles) {
+      newProgress[file.name] = 0;
+      setUploadProgress({ ...newProgress });
+      
+      try {
+        await client.uploadFile(kbId, file);
+        newProgress[file.name] = 100;
+        setUploadProgress({ ...newProgress });
+        toast.success(`${file.name} 上传成功`);
+      } catch (error) {
+        toast.error(`${file.name} 上传失败: ${(error as Error).message}`);
+        delete newProgress[file.name];
+      }
+    }
+    
+    setIsUploading(false);
+    setUploadProgress({});
+    loadDocuments();
+  }, [client, kbId, loadDocuments]);
+
+
+  // 新增空文件
+  const handleCreateEmptyFile = async () => {
+    if (!client || !newFileName.trim()) return;
+    
+    setIsUploading(true);
+    try {
+      // 创建一个空内容的文档
+      await client.uploadDocument(kbId, newFileName.trim(), " ");
+      toast.success("文件创建成功");
+      setNewFileDialogOpen(false);
+      setNewFileName("");
+      loadDocuments();
+    } catch (error) {
+      toast.error(`创建失败: ${(error as Error).message}`);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // 打开上传文件对话框
+  const openUploadDialog = () => {
+    setPendingFiles([]);
+    setParseOnCreate(false);
+    setUploadDialogOpen(true);
+  };
+
+  // 处理对话框内的文件选择（拖拽或点击）
+  const handleDialogFileDrop = useCallback((acceptedFiles: File[]) => {
+    setPendingFiles((prev) => [...prev, ...acceptedFiles]);
+  }, []);
+
+  // 移除待上传文件
+  const removePendingFile = (index: number) => {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // 确认上传
+  const handleConfirmUpload = async () => {
+    if (pendingFiles.length === 0) return;
+    
+    setUploadDialogOpen(false);
+    // 使用现有的 onDrop 函数上传
+    onDrop(pendingFiles);
+    setPendingFiles([]);
+  };
+
+  // 对话框内的 dropzone
+  const {
+    getRootProps: getDialogRootProps,
+    getInputProps: getDialogInputProps,
+    isDragActive: isDialogDragActive,
+  } = useDropzone({
+    onDrop: handleDialogFileDrop,
+    accept: {
+      'application/pdf': ['.pdf'],
+      'text/markdown': ['.md'],
+      'text/plain': ['.txt'],
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+    },
+    disabled: isUploading,
+  });
+
+  // 删除文档 - 打开确认对话框
+  const handleDeleteClick = (docId: string, title: string) => {
+    setDeleteTarget({ id: docId, title });
+    setDeleteDialogOpen(true);
+  };
+
+  // 确认删除
+  const confirmDelete = async () => {
+    if (!client || !deleteTarget) return;
+    
+    try {
+      await client.deleteDocument(deleteTarget.id);
+      toast.success("文档已删除");
+      loadDocuments();
+    } catch (error) {
+      toast.error(`删除失败: ${(error as Error).message}`);
+    } finally {
+      setDeleteDialogOpen(false);
+      setDeleteTarget(null);
+    }
+  };
+
+  // 格式化日期
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return "-";
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return "-";
+    return date.toLocaleString("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  return (
+    <div className="flex h-[calc(100vh-3.5rem)]">
+      {/* 左侧边栏 */}
+      <div className="w-52 border-r bg-muted/30 flex flex-col shrink-0">
+        {/* 返回按钮 */}
+        <div className="p-4 border-b">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={() => router.push("/knowledge-bases")}
+            className="gap-2 text-muted-foreground hover:text-foreground"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            返回知识库
+          </Button>
+        </div>
+
+        {/* 知识库信息卡片 */}
+        <div className="p-4 border-b">
+          <div className="flex items-center gap-3">
+            <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center shrink-0", coverIcon.color)}>
+              <CoverIconComponent className="h-6 w-6 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h2 className="font-semibold truncate" title={kb?.name}>
+                {kb?.name || "知识库"}
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {documents.length} 个文件
+              </p>
+            </div>
+          </div>
+          {kb?.description && (
+            <p className="text-xs text-muted-foreground mt-3 line-clamp-2">
+              {kb.description}
+            </p>
+          )}
+        </div>
+
+        {/* 导航菜单 */}
+        <nav className="flex-1 p-2">
+          {NAV_ITEMS.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveNav(item.id)}
+                className={cn(
+                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                  activeNav === item.id
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+
+      {/* 右侧主内容区 */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* 顶部工具栏 */}
+        <div className="flex items-center justify-between px-6 py-4 border-b bg-background">
+          <div>
+            <h1 className="text-xl font-semibold">文件列表</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              上传文档后即可进行智能问答
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            {/* 搜索框 */}
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="搜索文档..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-8 h-8 w-48 text-sm"
+              />
+            </div>
+            <Button variant="outline" size="sm" onClick={loadDocuments} disabled={isLoading}>
+              <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+            </Button>
+            {/* 新增文件下拉菜单 */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" disabled={!isConnected || isUploading}>
+                  {isUploading ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Plus className="h-4 w-4 mr-2" />
+                  )}
+                  新增文件
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-40">
+                <DropdownMenuItem onClick={openUploadDialog}>
+                  <Upload className="h-4 w-4 mr-2" />
+                  上传文件
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setNewFileDialogOpen(true)}>
+                  <FileText className="h-4 w-4 mr-2" />
+                  新增空文件
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+
+        {/* 内容区域 */}
+        <div className="flex-1 flex flex-col min-h-0 px-6">
+          {/* 上传进度显示 */}
+          {Object.keys(uploadProgress).length > 0 && (
+            <div className="my-4 p-4 border rounded-lg bg-muted/30">
+              <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                正在上传...
+              </h4>
+              <div className="space-y-2">
+                {Object.entries(uploadProgress).map(([name, progress]) => (
+                  <div key={name} className="flex items-center gap-3 text-sm">
+                    <File className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <span className="flex-1 truncate">{name}</span>
+                    <div className="w-32 h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div className="h-full bg-primary transition-all" style={{ width: `${progress}%` }} />
+                    </div>
+                    <span className="w-10 text-right text-xs text-muted-foreground">{progress}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 文档列表 - 直接填充内容区域 */}
+          <div className="flex-1 flex flex-col min-h-0 overflow-auto">
+            {!isConnected ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <Database className="h-10 w-10 text-muted-foreground/50 mb-3" />
+                <p className="text-muted-foreground">请先在设置页面配置 API Key</p>
+              </div>
+            ) : isLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : filteredDocuments.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <FileText className="h-10 w-10 text-muted-foreground/50 mb-3" />
+                <p className="text-muted-foreground">
+                  {searchQuery ? "没有找到匹配的文档" : "暂无文档，上传文件开始使用"}
+                </p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="w-[40%]">名称</TableHead>
+                    <TableHead className="w-[20%]">上传日期</TableHead>
+                    <TableHead className="w-[15%] text-center">分块数</TableHead>
+                    <TableHead className="w-[25%] text-right">操作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredDocuments.map((doc) => (
+                    <TableRow key={doc.id} className="group">
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded bg-muted flex items-center justify-center shrink-0">
+                            <FileText className="h-4 w-4 text-muted-foreground" />
+                          </div>
+                          <span className="font-medium truncate" title={doc.title}>
+                            {doc.title}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-sm">
+                        <div className="flex items-center gap-1.5">
+                          <Calendar className="h-3.5 w-3.5" />
+                          {formatDate(doc.created_at)}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <Layers className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="text-sm font-medium">{doc.chunk_count || "-"}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button size="icon" variant="ghost" className="h-8 w-8" title="预览">
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button size="icon" variant="ghost" className="h-8 w-8">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onClick={() => handleDeleteClick(doc.id, doc.title)}
+                                className="text-destructive focus:text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                删除
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 删除确认对话框 */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要删除文档 <span className="font-medium text-foreground">"{deleteTarget?.title}"</span> 吗？
+              此操作不可恢复。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-destructive hover:bg-destructive/90">
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* 上传文件对话框 */}
+      <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>上传文件</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6 py-4">
+            {/* 创建时解析开关 */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">创建时解析</Label>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={parseOnCreate}
+                  onCheckedChange={setParseOnCreate}
+                />
+              </div>
+            </div>
+
+            {/* 文件区域 */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">文件</Label>
+              <div
+                {...getDialogRootProps()}
+                className={cn(
+                  "border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors min-h-[200px] flex flex-col items-center justify-center",
+                  isDialogDragActive ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50 bg-muted/20"
+                )}
+              >
+                <input {...getDialogInputProps()} />
+                <Upload className="h-10 w-10 mb-4 text-muted-foreground/50" />
+                {isDialogDragActive ? (
+                  <p className="text-sm text-primary font-medium">释放以添加文件</p>
+                ) : (
+                  <>
+                    <p className="text-sm text-primary font-medium mb-2">
+                      点击或拖拽文件至此区域即可上传
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      支持单次或批量上传。支持 PDF, DOCX, MD, TXT 格式。
+                    </p>
+                  </>
+                )}
+              </div>
+
+              {/* 已选文件列表 */}
+              {pendingFiles.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  <Label className="text-xs text-muted-foreground">
+                    已选择 {pendingFiles.length} 个文件
+                  </Label>
+                  <div className="max-h-32 overflow-auto space-y-1">
+                    {pendingFiles.map((file, index) => (
+                      <div key={index} className="flex items-center justify-between px-3 py-2 bg-muted/50 rounded text-sm">
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <File className="h-4 w-4 text-muted-foreground shrink-0" />
+                          <span className="truncate">{file.name}</span>
+                          <span className="text-xs text-muted-foreground shrink-0">
+                            ({(file.size / 1024).toFixed(1)} KB)
+                          </span>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 shrink-0"
+                          onClick={() => removePendingFile(index)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              onClick={handleConfirmUpload}
+              disabled={pendingFiles.length === 0}
+            >
+              保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 新增空文件对话框 */}
+      <Dialog open={newFileDialogOpen} onOpenChange={setNewFileDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>新增空文件</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <Input
+              value={newFileName}
+              onChange={(e) => setNewFileName(e.target.value)}
+              placeholder="请输入文件名..."
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNewFileDialogOpen(false)}>
+              取消
+            </Button>
+            <Button
+              onClick={handleCreateEmptyFile}
+              disabled={isUploading || !newFileName.trim()}
+            >
+              {isUploading ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4 mr-2" />
+              )}
+              创建
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

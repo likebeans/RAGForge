@@ -383,3 +383,35 @@ response = client.openai.chat_completions(
     knowledge_base_ids=["kb1"]  # 启用 RAG
 )
 ```
+
+---
+
+## 待开发项 (TODO)
+
+### Playground 后端持久化
+
+**当前状态**：Playground（RAG Pipeline 对比实验）数据存储在浏览器 localStorage，仅适合本地演示。
+
+**待开发内容**：
+
+1. **数据库模型** (`app/models/playground.py`)
+   - `Playground` 表：id, tenant_id, name, description, cover_id, created_at, updated_at
+   - `PlaygroundConfig` 表：id, playground_id, name, chunker, chunk_size, chunk_overlap, retriever, top_k, embedding_provider, embedding_model, rerank_provider, vector_db, index_type
+
+2. **API 路由** (`app/api/routes/playground.py`)
+   - `POST /v1/playgrounds` - 创建 Playground
+   - `GET /v1/playgrounds` - 列出当前租户的 Playground
+   - `GET /v1/playgrounds/{id}` - 获取详情（含配置列表）
+   - `PUT /v1/playgrounds/{id}` - 更新名称/描述
+   - `DELETE /v1/playgrounds/{id}` - 删除
+   - `POST /v1/playgrounds/{id}/configs` - 添加配置
+   - `PUT /v1/playgrounds/{id}/configs/{config_id}` - 更新配置
+   - `DELETE /v1/playgrounds/{id}/configs/{config_id}` - 删除配置
+
+3. **前端改造** (`frontend/src/app/(main)/compare/`)
+   - 列表页改为调用 `client.listPlaygrounds()`
+   - 详情页改为调用 `client.getPlayground(id)` 和 `client.updatePlaygroundConfigs()`
+   - 移除 localStorage 相关代码
+
+4. **SDK 扩展** (`sdk/kb_service_sdk/`)
+   - 添加 Playground 相关方法

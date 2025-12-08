@@ -15,7 +15,18 @@ API 路由汇总
 
 from fastapi import APIRouter
 
-from app.api.routes import admin, api_keys, documents, health, kb, openai_compat, query, rag
+from app.api.routes import (
+    admin,
+    api_keys,
+    conversations,
+    documents,
+    health,
+    kb,
+    openai_compat,
+    query,
+    rag,
+    rag_stream,
+)
 
 # 主路由器，包含所有 API 端点
 api_router = APIRouter()
@@ -26,6 +37,8 @@ api_router.include_router(kb.router, tags=["knowledge-bases"])
 api_router.include_router(documents.router, tags=["documents"])
 api_router.include_router(query.router, tags=["retrieve"])
 api_router.include_router(rag.router, tags=["rag"])
+api_router.include_router(rag_stream.router)  # SSE 流式 RAG
+api_router.include_router(conversations.router)  # 对话管理
 api_router.include_router(api_keys.router, tags=["api-keys"])
 api_router.include_router(admin.router)  # admin 路由自带 tags
 api_router.include_router(openai_compat.router)  # OpenAI 兼容接口

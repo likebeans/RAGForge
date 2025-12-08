@@ -26,6 +26,7 @@
 from app.models.api_key import APIKey
 from app.models.audit_log import AuditLog
 from app.models.chunk import Chunk
+from app.models.conversation import Conversation, Message
 from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase
 from app.models.tenant import Tenant
@@ -37,8 +38,10 @@ __all__ = [
     "APIKey",
     "AuditLog",
     "Chunk",
+    "Conversation",
     "Document",
     "KnowledgeBase",
+    "Message",
     "Tenant",
     "UsageLog",
     "User",

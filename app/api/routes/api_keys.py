@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_api_key, get_db_session, get_tenant
+from app.api.deps import get_db_session, get_tenant, require_role
 from app.auth.api_key import APIKeyContext, generate_api_key, hash_api_key
 from app.config import get_settings
 from app.models import APIKey
@@ -28,10 +28,10 @@ settings = get_settings()
 async def create_api_key(
     payload: APIKeyCreate,
     tenant=Depends(get_tenant),
-    _: APIKeyContext = Depends(get_current_api_key),
+    _: APIKeyContext = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """创建新的 API Key（仅此时返回完整 Key）"""
+    """创建新的 API Key（仅此时返回完整 Key，需要 admin 权限）"""
     display, hashed, prefix = generate_api_key(settings.api_key_prefix)
 
     api_key = APIKey(
@@ -39,8 +39,12 @@ async def create_api_key(
         name=payload.name,
         prefix=prefix,
         hashed_key=hashed,
+        role=payload.role,
         expires_at=payload.expires_at,
         rate_limit_per_minute=payload.rate_limit_per_minute,
+        scope_kb_ids=payload.scope_kb_ids,
+        description=payload.description,
+        identity=payload.identity,
     )
     db.add(api_key)
     await db.commit()
@@ -55,7 +59,7 @@ async def create_api_key(
 @router.get("/v1/api-keys", response_model=list[APIKeyInfo])
 async def list_api_keys(
     tenant=Depends(get_tenant),
-    _: APIKeyContext = Depends(get_current_api_key),
+    _: APIKeyContext = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db_session),
 ):
     result = await db.execute(
@@ -71,7 +75,7 @@ async def list_api_keys(
 async def revoke_api_key(
     key_id: str = Path(...),
     tenant=Depends(get_tenant),
-    _: APIKeyContext = Depends(get_current_api_key),
+    _: APIKeyContext = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db_session),
 ):
     result = await db.execute(
@@ -98,7 +102,7 @@ async def revoke_api_key(
 async def rotate_api_key(
     key_id: str = Path(...),
     tenant=Depends(get_tenant),
-    _: APIKeyContext = Depends(get_current_api_key),
+    _: APIKeyContext = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db_session),
 ):
     result = await db.execute(
@@ -134,7 +138,7 @@ async def update_api_key(
     payload: APIKeyUpdate,
     key_id: str = Path(...),
     tenant=Depends(get_tenant),
-    _: APIKeyContext = Depends(get_current_api_key),
+    _: APIKeyContext = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db_session),
 ):
     result = await db.execute(
@@ -167,7 +171,7 @@ async def update_api_key(
 async def delete_api_key(
     key_id: str = Path(...),
     tenant=Depends(get_tenant),
-    _: APIKeyContext = Depends(get_current_api_key),
+    _: APIKeyContext = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db_session),
 ):
     """删除 API Key"""

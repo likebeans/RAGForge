@@ -18,6 +18,7 @@ from app.models import KnowledgeBase
 from app.schemas.internal import RAGParams, RetrieveParams
 from app.schemas.query import ChunkHit
 from app.schemas.rag import RAGModelInfo, RAGResponse, RAGSource
+from app.services.acl import UserContext
 from app.services.query import get_tenant_kbs, retrieve_chunks
 
 logger = logging.getLogger(__name__)
@@ -54,13 +55,14 @@ async def generate_rag_response(
     session: AsyncSession,
     tenant_id: str,
     params: RAGParams,
+    user_context: UserContext | None = None,
 ) -> RAGResponse:
     """
     执行 RAG 生成
     
     流程：
     1. 获取知识库列表
-    2. 检索相关文档片段
+    2. 检索相关文档片段（带 ACL 过滤）
     3. 构建 prompt
     4. 调用 LLM 生成回答
     5. 组装响应
@@ -69,6 +71,7 @@ async def generate_rag_response(
         session: 数据库会话
         tenant_id: 租户 ID
         params: RAG 参数对象，包含查询、检索和 LLM 相关配置
+        user_context: 用户上下文（用于 ACL 权限过滤）
     
     Returns:
         RAGResponse: 包含回答和来源的响应
@@ -102,6 +105,7 @@ async def generate_rag_response(
         kbs=kbs,
         params=retrieve_params,
         session=session,
+        user_context=user_context,  # 传入用户上下文用于 Security Trimming
     )
     if acl_blocked:
         raise PermissionError("检索结果因 ACL 权限控制被过滤，请检查文档敏感度或 API Key 权限")

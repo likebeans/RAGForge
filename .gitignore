@@ -71,3 +71,6 @@ alembic/versions/*.pyc
 
 # Docs (暂不推送)
 docs/
+
+# Test data (测试文档)
+test/

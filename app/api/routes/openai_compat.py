@@ -142,12 +142,22 @@ async def chat_completions(
         top_p=payload.top_p,
     )
     
+    # 从 API Key 构建用户上下文（用于 ACL 权限过滤）
+    user_context = api_key_ctx.get_user_context()
+    
     # 调用 RAG 服务
     try:
         rag_result = await generate_rag_response(
             session=db,
             tenant_id=tenant.id,
             params=rag_params,
+            user_context=user_context,  # 传入用户上下文用于 ACL 过滤
+        )
+    except PermissionError as e:
+        # ACL 权限拒绝时返回 403
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "NO_PERMISSION", "detail": str(e)},
         )
     except HTTPException:
         raise

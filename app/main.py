@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes import api_router
@@ -81,6 +82,15 @@ app = FastAPI(
 # 注册中间件（注意顺序：后添加的先执行）
 app.add_middleware(AuditLogMiddleware)  # 审计日志
 app.add_middleware(RequestTraceMiddleware)  # 请求追踪
+
+# CORS 配置：允许前端跨域访问
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 开发环境允许所有来源，生产环境应限制
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # 注册所有 API 路由
 # api_router 包含了所有的 API 端点（知识库、文档、查询等）

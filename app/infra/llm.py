@@ -26,9 +26,10 @@ LLM 客户端模块
     )
 """
 
+import json
 import logging
 from functools import lru_cache
-from typing import Any
+from typing import Any, AsyncIterator
 
 import httpx
 from openai import AsyncOpenAI
@@ -214,3 +215,128 @@ def get_llm_client() -> AsyncOpenAI | None:
         return _get_openai_compatible_client(config.get("api_key"), config.get("base_url"))
     
     return None
+
+
+# ==================== 流式输出 ====================
+
+
+async def chat_completion_stream(
+    prompt: str,
+    system_prompt: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    **kwargs,
+) -> AsyncIterator[str]:
+    """
+    流式调用 LLM 进行对话补全
+    
+    Args:
+        prompt: 用户输入
+        system_prompt: 系统提示词
+        temperature: 温度参数（0-2）
+        max_tokens: 最大生成 token 数
+        **kwargs: 其他参数
+    
+    Yields:
+        str: LLM 生成的文本片段
+    """
+    settings = get_settings()
+    config = settings.get_llm_config()
+    provider = config["provider"]
+    
+    # 使用配置默认值
+    if temperature is None:
+        temperature = settings.llm_temperature
+    if max_tokens is None:
+        max_tokens = settings.llm_max_tokens
+    
+    try:
+        if provider == "ollama":
+            async for chunk in _ollama_chat_stream(prompt, system_prompt, config, temperature, max_tokens):
+                yield chunk
+        
+        elif provider in ("openai", "qwen", "kimi", "deepseek", "zhipu", "siliconflow"):
+            if not config.get("api_key"):
+                raise ValueError(f"{provider.upper()}_API_KEY 未配置")
+            async for chunk in _openai_compatible_chat_stream(
+                prompt, system_prompt, config, temperature, max_tokens
+            ):
+                yield chunk
+        
+        elif provider == "gemini":
+            # Gemini 暂不支持流式，降级为非流式
+            logger.warning("Gemini 暂不支持流式输出，将使用非流式模式")
+            result = await _gemini_chat(prompt, system_prompt, config, temperature, max_tokens)
+            yield result
+        
+        else:
+            raise ValueError(f"未知的 LLM 提供者: {provider}")
+            
+    except Exception as e:
+        logger.error(f"LLM 流式调用失败 ({provider}): {e}")
+        raise
+
+
+async def _ollama_chat_stream(
+    prompt: str,
+    system_prompt: str | None,
+    config: dict[str, Any],
+    temperature: float,
+    max_tokens: int,
+) -> AsyncIterator[str]:
+    """Ollama Chat API 流式输出"""
+    url = f"{config['base_url']}/api/chat"
+    
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        async with client.stream(
+            "POST",
+            url,
+            json={
+                "model": config["model"],
+                "messages": messages,
+                "stream": True,
+                "options": {
+                    "temperature": temperature,
+                    "num_predict": max_tokens,
+                },
+            },
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if line:
+                    data = json.loads(line)
+                    if content := data.get("message", {}).get("content"):
+                        yield content
+
+
+async def _openai_compatible_chat_stream(
+    prompt: str,
+    system_prompt: str | None,
+    config: dict[str, Any],
+    temperature: float,
+    max_tokens: int,
+) -> AsyncIterator[str]:
+    """OpenAI 兼容 API Chat 流式输出"""
+    client = _get_openai_compatible_client(config.get("api_key"), config.get("base_url"))
+    
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    
+    stream = await client.chat.completions.create(
+        model=config["model"],
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=True,
+    )
+    
+    async for chunk in stream:
+        if chunk.choices and chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content

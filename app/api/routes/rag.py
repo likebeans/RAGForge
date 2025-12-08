@@ -14,6 +14,7 @@ from app.api.deps import get_current_api_key, get_db_session, get_tenant
 from app.auth.api_key import APIKeyContext
 from app.schemas.internal import RAGParams
 from app.schemas.rag import RAGRequest, RAGResponse
+from app.services.query import get_tenant_kbs
 from app.services.rag import generate_rag_response
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ router = APIRouter(tags=["rag"])
 async def rag_generate(
     payload: RAGRequest,
     tenant=Depends(get_tenant),
-    _: APIKeyContext = Depends(get_current_api_key),
+    api_key_ctx: APIKeyContext = Depends(get_current_api_key),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -64,6 +65,32 @@ async def rag_generate(
             detail={"code": "NOT_IMPLEMENTED", "detail": "流式输出暂不支持"},
         )
     
+    # 验证知识库存在性
+    kbs = await get_tenant_kbs(db, tenant_id=tenant.id, kb_ids=payload.knowledge_base_ids)
+    if len(kbs) != len(set(payload.knowledge_base_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "KB_NOT_FOUND", "detail": "部分知识库不存在"},
+        )
+    
+    # 检查 API Key 的 KB 白名单 (scope_kb_ids)
+    scope_kb_ids = api_key_ctx.api_key.scope_kb_ids
+    if scope_kb_ids:
+        requested_kb_ids = set(payload.knowledge_base_ids)
+        allowed_kb_ids = set(scope_kb_ids)
+        unauthorized_kbs = requested_kb_ids - allowed_kb_ids
+        if unauthorized_kbs:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "KB_NOT_IN_SCOPE",
+                    "detail": f"API Key 无权访问以下知识库: {list(unauthorized_kbs)}",
+                },
+            )
+    
+    # 从 API Key 构建用户上下文（用于 ACL 权限过滤）
+    user_context = api_key_ctx.get_user_context()
+    
     # 构建内部参数对象
     params = RAGParams(
         query=payload.query,
@@ -82,6 +109,7 @@ async def rag_generate(
             session=db,
             tenant_id=tenant.id,
             params=params,
+            user_context=user_context,  # 传入用户上下文用于 ACL 过滤
         )
         
         logger.info(
