@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# RAG Pipeline Frontend
 
-## Getting Started
+RAG Pipeline 管理界面，用于配置和测试文档切分、检索等功能。
 
-First, run the development server:
+## 快速开始
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+# 安装依赖
+pnpm install
+
+# 启动开发服务器
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+浏览器打开 [http://localhost:3000](http://localhost:3000) 查看。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 功能模块
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Ground 实验页面 (`/compare`)
 
-## Learn More
+文档切分设置与预览：
 
-To learn more about Next.js, take a look at the following resources:
+- **文档管理**：上传、列表、删除
+- **切分器配置**：9 种切分器，参数动态配置
+- **分块预览**：普通模式 / 父子分块模式
+- **元数据展示**：显示切分器输出的元数据
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### 支持的切分器
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| 切分器 | 说明 |
+|--------|------|
+| 简单分段 | 按自定义分隔符切分 |
+| 滑动窗口 | 固定窗口 + 重叠 |
+| 父子分块 | 子块检索 + 父块上下文 |
+| 递归字符 | 优先保持语义边界 |
+| Markdown | 按标题层级分块 |
+| 代码感知 | 按语法结构分块 |
 
-## Deploy on Vercel
+## 技术栈
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- **Next.js 15** - React 框架
+- **TailwindCSS** - 样式
+- **shadcn/ui** - UI 组件库
+- **TypeScript** - 类型安全
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 环境变量
+
+```bash
+# .env.local
+NEXT_PUBLIC_API_BASE=http://localhost:8020
+```
+
+## 项目结构
+
+```
+src/
+├── app/                    # 页面
+│   └── (main)/compare/     # Ground 实验页面
+├── components/             # 组件
+│   ├── ui/                 # shadcn/ui
+│   └── chat/               # 聊天组件
+└── lib/                    # 工具函数
+```
+
+## 开发
+
+```bash
+pnpm dev      # 开发模式
+pnpm build    # 构建
+pnpm start    # 生产模式
+pnpm lint     # 代码检查
+```
+
+## 文档
+
+详细开发文档请参考 [AGENTS.md](./AGENTS.md)。
