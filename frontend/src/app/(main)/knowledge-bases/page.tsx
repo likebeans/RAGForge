@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -50,6 +51,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { ProviderModelSelector } from "@/components/settings";
 
 // 预设封面图片选项
 const COVER_ICONS = [
@@ -79,7 +81,16 @@ const setKbCover = (kbId: string, coverId: string) => {
 
 export default function KnowledgeBasesPage() {
   const router = useRouter();
-  const { client, isConnected, knowledgeBases, refreshKnowledgeBases } = useAppStore();
+  const {
+    client,
+    isConnected,
+    knowledgeBases,
+    refreshKnowledgeBases,
+    defaultModels,
+    setDefaultModel,
+    providerCatalog,
+    setProviderCatalog,
+  } = useAppStore();
   
   // 创建对话框状态
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -88,6 +99,10 @@ export default function KnowledgeBasesPage() {
   const [selectedCover, setSelectedCover] = useState("database");
   const [isCreating, setIsCreating] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [llmProvider, setLlmProvider] = useState(defaultModels.llm?.provider || "");
+  const [llmModel, setLlmModel] = useState(defaultModels.llm?.model || "");
+  const [embedProvider, setEmbedProvider] = useState(defaultModels.embedding?.provider || "");
+  const [embedModel, setEmbedModel] = useState(defaultModels.embedding?.model || "");
   
   // 删除确认对话框
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -101,6 +116,19 @@ export default function KnowledgeBasesPage() {
       loadKnowledgeBases();
     }
   }, [client, isConnected]);
+
+  useEffect(() => {
+    if (client && isConnected && Object.keys(providerCatalog).length === 0) {
+      client.listProviders().then(setProviderCatalog).catch(() => undefined);
+    }
+  }, [client, isConnected, providerCatalog, setProviderCatalog]);
+
+  useEffect(() => {
+    setLlmProvider(defaultModels.llm?.provider || "");
+    setLlmModel(defaultModels.llm?.model || "");
+    setEmbedProvider(defaultModels.embedding?.provider || "");
+    setEmbedModel(defaultModels.embedding?.model || "");
+  }, [defaultModels]);
 
   // 加载封面映射
   useEffect(() => {
@@ -191,6 +219,27 @@ export default function KnowledgeBasesPage() {
     });
   };
 
+  const handleProviderChange = (type: "llm" | "embedding", provider: string) => {
+    if (type === "llm") {
+      setLlmProvider(provider);
+      setLlmModel("");
+    } else {
+      setEmbedProvider(provider);
+      setEmbedModel("");
+    }
+    setDefaultModel(type, provider ? { provider, model: "" } : null);
+  };
+
+  const handleModelChange = (type: "llm" | "embedding", model: string) => {
+    if (type === "llm") {
+      setLlmModel(model);
+      if (llmProvider) setDefaultModel("llm", { provider: llmProvider, model });
+    } else {
+      setEmbedModel(model);
+      if (embedProvider) setDefaultModel("embedding", { provider: embedProvider, model });
+    }
+  };
+
   return (
     <div className="p-6 max-w-6xl mx-auto">
       {/* 页头 */}
@@ -209,6 +258,31 @@ export default function KnowledgeBasesPage() {
           </Button>
         </div>
       </div>
+
+      {isConnected && (
+        <Card className="mb-6">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">模型选择</CardTitle>
+            <CardDescription>为知识库相关操作选择默认的 LLM 与 Embedding 模型（已在设置中验证的提供商）</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-2">
+            <ProviderModelSelector
+              type="llm"
+              providerValue={llmProvider}
+              modelValue={llmModel}
+              onProviderChange={(v) => handleProviderChange("llm", v)}
+              onModelChange={(v) => handleModelChange("llm", v)}
+            />
+            <ProviderModelSelector
+              type="embedding"
+              providerValue={embedProvider}
+              modelValue={embedModel}
+              onProviderChange={(v) => handleProviderChange("embedding", v)}
+              onModelChange={(v) => handleModelChange("embedding", v)}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* 知识库卡片网格 */}
       {!isConnected ? (

@@ -13,9 +13,10 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.infra.llm import chat_completion
+from app.infra.llm import chat_completion, chat_completion_with_config
 from app.models import KnowledgeBase
 from app.schemas.internal import RAGParams, RetrieveParams
+from app.schemas.config import LLMConfig
 from app.schemas.query import ChunkHit
 from app.schemas.rag import RAGModelInfo, RAGResponse, RAGSource
 from app.services.acl import UserContext
@@ -84,13 +85,18 @@ async def generate_rag_response(
         # 无知识库时直接回答
         logger.warning(f"RAG: 未找到知识库 {params.kb_ids}")
         answer = await _generate_without_context(
-            params.query, params.system_prompt, params.temperature, params.max_tokens
+            params.query,
+            params.system_prompt,
+            params.temperature,
+            params.max_tokens,
+            params.llm_override,
         )
         return _build_response(
             answer=answer,
             sources=[],
             retriever_name="none",
             settings=settings,
+            llm_override=params.llm_override,
         )
     
     # 2. 检索相关片段
@@ -116,7 +122,11 @@ async def generate_rag_response(
     if not chunks:
         # 无相关内容时提示
         answer = await _generate_without_context(
-            params.query, params.system_prompt, params.temperature, params.max_tokens
+            params.query,
+            params.system_prompt,
+            params.temperature,
+            params.max_tokens,
+            params.llm_override,
         )
     else:
         answer = await _generate_with_context(
@@ -125,6 +135,7 @@ async def generate_rag_response(
             system_prompt=params.system_prompt,
             temperature=params.temperature,
             max_tokens=params.max_tokens,
+            llm_override=params.llm_override,
         )
     
     # 4. 构建响应
@@ -147,6 +158,7 @@ async def generate_rag_response(
         sources=sources,
         retriever_name=retriever_name,
         settings=settings,
+        llm_override=params.llm_override,
         retrieval_count=len(chunks),
     )
 
@@ -157,6 +169,7 @@ async def _generate_with_context(
     system_prompt: str | None,
     temperature: float | None,
     max_tokens: int | None,
+    llm_override: LLMConfig | None,
 ) -> str:
     """带上下文的 LLM 生成"""
     # 构建上下文
@@ -174,12 +187,23 @@ async def _generate_with_context(
     final_system = system_prompt or DEFAULT_RAG_SYSTEM_PROMPT
     
     # 调用 LLM
-    answer = await chat_completion(
-        prompt=user_prompt,
-        system_prompt=final_system,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
+    if llm_override:
+        provider_config = llm_override.model_dump()
+        provider_config["provider"] = llm_override.provider
+        answer = await chat_completion_with_config(
+            prompt=user_prompt,
+            provider_config=provider_config,
+            system_prompt=final_system,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    else:
+        answer = await chat_completion(
+            prompt=user_prompt,
+            system_prompt=final_system,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
     
     return answer
 
@@ -189,6 +213,7 @@ async def _generate_without_context(
     system_prompt: str | None,
     temperature: float | None,
     max_tokens: int | None,
+    llm_override: LLMConfig | None,
 ) -> str:
     """无上下文时的 LLM 生成"""
     no_context_prompt = """你是一个知识库问答助手。用户询问了一个问题，但知识库中没有找到相关信息。
@@ -196,12 +221,23 @@ async def _generate_without_context(
     
     final_system = system_prompt or no_context_prompt
     
-    answer = await chat_completion(
-        prompt=query,
-        system_prompt=final_system,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
+    if llm_override:
+        provider_config = llm_override.model_dump()
+        provider_config["provider"] = llm_override.provider
+        answer = await chat_completion_with_config(
+            prompt=query,
+            provider_config=provider_config,
+            system_prompt=final_system,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    else:
+        answer = await chat_completion(
+            prompt=query,
+            system_prompt=final_system,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
     
     return answer
 
@@ -211,6 +247,7 @@ def _build_response(
     sources: list[RAGSource],
     retriever_name: str,
     settings,
+    llm_override: LLMConfig | None = None,
     retrieval_count: int = 0,
 ) -> RAGResponse:
     """构建 RAG 响应"""
@@ -218,12 +255,14 @@ def _build_response(
     embedding_config = settings.get_embedding_config()
     llm_config = settings.get_llm_config()
     rerank_config = settings.get_rerank_config()
+    llm_provider = llm_override.provider if llm_override else llm_config["provider"]
+    llm_model = llm_override.model if llm_override else llm_config["model"]
     
     model_info = RAGModelInfo(
         embedding_provider=embedding_config["provider"],
         embedding_model=embedding_config["model"],
-        llm_provider=llm_config["provider"],
-        llm_model=llm_config["model"],
+        llm_provider=llm_provider,
+        llm_model=llm_model,
         retriever=retriever_name,
         rerank_provider=rerank_config.get("provider") if rerank_config.get("provider") != "none" else None,
         rerank_model=rerank_config.get("model") if rerank_config.get("provider") != "none" else None,

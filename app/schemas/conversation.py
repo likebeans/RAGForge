@@ -9,6 +9,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.config import LLMConfig
+
 
 # ==================== 引用来源 ====================
 
@@ -136,6 +138,10 @@ class StreamRAGRequest(BaseModel):
     save_message: bool = Field(
         default=True, 
         description="是否保存消息到对话历史"
+    )
+    llm_override: LLMConfig | None = Field(
+        default=None,
+        description="临时覆盖默认的 LLM 配置"
     )
 
 

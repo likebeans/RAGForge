@@ -16,6 +16,7 @@ import { Send, Loader2, Database, Sparkles, MessageSquare, Search } from "lucide
 import { useAppStore } from "@/lib/store";
 import { SourceItem, Message } from "@/lib/api";
 import { MessageBubble } from "@/components/chat/message-bubble";
+import { ProviderModelSelector } from "@/components/settings";
 
 interface ChatMessage {
   id: string;
@@ -48,12 +49,19 @@ export function ChatView({ conversationId }: ChatViewProps) {
     refreshKnowledgeBases,
     setCurrentConversationId,
     refreshConversations,
+    defaultModels,
+    setDefaultModel,
+    providerConfigs,
+    providerCatalog,
+    setProviderCatalog,
   } = useAppStore();
   
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [retriever, setRetriever] = useState("hybrid");
+  const [llmProvider, setLlmProvider] = useState(defaultModels.llm?.provider || "");
+  const [llmModel, setLlmModel] = useState(defaultModels.llm?.model || "");
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -77,12 +85,23 @@ export function ChatView({ conversationId }: ChatViewProps) {
     setCurrentConversationId(conversationId || null);
   }, [conversationId, setCurrentConversationId]);
 
+  useEffect(() => {
+    setLlmProvider(defaultModels.llm?.provider || "");
+    setLlmModel(defaultModels.llm?.model || "");
+  }, [defaultModels]);
+
   // 加载知识库列表
   useEffect(() => {
     if (client && isConnected) {
       refreshKnowledgeBases();
     }
   }, [client, isConnected, refreshKnowledgeBases]);
+
+  useEffect(() => {
+    if (client && isConnected && Object.keys(providerCatalog).length === 0) {
+      client.listProviders().then(setProviderCatalog).catch(() => undefined);
+    }
+  }, [client, isConnected, providerCatalog, setProviderCatalog]);
 
   // 加载对话消息
   useEffect(() => {
@@ -115,6 +134,19 @@ export function ChatView({ conversationId }: ChatViewProps) {
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  const handleLlmProviderChange = (provider: string) => {
+    setLlmProvider(provider);
+    setLlmModel("");
+    setDefaultModel("llm", provider ? { provider, model: "" } : null);
+  };
+
+  const handleLlmModelChange = (model: string) => {
+    setLlmModel(model);
+    if (llmProvider) {
+      setDefaultModel("llm", { provider: llmProvider, model });
+    }
+  };
 
   const handleSubmit = async () => {
     if (!input.trim() || isLoading) return;
@@ -174,6 +206,15 @@ export function ChatView({ conversationId }: ChatViewProps) {
     // 用于收集助手消息的完整内容和来源
     let finalContent = "";
     let finalSources: SourceItem[] = [];
+    const llmOverride =
+      llmProvider && llmModel
+        ? {
+            provider: llmProvider,
+            model: llmModel,
+            api_key: providerConfigs[llmProvider]?.apiKey,
+            base_url: providerConfigs[llmProvider]?.baseUrl,
+          }
+        : undefined;
 
     try {
       abortRef.current = client.streamRAG(
@@ -230,7 +271,8 @@ export function ChatView({ conversationId }: ChatViewProps) {
             )
           );
           setIsLoading(false);
-        }
+        },
+        { llmOverride }
       );
     } catch (error) {
       toast.error(`请求失败: ${(error as Error).message}`);
@@ -276,6 +318,16 @@ export function ChatView({ conversationId }: ChatViewProps) {
               ))}
             </SelectContent>
           </Select>
+          <div className="w-[280px]">
+            <ProviderModelSelector
+              type="llm"
+              providerValue={llmProvider}
+              modelValue={llmModel}
+              onProviderChange={handleLlmProviderChange}
+              onModelChange={handleLlmModelChange}
+              label=""
+            />
+          </div>
         </div>
       </div>
 

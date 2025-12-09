@@ -20,10 +20,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import APIKeyContext, get_current_api_key, get_db_session, get_tenant
-from app.infra.llm import chat_completion_stream
+from app.infra.llm import chat_completion_stream, chat_completion_stream_with_config
 from app.models import KnowledgeBase
 from app.models.tenant import Tenant
 from app.schemas.conversation import StreamRAGRequest
+from app.schemas.config import LLMConfig
 from app.schemas.internal import RetrieveParams
 from app.services.query import retrieve_chunks
 
@@ -41,6 +42,7 @@ async def _sse_generator(
     kbs: list[KnowledgeBase],
     session: AsyncSession,
     api_key_ctx: APIKeyContext,
+    llm_override: LLMConfig | None,
 ) -> AsyncIterator[str]:
     """
     SSE 事件生成器
@@ -120,10 +122,21 @@ async def _sse_generator(
 请根据以上参考资料回答用户问题。"""
 
         # Step 3: 流式调用 LLM
-        async for chunk in chat_completion_stream(
+        stream = chat_completion_stream(
             prompt=user_prompt,
             system_prompt=system_prompt,
-        ):
+        )
+
+        if llm_override:
+            provider_config = llm_override.model_dump()
+            provider_config["provider"] = llm_override.provider
+            stream = chat_completion_stream_with_config(
+                prompt=user_prompt,
+                provider_config=provider_config,
+                system_prompt=system_prompt,
+            )
+
+        async for chunk in stream:
             # 转义特殊字符
             escaped = chunk.replace("\n", "\\n").replace("\r", "\\r")
             yield f"event: content\ndata: {escaped}\n\n"
@@ -212,6 +225,7 @@ async def rag_stream(
             kbs=kbs,
             session=db,
             api_key_ctx=api_key_ctx,
+            llm_override=payload.llm_override,
         ),
         media_type="text/event-stream",
         headers={

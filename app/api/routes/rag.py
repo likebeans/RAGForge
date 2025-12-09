@@ -98,6 +98,7 @@ async def rag_generate(
         top_k=payload.top_k,
         score_threshold=payload.score_threshold,
         retriever_override=payload.retriever_override,
+        llm_override=payload.llm_override,
         system_prompt=payload.system_prompt,
         temperature=payload.temperature,
         max_tokens=payload.max_tokens,

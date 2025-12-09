@@ -30,9 +30,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Check, X, RefreshCw, Loader2, Plus, Trash2, Copy, Key, AlertCircle, Eye, EyeOff } from "lucide-react";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import { Check, X, RefreshCw, Loader2, Plus, Trash2, Copy, Key, AlertCircle, Eye, EyeOff, Server, Cpu } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { APIKeyInfo } from "@/lib/api";
+import { ModelProviderConfig, DefaultModelConfig } from "@/components/settings";
 
 export default function SettingsPage() {
   const { apiKey, apiBase, setApiKey, setApiBase, client, isConnected, setConnected } = useAppStore();
@@ -171,9 +178,22 @@ export default function SettingsPage() {
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <div>
         <h1 className="text-2xl font-bold">设置</h1>
-        <p className="text-muted-foreground">配置 API 连接和应用选项</p>
+        <p className="text-muted-foreground">配置 API 连接和模型选项</p>
       </div>
 
+      <Tabs defaultValue="api" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="api" className="flex items-center gap-2">
+            <Server className="h-4 w-4" />
+            API 配置
+          </TabsTrigger>
+          <TabsTrigger value="models" className="flex items-center gap-2">
+            <Cpu className="h-4 w-4" />
+            模型提供商
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="api" className="space-y-6">
       {/* API 配置 */}
       <Card>
         <CardHeader>
@@ -338,6 +358,23 @@ export default function SettingsPage() {
           <p>后端: Self-RAG Pipeline</p>
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="models" className="space-y-6">
+          {isConnected ? (
+            <div className="space-y-4">
+              <ModelProviderConfig />
+              <DefaultModelConfig />
+            </div>
+          ) : (
+            <Card>
+              <CardContent className="py-8 text-center text-muted-foreground">
+                请先在 API 配置中连接后端服务
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
 
       {/* 创建 API Key 对话框 */}
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>

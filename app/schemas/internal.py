@@ -13,7 +13,7 @@
 
 from pydantic import BaseModel, Field
 
-from app.schemas.config import RetrieverConfig
+from app.schemas.config import LLMConfig, RetrieverConfig
 from app.pipeline.postprocessors.context_window import ContextWindowConfig
 
 
@@ -147,6 +147,10 @@ class RAGParams(BaseModel):
         ge=1,
         le=8192,
         description="LLM 最大生成 token 数"
+    )
+    llm_override: LLMConfig | None = Field(
+        default=None,
+        description="临时覆盖默认 LLM 配置"
     )
     
     # 控制选项
