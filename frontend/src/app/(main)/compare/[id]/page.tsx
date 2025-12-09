@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -16,727 +17,1081 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { Slider } from "@/components/ui/slider";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
-  Play,
-  Plus,
-  Trash2,
-  ChevronDown,
-  ChevronRight,
-  ChevronLeft,
-  Loader2,
-  Copy,
-  Layers,
-  Search,
-  Database,
-  Brain,
-  Sparkles,
-  Settings2,
-  BarChart3,
-  Clock,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
+  OperatorListResponse,
+  PlaygroundRunRequest,
+  PlaygroundRunResponse,
+  GroundInfo,
+  ChunkPreviewItem,
+} from "@/lib/api";
 import { useAppStore } from "@/lib/store";
-import { toast } from "sonner";
+import {
+  Loader2,
+  Play,
+  Save,
+  Upload,
+  FileText,
+  Trash2,
+  UploadCloud,
+  ArrowLeft,
+  Search,
+  RotateCcw,
+} from "lucide-react";
+import { ProviderModelSelector } from "@/components/settings";
+import { useDropzone } from "react-dropzone";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Slider } from "@/components/ui/slider";
 
-// RAG Pipeline 配置选项
-const CHUNKER_OPTIONS = [
-  { value: "simple", label: "Simple", desc: "按段落切分" },
-  { value: "sliding_window", label: "Sliding Window", desc: "滑动窗口切分" },
-  { value: "recursive", label: "Recursive", desc: "递归字符切分" },
-  { value: "markdown", label: "Markdown", desc: "按标题层级切分" },
-  { value: "code", label: "Code", desc: "代码感知切分" },
-  { value: "parent_child", label: "Parent-Child", desc: "父子分块" },
-  { value: "llama_sentence", label: "LlamaIndex Sentence", desc: "句子切分" },
-];
-
-const RETRIEVER_OPTIONS = [
-  { value: "dense", label: "Dense", desc: "稠密向量检索" },
-  { value: "bm25", label: "BM25", desc: "稀疏检索" },
-  { value: "hybrid", label: "Hybrid", desc: "混合检索" },
-  { value: "fusion", label: "Fusion", desc: "RRF融合检索" },
-  { value: "hyde", label: "HyDE", desc: "假设文档嵌入" },
-  { value: "multi_query", label: "Multi-Query", desc: "多查询扩展" },
-  { value: "self_query", label: "Self-Query", desc: "自查询检索" },
-  { value: "parent_document", label: "Parent Document", desc: "父文档检索" },
-  { value: "raptor", label: "RAPTOR", desc: "多层次索引" },
-];
-
-const EMBEDDING_PROVIDERS = [
-  { value: "ollama", label: "Ollama" },
-  { value: "openai", label: "OpenAI" },
-  { value: "zhipu", label: "智谱 AI" },
-  { value: "siliconflow", label: "SiliconFlow" },
-  { value: "deepseek", label: "DeepSeek" },
-];
-
-const EMBEDDING_MODELS: Record<string, string[]> = {
-  ollama: ["bge-m3", "nomic-embed-text", "mxbai-embed-large"],
-  openai: ["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"],
-  zhipu: ["embedding-2", "embedding-3"],
-  siliconflow: ["bge-large-zh-v1.5", "bge-m3"],
-  deepseek: ["deepseek-embedding"],
+// 切分器参数 UI 配置
+type ParamConfig = {
+  key: string;
+  label: string;
+  type: 'number' | 'boolean' | 'select' | 'slider' | 'text';
+  default: number | boolean | string;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: string[];
+  showWhen?: Record<string, unknown>;
+  description?: string;
+  group?: string; // 参数分组
 };
 
-const RERANK_PROVIDERS = [
-  { value: "none", label: "无" },
-  { value: "ollama", label: "Ollama" },
-  { value: "zhipu", label: "智谱 AI" },
-  { value: "siliconflow", label: "SiliconFlow" },
-  { value: "cohere", label: "Cohere" },
-];
+type ChunkerConfig = {
+  label: string;
+  description: string;
+  params: ParamConfig[];
+};
 
-const VECTOR_DB_OPTIONS = [
-  { value: "qdrant", label: "Qdrant" },
-  { value: "milvus", label: "Milvus" },
-  { value: "elasticsearch", label: "Elasticsearch" },
-];
+const CHUNKER_UI_CONFIG: Record<string, ChunkerConfig> = {
+  simple: {
+    label: '简单分段',
+    description: '按自定义分隔符切分，适合结构清晰的文本',
+    params: [
+      { key: 'separator', label: '分段标识符', type: 'text', default: '\\n\\n',
+        description: '支持: \\n\\n(段落) \\n(换行) \\t(制表) 或自定义字符' },
+      { key: 'max_chars', label: '分段最大长度', type: 'number', default: 1024, min: 100, max: 5000 }
+    ]
+  },
+  sliding_window: {
+    label: '滑动窗口',
+    description: '固定窗口滑动切分，保持片段重叠',
+    params: [
+      { key: 'window', label: '窗口大小', type: 'number', default: 800, min: 100, max: 5000 },
+      { key: 'overlap', label: '重叠大小', type: 'number', default: 200, min: 0, max: 1000 }
+    ]
+  },
+  parent_child: {
+    label: '父子分块',
+    description: '子块用于检索，父块用作上下文',
+    params: [
+      // 父块配置
+      { key: 'parent_mode', label: '父块模式', type: 'select', default: 'paragraph',
+        options: ['paragraph', 'full_doc'], group: '父块用作上下文',
+        description: 'paragraph: 按分隔符分段; full_doc: 整个文档作为父块' },
+      { key: 'parent_separator', label: '父块分隔符', type: 'text', default: '\\n\\n',
+        group: '父块用作上下文', showWhen: { parent_mode: 'paragraph' },
+        description: '支持: \\n\\n \\n 。 . 或自定义' },
+      { key: 'parent_max_chars', label: '父块最大长度', type: 'number', default: 1024, min: 200, max: 10000,
+        group: '父块用作上下文', showWhen: { parent_mode: 'paragraph' } },
+      // 子块配置
+      { key: 'child_separator', label: '子块分隔符', type: 'text', default: '\\n',
+        group: '子块用于检索', description: '支持: \\n\\n \\n 。 . 或自定义' },
+      { key: 'child_max_chars', label: '子块最大长度', type: 'number', default: 512, min: 50, max: 2000,
+        group: '子块用于检索' }
+    ]
+  },
+  recursive: {
+    label: '递归字符分块',
+    description: '优先保持语义边界，推荐通用文档',
+    params: [
+      { key: 'chunk_size', label: '块大小', type: 'number', default: 1024, min: 100, max: 5000 },
+      { key: 'chunk_overlap', label: '重叠大小', type: 'number', default: 256, min: 0, max: 1000 },
+      { key: 'separators', label: '分隔符优先级', type: 'text', default: '\\n\\n,\\n,。,.',
+        description: '按优先级排列，用逗号分隔' },
+      { key: 'keep_separator', label: '保留分隔符', type: 'boolean', default: true }
+    ]
+  },
+  markdown: {
+    label: 'Markdown 分块',
+    description: '按标题层级切分，适合技术文档',
+    params: [
+      { key: 'chunk_size', label: '块大小', type: 'number', default: 1024, min: 100, max: 5000 },
+      { key: 'chunk_overlap', label: '重叠大小', type: 'number', default: 256, min: 0, max: 1000 },
+      { key: 'headers_to_split_on', label: '标题层级', type: 'text', default: '#,##,###',
+        description: '要切分的标题级别，用逗号分隔' },
+      { key: 'strip_headers', label: '移除标题', type: 'boolean', default: false }
+    ]
+  },
+  markdown_section: {
+    label: 'Markdown 分节',
+    description: '基于 LlamaIndex 的 Markdown 分节切分',
+    params: [
+      { key: 'chunk_size', label: '块大小', type: 'number', default: 1200, min: 100, max: 5000 },
+      { key: 'chunk_overlap', label: '重叠大小', type: 'number', default: 200, min: 0, max: 1000 }
+    ]
+  },
+  code: {
+    label: '代码分块',
+    description: '按语法结构切分，保持函数/类完整',
+    params: [
+      { key: 'language', label: '语言', type: 'select', default: 'auto', 
+        options: ['auto', 'python', 'javascript', 'typescript', 'java', 'go', 'rust'] },
+      { key: 'max_chunk_size', label: '最大块大小', type: 'number', default: 2000, min: 500, max: 10000 },
+      { key: 'include_imports', label: '包含导入语句', type: 'boolean', default: true }
+    ]
+  },
+  llama_sentence: {
+    label: '句子分块',
+    description: '保持句子完整，基于 Token 计数',
+    params: [
+      { key: 'max_tokens', label: '最大 Token', type: 'number', default: 512, min: 50, max: 2000 },
+      { key: 'chunk_overlap', label: '重叠 Token', type: 'number', default: 50, min: 0, max: 200 }
+    ]
+  },
+  llama_token: {
+    label: 'Token 分块',
+    description: '严格按 Token 切分，精确控制长度',
+    params: [
+      { key: 'max_tokens', label: '最大 Token', type: 'number', default: 512, min: 50, max: 2000 },
+      { key: 'chunk_overlap', label: '重叠 Token', type: 'number', default: 50, min: 0, max: 200 }
+    ]
+  }
+};
 
-const INDEX_TYPE_OPTIONS = [
-  { value: "hnsw", label: "HNSW", desc: "高效近似搜索" },
-  { value: "ivf", label: "IVF", desc: "倒排文件索引" },
-  { value: "flat", label: "Flat", desc: "精确搜索" },
-];
+// 获取切分器默认参数
+function getDefaultChunkerParams(chunkerName: string): Record<string, unknown> {
+  const config = CHUNKER_UI_CONFIG[chunkerName];
+  if (!config) return {};
+  const params: Record<string, unknown> = {};
+  for (const p of config.params) {
+    params[p.key] = p.default;
+  }
+  return params;
+}
 
-// Pipeline 配置接口
-interface PipelineConfig {
+// 安全获取 metadata 的布尔值
+function getMetadataBool(metadata: Record<string, unknown> | undefined, key: string): boolean | undefined {
+  if (!metadata || !(key in metadata)) return undefined;
+  const val = metadata[key];
+  return typeof val === 'boolean' ? val : undefined;
+}
+
+// 安全获取 metadata 的字符串值
+function getMetadataStr(metadata: Record<string, unknown> | undefined, key: string): string | undefined {
+  if (!metadata || !(key in metadata)) return undefined;
+  const val = metadata[key];
+  return val != null ? String(val) : undefined;
+}
+
+type Experiment = {
   id: string;
   name: string;
-  chunker: string;
-  chunkSize: number;
-  chunkOverlap: number;
   retriever: string;
   topK: number;
-  embeddingProvider: string;
-  embeddingModel: string;
-  rerankProvider: string;
-  vectorDb: string;
-  indexType: string;
-}
-
-// 默认配置
-const createDefaultConfig = (id: string, name: string): PipelineConfig => ({
-  id,
-  name,
-  chunker: "recursive",
-  chunkSize: 512,
-  chunkOverlap: 50,
-  retriever: "hybrid",
-  topK: 5,
-  embeddingProvider: "ollama",
-  embeddingModel: "bge-m3",
-  rerankProvider: "none",
-  vectorDb: "qdrant",
-  indexType: "hnsw",
-});
-
-// Ground 接口
-interface Playground {
-  id: string;
-  name: string;
-  description?: string;
-  createdAt: string;
-  coverId?: string;
-  configs?: PipelineConfig[];
-}
-
-// 从 localStorage 获取 Playground
-const getPlayground = (id: string): Playground | null => {
-  if (typeof window === "undefined") return null;
-  const playgrounds = JSON.parse(localStorage.getItem("playgrounds") || "[]");
-  return playgrounds.find((p: Playground) => p.id === id) || null;
+  chunker?: string;
+  rerank?: boolean;
+  chunkPreviewText?: string;
 };
 
-// 保存 Playground 到 localStorage
-const savePlayground = (playground: Playground) => {
-  const playgrounds = JSON.parse(localStorage.getItem("playgrounds") || "[]");
-  const index = playgrounds.findIndex((p: Playground) => p.id === playground.id);
-  if (index >= 0) {
-    playgrounds[index] = playground;
-  } else {
-    playgrounds.push(playground);
-  }
-  localStorage.setItem("playgrounds", JSON.stringify(playgrounds));
-};
+const makeId = () => Math.random().toString(36).slice(2, 8);
 
-// 结果接口
-interface CompareResult {
-  configId: string;
-  configName: string;
-  results: Array<{
-    text: string;
-    score: number;
-    metadata?: Record<string, unknown>;
-  }>;
-  answer?: string;
-  latency: number;
-  tokenCount?: number;
-}
-
-export default function PlaygroundDetailPage() {
+export default function GroundDetailPage() {
   const params = useParams();
+  const groundId = params.id as string;
   const router = useRouter();
-  const playgroundId = params.id as string;
-  
-  const { client, isConnected, knowledgeBases, refreshKnowledgeBases } = useAppStore();
-  
-  const [playground, setPlayground] = useState<Playground | null>(null);
-  const [configs, setConfigs] = useState<PipelineConfig[]>([
-    createDefaultConfig("config-1", "配置 A"),
-  ]);
-  const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
+  const {
+    client,
+    isConnected,
+    refreshKnowledgeBases,
+    defaultModels,
+    providerConfigs,
+  } = useAppStore();
+
+  const [ground, setGround] = useState<GroundInfo | null>(null);
+  const [operators, setOperators] = useState<OperatorListResponse | null>(null);
+  const [documents, setDocuments] = useState<{ id: string; title: string; chunk_count: number; created_at: string }[]>([]);
+  const [uploading, setUploading] = useState(false);
   const [query, setQuery] = useState("");
+  const [experiments, setExperiments] = useState<Experiment[]>([
+    { id: makeId(), name: "方案 A", retriever: "hybrid", topK: 5 },
+    { id: makeId(), name: "方案 B", retriever: "dense", topK: 5 },
+  ]);
+  const [results, setResults] = useState<Record<string, PlaygroundRunResponse>>({});
   const [isRunning, setIsRunning] = useState(false);
-  const [results, setResults] = useState<CompareResult[]>([]);
-  const [expandedConfigs, setExpandedConfigs] = useState<Set<string>>(new Set(["config-1"]));
+  const [saving, setSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  // 分块预览状态
+  const [selectedDocId, setSelectedDocId] = useState<string>("");
+  const [selectedChunker, setSelectedChunker] = useState("recursive");
+  const [chunkerParams, setChunkerParams] = useState<Record<string, unknown>>(
+    getDefaultChunkerParams("recursive")
+  );
+  const [chunkPreviewResult, setChunkPreviewResult] = useState<ChunkPreviewItem[]>([]);
+  const [chunkPreviewDocTitle, setChunkPreviewDocTitle] = useState("");
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  // 预览类型: 'result' | 'chunk' | 'retrieval' | 'index'
+  const [previewType, setPreviewType] = useState<"result" | "chunk">("result");
 
-  // 加载 Playground
+  const retrieverOptions = useMemo(() => operators?.retrievers || [], [operators]);
+  const chunkerOptions = useMemo(() => operators?.chunkers || [], [operators]);
+
+  // useDropzone 必须在条件返回之前调用，保证 Hooks 顺序一致
+  const {
+    getRootProps: getDialogRootProps,
+    getInputProps: getDialogInputProps,
+    isDragActive: isDialogDragActive,
+  } = useDropzone({
+    onDrop: (accepted) => setPendingFiles((prev) => [...prev, ...accepted]),
+    accept: {
+      "application/pdf": [".pdf"],
+      "text/markdown": [".md"],
+      "text/plain": [".txt"],
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+    },
+    disabled: uploading,
+  });
+
+  const loadGround = async () => {
+    if (!client || !groundId) return;
+    try {
+      const info = await client.getGround(groundId);
+      setGround(info);
+      setIsLoading(false);
+    } catch (error) {
+      toast.error("Ground 不存在");
+      router.push("/compare");
+      setIsLoading(false);
+    }
+  };
+
+  const loadOperators = async () => {
+    if (!client) return;
+    try {
+      const ops = await client.listOperators();
+      setOperators(ops);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const loadDocuments = async () => {
+  if (!client || !ground) return;
+    try {
+      const res = await client.listDocuments(ground.knowledge_base_id);
+      setDocuments(res.items || []);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   useEffect(() => {
-    const pg = getPlayground(playgroundId);
-    if (pg) {
-      setPlayground(pg);
-      if (pg.configs && pg.configs.length > 0) {
-        setConfigs(pg.configs);
-        setExpandedConfigs(new Set(pg.configs.map(c => c.id)));
+    if (client && isConnected) {
+      loadGround();
+      loadOperators();
+    }
+  }, [client, isConnected]);
+
+  useEffect(() => {
+    if (ground) {
+      loadDocuments();
+    }
+  }, [ground]);
+
+  if (isLoading) {
+    return (
+      <div className="flex h-full items-center justify-center text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin mr-2" />
+        正在加载 ground...
+      </div>
+    );
+  }
+
+  const confirmDialogUpload = async () => {
+    if (!client || !ground || pendingFiles.length === 0) {
+      setUploadDialogOpen(false);
+      return;
+    }
+    setUploadDialogOpen(false);
+    setUploading(true);
+    try {
+      for (const file of pendingFiles) {
+        // 使用 Ground 专用上传 API（只保存原始内容，不做切分处理）
+        await client.uploadGroundDocument(groundId, file);
       }
+      toast.success("上传成功");
+      loadDocuments();
+    } catch (error) {
+      toast.error(`上传失败: ${(error as Error).message}`);
+    } finally {
+      setPendingFiles([]);
+      setUploading(false);
     }
-  }, [playgroundId]);
-
-  // 加载知识库
-  useEffect(() => {
-    if (isConnected && client) {
-      refreshKnowledgeBases();
-    }
-  }, [isConnected, client, refreshKnowledgeBases]);
-
-  // 保存配置变更
-  useEffect(() => {
-    if (playground) {
-      savePlayground({ ...playground, configs });
-    }
-  }, [configs, playground]);
-
-  // 添加新配置
-  const addConfig = () => {
-    const id = `config-${Date.now()}`;
-    const name = `配置 ${String.fromCharCode(65 + configs.length)}`;
-    setConfigs([...configs, createDefaultConfig(id, name)]);
-    setExpandedConfigs(new Set([...expandedConfigs, id]));
   };
 
-  // 删除配置
-  const removeConfig = (id: string) => {
-    if (configs.length <= 1) {
-      toast.error("至少需要保留一个配置");
+  // 分块预览
+  const handleChunkPreview = async () => {
+    if (!client || !ground || !selectedDocId) {
+      toast.error("请选择要预览的文档");
       return;
     }
-    setConfigs(configs.filter(c => c.id !== id));
-    const newExpanded = new Set(expandedConfigs);
-    newExpanded.delete(id);
-    setExpandedConfigs(newExpanded);
+    setIsPreviewing(true);
+    try {
+      const res = await client.previewChunks(groundId, selectedDocId, selectedChunker, chunkerParams);
+      setChunkPreviewResult(res.chunks);
+      setChunkPreviewDocTitle(res.document_title);
+      setPreviewType("chunk"); // 切换到分块预览
+    } catch (error) {
+      toast.error(`预览失败: ${(error as Error).message}`);
+    } finally {
+      setIsPreviewing(false);
+    }
   };
 
-  // 更新配置
-  const updateConfig = (id: string, updates: Partial<PipelineConfig>) => {
-    setConfigs(configs.map(c => c.id === id ? { ...c, ...updates } : c));
+  // 切分器切换时重置参数
+  const handleChunkerChange = (newChunker: string) => {
+    setSelectedChunker(newChunker);
+    setChunkerParams(getDefaultChunkerParams(newChunker));
   };
 
-  // 切换展开状态
-  const toggleExpand = (id: string) => {
-    const newExpanded = new Set(expandedConfigs);
-    if (newExpanded.has(id)) {
-      newExpanded.delete(id);
-    } else {
-      newExpanded.add(id);
-    }
-    setExpandedConfigs(newExpanded);
+  // 更新单个参数
+  const updateChunkerParam = (key: string, value: unknown) => {
+    setChunkerParams(prev => ({ ...prev, [key]: value }));
   };
 
-  // 复制配置
-  const duplicateConfig = (config: PipelineConfig) => {
-    const id = `config-${Date.now()}`;
-    const name = `${config.name} (副本)`;
-    setConfigs([...configs, { ...config, id, name }]);
-    setExpandedConfigs(new Set([...expandedConfigs, id]));
+  // 检查参数是否应该显示（根据 showWhen 条件）
+  const shouldShowParam = (param: ParamConfig): boolean => {
+    if (!param.showWhen) return true;
+    return Object.entries(param.showWhen).every(
+      ([key, expected]) => chunkerParams[key] === expected
+    );
   };
 
-  // 运行对比
-  const runComparison = async () => {
-    if (!query.trim()) {
-      toast.error("请输入查询问题");
-      return;
-    }
-    if (selectedKbIds.length === 0) {
-      toast.error("请选择知识库");
-      return;
-    }
-    if (!client) {
-      toast.error("请先连接 API");
-      return;
-    }
-
-    setIsRunning(true);
-    setResults([]);
-
-    const newResults: CompareResult[] = [];
-
-    for (const config of configs) {
-      const startTime = Date.now();
-      try {
-        const response = await client.retrieve(query, selectedKbIds, config.topK, config.retriever);
-        const latency = Date.now() - startTime;
-
-        newResults.push({
-          configId: config.id,
-          configName: config.name,
-          results: response.results.map(r => ({
-            text: r.text,
-            score: r.score,
-            metadata: r.metadata,
-          })),
-          latency,
-        });
-      } catch (error) {
-        newResults.push({
-          configId: config.id,
-          configName: config.name,
-          results: [],
-          latency: Date.now() - startTime,
-        });
-        toast.error(`${config.name} 执行失败: ${(error as Error).message}`);
-      }
-    }
-
-    setResults(newResults);
-    setIsRunning(false);
-  };
-
-  return (
-    <div className="flex h-[calc(100vh-3.5rem)]">
-      {/* 左侧配置面板 */}
-      <div className="w-80 border-r bg-muted/20 flex flex-col shrink-0">
-        <div className="p-4 border-b">
-          <div className="flex items-center gap-3">
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={() => router.push("/compare")}
-              className="gap-1 text-muted-foreground hover:text-foreground -ml-2 h-7 px-2"
-            >
-              <ChevronLeft className="h-4 w-4" />
-              返回
-            </Button>
-            <div>
-              <h1 className="text-lg font-semibold flex items-center gap-2">
-                <Sparkles className="h-5 w-5 text-primary" />
-                {playground?.name || "Playground"}
-              </h1>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                对比不同 RAG Pipeline 配置效果
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* 知识库选择 */}
-        <div className="p-4 border-b">
-          <Label className="text-xs font-medium text-muted-foreground">知识库</Label>
-          <Select
-            value={selectedKbIds[0] || ""}
-            onValueChange={(v) => setSelectedKbIds([v])}
-          >
-            <SelectTrigger className="mt-1.5 h-8 text-sm">
-              <SelectValue placeholder="选择知识库" />
+  // 渲染参数输入控件
+  const renderParamInput = (param: ParamConfig) => {
+    const value = chunkerParams[param.key] ?? param.default;
+    
+    switch (param.type) {
+      case 'number':
+        return (
+          <Input
+            type="number"
+            min={param.min}
+            max={param.max}
+            value={value as number}
+            onChange={(e) => updateChunkerParam(param.key, Number(e.target.value))}
+            className="h-8"
+          />
+        );
+      case 'boolean':
+        return (
+          <Switch
+            checked={value as boolean}
+            onCheckedChange={(checked) => updateChunkerParam(param.key, checked)}
+          />
+        );
+      case 'select':
+        return (
+          <Select value={value as string} onValueChange={(v) => updateChunkerParam(param.key, v)}>
+            <SelectTrigger className="h-8">
+              <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {knowledgeBases.map((kb) => (
-                <SelectItem key={kb.id} value={kb.id}>
-                  {kb.name}
-                </SelectItem>
+              {param.options?.map((opt) => (
+                <SelectItem key={opt} value={opt}>{opt}</SelectItem>
               ))}
             </SelectContent>
           </Select>
-        </div>
-
-        {/* 配置列表 */}
-        <ScrollArea className="flex-1">
-          <div className="p-2 space-y-2">
-            {configs.map((config, index) => (
-              <Card key={config.id} className="overflow-hidden">
-                <Collapsible
-                  open={expandedConfigs.has(config.id)}
-                  onOpenChange={() => toggleExpand(config.id)}
-                >
-                  <CollapsibleTrigger asChild>
-                    <CardHeader className="p-3 cursor-pointer hover:bg-muted/50 transition-colors">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          {expandedConfigs.has(config.id) ? (
-                            <ChevronDown className="h-4 w-4" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4" />
-                          )}
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "h-5 w-5 p-0 justify-center text-xs font-bold",
-                              index === 0 && "bg-blue-500/10 text-blue-600 border-blue-300",
-                              index === 1 && "bg-green-500/10 text-green-600 border-green-300",
-                              index === 2 && "bg-purple-500/10 text-purple-600 border-purple-300",
-                              index >= 3 && "bg-orange-500/10 text-orange-600 border-orange-300"
-                            )}
-                          >
-                            {String.fromCharCode(65 + index)}
-                          </Badge>
-                          <Input
-                            value={config.name}
-                            onChange={(e) => updateConfig(config.id, { name: e.target.value })}
-                            onClick={(e) => e.stopPropagation()}
-                            className="h-6 text-sm font-medium border-none bg-transparent p-0 focus-visible:ring-0"
-                          />
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              duplicateConfig(config);
-                            }}
-                          >
-                            <Copy className="h-3 w-3" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 text-destructive hover:text-destructive"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeConfig(config.id);
-                            }}
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </div>
-                    </CardHeader>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    <CardContent className="p-3 pt-0 space-y-4">
-                      {/* 分块配置 */}
-                      <div className="space-y-2">
-                        <Label className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
-                          <Layers className="h-3 w-3" />
-                          分块策略
-                        </Label>
-                        <Select
-                          value={config.chunker}
-                          onValueChange={(v) => updateConfig(config.id, { chunker: v })}
-                        >
-                          <SelectTrigger className="h-8 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {CHUNKER_OPTIONS.map((opt) => (
-                              <SelectItem key={opt.value} value={opt.value}>
-                                <div className="flex flex-col">
-                                  <span>{opt.label}</span>
-                                  <span className="text-xs text-muted-foreground">{opt.desc}</span>
-                                </div>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>
-                            <Label className="text-xs text-muted-foreground">块大小</Label>
-                            <Input
-                              type="number"
-                              value={config.chunkSize}
-                              onChange={(e) => updateConfig(config.id, { chunkSize: parseInt(e.target.value) || 512 })}
-                              className="h-7 text-xs"
-                            />
-                          </div>
-                          <div>
-                            <Label className="text-xs text-muted-foreground">重叠</Label>
-                            <Input
-                              type="number"
-                              value={config.chunkOverlap}
-                              onChange={(e) => updateConfig(config.id, { chunkOverlap: parseInt(e.target.value) || 50 })}
-                              className="h-7 text-xs"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      <Separator />
-
-                      {/* 检索配置 */}
-                      <div className="space-y-2">
-                        <Label className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
-                          <Search className="h-3 w-3" />
-                          检索策略
-                        </Label>
-                        <Select
-                          value={config.retriever}
-                          onValueChange={(v) => updateConfig(config.id, { retriever: v })}
-                        >
-                          <SelectTrigger className="h-8 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {RETRIEVER_OPTIONS.map((opt) => (
-                              <SelectItem key={opt.value} value={opt.value}>
-                                <div className="flex flex-col">
-                                  <span>{opt.label}</span>
-                                  <span className="text-xs text-muted-foreground">{opt.desc}</span>
-                                </div>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <div>
-                          <Label className="text-xs text-muted-foreground">Top-K: {config.topK}</Label>
-                          <Slider
-                            value={[config.topK]}
-                            onValueChange={([v]: number[]) => updateConfig(config.id, { topK: v })}
-                            min={1}
-                            max={20}
-                            step={1}
-                            className="mt-1"
-                          />
-                        </div>
-                      </div>
-
-                      <Separator />
-
-                      {/* Embedding 配置 */}
-                      <div className="space-y-2">
-                        <Label className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
-                          <Brain className="h-3 w-3" />
-                          Embedding
-                        </Label>
-                        <Select
-                          value={config.embeddingProvider}
-                          onValueChange={(v) => updateConfig(config.id, { 
-                            embeddingProvider: v,
-                            embeddingModel: EMBEDDING_MODELS[v]?.[0] || ""
-                          })}
-                        >
-                          <SelectTrigger className="h-8 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {EMBEDDING_PROVIDERS.map((opt) => (
-                              <SelectItem key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Select
-                          value={config.embeddingModel}
-                          onValueChange={(v) => updateConfig(config.id, { embeddingModel: v })}
-                        >
-                          <SelectTrigger className="h-8 text-xs">
-                            <SelectValue placeholder="选择模型" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {(EMBEDDING_MODELS[config.embeddingProvider] || []).map((model) => (
-                              <SelectItem key={model} value={model}>
-                                {model}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <Separator />
-
-                      {/* Rerank 配置 */}
-                      <div className="space-y-2">
-                        <Label className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
-                          <BarChart3 className="h-3 w-3" />
-                          Rerank
-                        </Label>
-                        <Select
-                          value={config.rerankProvider}
-                          onValueChange={(v) => updateConfig(config.id, { rerankProvider: v })}
-                        >
-                          <SelectTrigger className="h-8 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {RERANK_PROVIDERS.map((opt) => (
-                              <SelectItem key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <Separator />
-
-                      {/* 向量数据库配置 */}
-                      <div className="space-y-2">
-                        <Label className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
-                          <Database className="h-3 w-3" />
-                          向量数据库
-                        </Label>
-                        <div className="grid grid-cols-2 gap-2">
-                          <Select
-                            value={config.vectorDb}
-                            onValueChange={(v) => updateConfig(config.id, { vectorDb: v })}
-                          >
-                            <SelectTrigger className="h-8 text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {VECTOR_DB_OPTIONS.map((opt) => (
-                                <SelectItem key={opt.value} value={opt.value}>
-                                  {opt.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <Select
-                            value={config.indexType}
-                            onValueChange={(v) => updateConfig(config.id, { indexType: v })}
-                          >
-                            <SelectTrigger className="h-8 text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {INDEX_TYPE_OPTIONS.map((opt) => (
-                                <SelectItem key={opt.value} value={opt.value}>
-                                  {opt.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </CollapsibleContent>
-                </Collapsible>
-              </Card>
-            ))}
-
-            {/* 添加配置按钮 */}
-            <Button
-              variant="outline"
-              className="w-full h-9 text-sm border-dashed"
-              onClick={addConfig}
-            >
-              <Plus className="h-4 w-4 mr-1" />
-              添加配置
-            </Button>
+        );
+      case 'slider':
+        return (
+          <div className="flex items-center gap-2">
+            <Slider
+              value={[value as number]}
+              min={param.min}
+              max={param.max}
+              step={param.step || 0.1}
+              onValueChange={([v]) => updateChunkerParam(param.key, v)}
+              className="flex-1"
+            />
+            <span className="text-sm w-12 text-right">{(value as number).toFixed(1)}</span>
           </div>
-        </ScrollArea>
+        );
+      case 'text':
+        return (
+          <Input
+            type="text"
+            value={value as string}
+            onChange={(e) => updateChunkerParam(param.key, e.target.value)}
+            className="h-8"
+            placeholder={param.description}
+          />
+        );
+      default:
+        return null;
+    }
+  };
+
+  // 按分组渲染参数
+  const renderChunkerParams = () => {
+    const config = CHUNKER_UI_CONFIG[selectedChunker];
+    if (!config) return null;
+    
+    // 收集分组
+    const groups: Record<string, ParamConfig[]> = {};
+    const ungrouped: ParamConfig[] = [];
+    
+    config.params.forEach(p => {
+      if (!shouldShowParam(p)) return;
+      if (p.group) {
+        if (!groups[p.group]) groups[p.group] = [];
+        groups[p.group].push(p);
+      } else {
+        ungrouped.push(p);
+      }
+    });
+
+    return (
+      <>
+        {/* 无分组参数 */}
+        {ungrouped.map((param) => (
+          <div key={param.key} className="space-y-1">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">{param.label}</Label>
+              {param.type === 'boolean' && renderParamInput(param)}
+            </div>
+            {param.description && param.type !== 'text' && (
+              <p className="text-xs text-muted-foreground">{param.description}</p>
+            )}
+            {param.type !== 'boolean' && renderParamInput(param)}
+          </div>
+        ))}
+        
+        {/* 分组参数 */}
+        {Object.entries(groups).map(([groupName, params]) => (
+          <div key={groupName} className="space-y-2 pt-2 border-t">
+            <Label className="text-xs font-semibold text-muted-foreground">{groupName}</Label>
+            {params.map((param) => (
+              <div key={param.key} className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs">{param.label}</Label>
+                  {param.type === 'boolean' && renderParamInput(param)}
+                </div>
+                {param.description && param.type !== 'text' && (
+                  <p className="text-xs text-muted-foreground">{param.description}</p>
+                )}
+                {param.type !== 'boolean' && renderParamInput(param)}
+              </div>
+            ))}
+          </div>
+        ))}
+      </>
+    );
+  };
+
+  // 删除文档
+  const handleDeleteDocument = async (docId: string) => {
+    if (!client) return;
+    try {
+      await client.deleteDocument(docId);
+      toast.success("删除成功");
+      // 如果删除的是当前选中的文档，清空选中状态
+      if (selectedDocId === docId) {
+        setSelectedDocId("");
+        setChunkPreviewResult([]);
+        setChunkPreviewDocTitle("");
+      }
+      loadDocuments();
+    } catch (error) {
+      toast.error(`删除失败: ${(error as Error).message}`);
+    }
+  };
+
+  const resetChunkPreview = () => {
+    setSelectedDocId("");
+    setChunkPreviewResult([]);
+    setChunkPreviewDocTitle("");
+    setPreviewType("result"); // 重置回结果预览
+  };
+
+  const runExperiments = async () => {
+    if (!client || !ground) return;
+    if (!query.trim()) {
+      toast.error("请输入测试问题");
+      return;
+    }
+    setIsRunning(true);
+    try {
+      const payloads: PlaygroundRunRequest[] = experiments.map((exp) => ({
+        query,
+        knowledge_base_ids: [ground.knowledge_base_id],
+        top_k: exp.topK,
+        retriever: exp.retriever ? { name: exp.retriever } : undefined,
+        rerank: exp.rerank,
+        chunker: exp.chunker,
+        chunk_preview_text: exp.chunkPreviewText,
+        llm_override:
+          defaultModels.llm && defaultModels.llm.model && defaultModels.llm.provider
+            ? {
+                provider: defaultModels.llm.provider,
+                model: defaultModels.llm.model,
+                api_key: providerConfigs[defaultModels.llm.provider]?.apiKey,
+                base_url: providerConfigs[defaultModels.llm.provider]?.baseUrl,
+              }
+            : undefined,
+      }));
+      const responses = await Promise.all(payloads.map((p) => client.runPlayground(p)));
+      const next: Record<string, PlaygroundRunResponse> = {};
+      responses.forEach((resp, idx) => {
+        next[experiments[idx].id] = resp;
+      });
+      setResults(next);
+    } catch (error) {
+      toast.error(`运行失败: ${(error as Error).message}`);
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  const saveGround = async () => {
+    if (!client || !ground) return;
+    setSaving(true);
+    try {
+      const saved = await client.saveGround(ground.ground_id);
+      toast.success("已保存到主知识库");
+      setGround(saved);
+      refreshKnowledgeBases();
+    } catch (error) {
+      toast.error(`保存失败: ${(error as Error).message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex h-full flex-col bg-slate-50">
+      <div className="border-b bg-white px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => router.push("/compare")}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <div>
+            <div className="font-semibold text-lg">{ground?.name || "Ground"}</div>
+            <div className="text-xs text-muted-foreground mt-1">
+              {ground?.document_count || 0} 个文件
+            </div>
+          </div>
+        </div>
+        <Button
+          onClick={() => saveGround()}
+          disabled={ground?.saved || saving}
+        >
+          {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+          {ground?.saved ? "已保存" : "保存到知识库"}
+        </Button>
       </div>
 
-      {/* 右侧主内容区 */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* 查询输入区 */}
-        <div className="p-4 border-b bg-background">
-          <div className="flex gap-3">
-            <Textarea
-              placeholder="输入查询问题，对比不同 RAG 配置的检索结果..."
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="min-h-[80px] resize-none flex-1"
-            />
-            <Button
-              onClick={runComparison}
-              disabled={isRunning || !isConnected}
-              className="h-auto px-6"
-            >
-              {isRunning ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <>
-                  <Play className="h-5 w-5 mr-2" />
-                  运行对比
-                </>
-              )}
-            </Button>
-          </div>
-        </div>
-
-        {/* 结果对比区 */}
-        <ScrollArea className="flex-1 p-4">
-          {results.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <Settings2 className="h-16 w-16 mb-4 opacity-20" />
-              <p className="text-lg font-medium">配置 Pipeline 并运行对比</p>
-              <p className="text-sm mt-1">
-                在左侧配置不同的 RAG 参数，输入查询问题后点击运行对比
-              </p>
-            </div>
-          ) : (
-            <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${results.length}, 1fr)` }}>
-              {results.map((result, index) => (
-                <Card key={result.configId} className="overflow-hidden">
-                  <CardHeader className="p-3 bg-muted/30">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant="outline"
-                          className={cn(
-                            "h-5 w-5 p-0 justify-center text-xs font-bold",
-                            index === 0 && "bg-blue-500/10 text-blue-600 border-blue-300",
-                            index === 1 && "bg-green-500/10 text-green-600 border-green-300",
-                            index === 2 && "bg-purple-500/10 text-purple-600 border-purple-300",
-                            index >= 3 && "bg-orange-500/10 text-orange-600 border-orange-300"
-                          )}
+      <div className="flex-1 overflow-hidden p-6">
+        <div className="grid gap-4 lg:grid-cols-[400px_1fr] h-[calc(100vh-140px)]">
+          <div className="overflow-y-auto h-full pr-2">
+            <div className="space-y-4">
+              <Card>
+              <CardHeader>
+                <CardTitle>文件上传</CardTitle>
+                <CardDescription>上传用于本 ground 的文件</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Input type="text" readOnly value={pendingFiles.length ? `${pendingFiles.length} 个待上传` : "点击上传文件"} className="flex-1" />
+                  <Button variant="outline" onClick={() => setUploadDialogOpen(true)}>
+                    <Upload className="h-4 w-4 mr-2" />
+                    上传
+                  </Button>
+                </div>
+                <ScrollArea className="max-h-[200px] pr-2">
+                  <div className="space-y-2">
+                    {documents.map((doc) => (
+                      <div key={doc.id} className="rounded border p-2 bg-muted/30 flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">{doc.title}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {doc.chunk_count || 0} chunks · {new Date(doc.created_at).toLocaleString()}
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 text-muted-foreground hover:text-destructive shrink-0"
+                          onClick={() => handleDeleteDocument(doc.id)}
                         >
-                          {String.fromCharCode(65 + index)}
-                        </Badge>
-                        <span className="font-medium text-sm">{result.configName}</span>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Clock className="h-3 w-3" />
-                        {result.latency}ms
+                    ))}
+                    {documents.length === 0 && (
+                      <div className="text-sm text-muted-foreground">暂无文件，先上传吧。</div>
+                    )}
+                  </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+
+            {/* 分段设置卡片 */}
+            <Card>
+              <CardHeader>
+                <CardTitle>分段设置</CardTitle>
+                <CardDescription>配置文本切分策略并预览效果</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-lg border-2 border-primary/20 p-4 space-y-4 bg-primary/5">
+                  <div className="flex items-center gap-2">
+                    <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                      <FileText className="h-4 w-4 text-primary" />
+                    </div>
+                    <div>
+                      <div className="font-medium">通用</div>
+                      <div className="text-xs text-muted-foreground">通用文本分块模式</div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <div className="text-sm text-muted-foreground">选择文档</div>
+                      <Select value={selectedDocId} onValueChange={setSelectedDocId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="选择要预览的文档" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {documents.map((doc) => (
+                            <SelectItem key={doc.id} value={doc.id}>
+                              {doc.title}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-sm text-muted-foreground">切分器</div>
+                      <Select value={selectedChunker} onValueChange={handleChunkerChange}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="选择切分器" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {chunkerOptions.map((c) => (
+                            <SelectItem key={c.name} value={c.name}>
+                              {CHUNKER_UI_CONFIG[c.name]?.label || c.label || c.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  
+                  {/* 动态参数配置 */}
+                  {CHUNKER_UI_CONFIG[selectedChunker] && (
+                    <div className="space-y-3 pt-2 border-t border-primary/10">
+                      <div className="text-xs text-muted-foreground">
+                        {CHUNKER_UI_CONFIG[selectedChunker].description}
+                      </div>
+                      <div className="space-y-3">
+                        {renderChunkerParams()}
                       </div>
                     </div>
-                  </CardHeader>
-                  <CardContent className="p-3 space-y-2">
-                    {result.results.length === 0 ? (
-                      <div className="text-center py-8 text-muted-foreground text-sm">
-                        无结果
+                  )}
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={handleChunkPreview}
+                      disabled={isPreviewing || !selectedDocId || documents.length === 0}
+                    >
+                      {isPreviewing ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : (
+                        <Search className="h-4 w-4 mr-2" />
+                      )}
+                      预览
+                    </Button>
+                    <Button variant="ghost" onClick={resetChunkPreview}>
+                      <RotateCcw className="h-4 w-4 mr-2" />
+                      重置
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* 检索配置卡片 */}
+            <Card>
+              <CardHeader>
+                <CardTitle>检索配置</CardTitle>
+                <CardDescription>配置检索策略</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Textarea
+                  placeholder="输入测试问题"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  className="min-h-[80px]"
+                />
+                {experiments.map((exp, idx) => (
+                  <div key={exp.id} className="rounded border p-3 space-y-2 bg-muted/20">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline">方案 {idx + 1}</Badge>
+                      <Input
+                        value={exp.name}
+                        onChange={(e) =>
+                          setExperiments((prev) =>
+                            prev.map((p) => (p.id === exp.id ? { ...p, name: e.target.value } : p))
+                          )
+                        }
+                        className="h-8"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground">检索器</div>
+                        <Select
+                          value={exp.retriever}
+                          onValueChange={(v: string) =>
+                            setExperiments((prev) =>
+                              prev.map((p) => (p.id === exp.id ? { ...p, retriever: v } : p))
+                            )
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="选择检索器" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {retrieverOptions.map((r) => (
+                              <SelectItem key={r.name} value={r.name}>
+                                {r.label || r.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground">Top K</div>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={50}
+                          value={exp.topK}
+                          onChange={(e) =>
+                            setExperiments((prev) =>
+                              prev.map((p) => (p.id === exp.id ? { ...p, topK: Number(e.target.value) } : p))
+                            )
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <div className="flex justify-end">
+                  <Button onClick={runExperiments} disabled={isRunning || documents.length === 0}>
+                    {isRunning ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        运行中...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-4 w-4 mr-2" />
+                        运行实验
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>模型配置</CardTitle>
+                <CardDescription>选择默认 LLM 模型</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ProviderModelSelector type="llm" />
+              </CardContent>
+            </Card>
+            </div>
+          </div>
+
+          <div className="overflow-y-auto h-full">
+            <div className="space-y-4 pr-2">
+            {/* 统一预览卡片 */}
+            <Card>
+              <CardHeader>
+                <CardTitle>结果预览</CardTitle>
+                <CardDescription>
+                  {previewType === "chunk"
+                    ? `分块预览效果${chunkPreviewDocTitle ? ` - ${chunkPreviewDocTitle}` : ""} (${chunkPreviewResult.length} 块)`
+                    : "上传文件并运行实验后在此查看"}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {previewType === "chunk" ? (
+                  <ScrollArea className="h-[500px]">
+                    {chunkPreviewResult.length === 0 ? (
+                      <div className="text-sm text-muted-foreground text-center py-12">
+                        在左侧选择文档和切分器后点击"预览"
                       </div>
                     ) : (
-                      result.results.map((r, i) => (
-                        <div key={i} className="p-2 rounded bg-muted/30 text-sm">
-                          <div className="flex items-center justify-between mb-1">
-                            <Badge variant="secondary" className="text-xs">
-                              #{i + 1}
-                            </Badge>
-                            <span className="text-xs text-muted-foreground">
-                              相关度: {(r.score * 100).toFixed(1)}%
-                            </span>
-                          </div>
-                          <p className="text-xs text-muted-foreground line-clamp-3">
-                            {r.text}
-                          </p>
-                        </div>
-                      ))
+                      <div className="space-y-4 pr-4">
+                        {(() => {
+                          // 检查是否为父子分块模式
+                          const hasParentChild = chunkPreviewResult.some(c => 
+                            getMetadataBool(c.metadata, 'child') !== undefined
+                          );
+                          
+                          if (!hasParentChild) {
+                            // 普通分块模式
+                            return chunkPreviewResult.map((chunk) => (
+                              <div key={chunk.index} className="rounded border p-3 bg-muted/30">
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
+                                  <span className="font-mono font-medium text-foreground">Chunk-{chunk.index}</span>
+                                  <span>·</span>
+                                  <span>{chunk.char_count} characters</span>
+                                </div>
+                                <div className="text-sm leading-relaxed whitespace-pre-wrap">{chunk.text}</div>
+                                {chunk.metadata && Object.keys(chunk.metadata).length > 0 && (
+                                  <div className="mt-2 pt-2 border-t border-muted/50 flex flex-wrap gap-1.5">
+                                    {Object.entries(chunk.metadata).map(([k, v]) => (
+                                      <span key={k} className="text-xs bg-muted/70 px-1.5 py-0.5 rounded font-mono">
+                                        {k}: {typeof v === 'boolean' ? (v ? 'true' : 'false') : String(v).slice(0, 20)}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ));
+                          }
+                          
+                          // 父子分块模式 - 按父块分组
+                          const parents = chunkPreviewResult.filter(c => getMetadataBool(c.metadata, 'child') === false);
+                          const childrenByParent: Record<string, typeof chunkPreviewResult> = {};
+                          
+                          chunkPreviewResult.forEach(c => {
+                            if (getMetadataBool(c.metadata, 'child') === true) {
+                              const pid = getMetadataStr(c.metadata, 'parent_id') || 'unknown';
+                              if (!childrenByParent[pid]) childrenByParent[pid] = [];
+                              childrenByParent[pid].push(c);
+                            }
+                          });
+                          
+                          // 用父块索引作为父块标识的计数器
+                          let parentCounter = 0;
+                          
+                          return parents.map((parent) => {
+                            parentCounter++;
+                            const parentId = getMetadataStr(parent.metadata, 'chunk_id') || String(parent.index);
+                            const children = childrenByParent[parentId] || [];
+                            const totalChars = parent.char_count;
+                            const parentMode = getMetadataStr(parent.metadata, 'parent_mode');
+                            
+                            return (
+                              <div key={parent.index} className="rounded-lg border bg-card">
+                                {/* 父块标题 */}
+                                <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/30">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-muted-foreground">⋮⋮⋮</span>
+                                    <span className="font-medium">Chunk-{parentCounter}</span>
+                                    <span className="text-muted-foreground">·</span>
+                                    <span className="text-sm text-muted-foreground">{totalChars} characters</span>
+                                    {children.length > 0 && (
+                                      <>
+                                        <span className="text-muted-foreground">·</span>
+                                        <span className="text-sm text-blue-600 dark:text-blue-400">{children.length} 子块</span>
+                                      </>
+                                    )}
+                                  </div>
+                                  {parentMode && (
+                                    <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 rounded">
+                                      {parentMode === 'full_doc' ? '全文' : '段落'}
+                                    </span>
+                                  )}
+                                </div>
+                                {/* 子块内容区域 */}
+                                <div className="p-4">
+                                  <div className="flex flex-wrap items-start gap-1 leading-relaxed">
+                                    {children.length > 0 ? (
+                                      children.map((child, idx) => (
+                                        <span 
+                                          key={child.index} 
+                                          className="group inline-flex items-start gap-1 cursor-pointer"
+                                        >
+                                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 shrink-0 group-hover:bg-blue-200 dark:group-hover:bg-blue-800">
+                                            C-{idx + 1}
+                                          </span>
+                                          <span className="text-sm group-hover:bg-blue-50 dark:group-hover:bg-blue-950/50 rounded px-1 -mx-1 transition-colors">
+                                            {child.text}
+                                          </span>
+                                        </span>
+                                      ))
+                                    ) : (
+                                      <span className="text-sm text-muted-foreground">{parent.text}</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          });
+                        })()}
+                      </div>
                     )}
-                  </CardContent>
-                </Card>
-              ))}
+                  </ScrollArea>
+                ) : (
+                  <div className="text-sm text-muted-foreground text-center py-12">
+                    运行实验后在此查看结果
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* 实验结果卡片 */}
+            {Object.keys(results).length > 0 && (
+              Object.keys(results).map((id) => {
+                const exp = experiments.find((e) => e.id === id);
+                const res = results[id];
+                if (!exp || !res) return null;
+                return (
+                  <Card key={id}>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        {exp.name}
+                        <Badge variant="secondary">检索器 {res.retrieval.retriever}</Badge>
+                      </CardTitle>
+                      <CardDescription>时延 {Math.round(res.metrics?.total_ms || 0)} ms</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="rounded border p-3 bg-muted/30">
+                        <div className="text-xs text-muted-foreground mb-1">回答</div>
+                        <div className="text-sm leading-relaxed">{res.rag.answer}</div>
+                        <div className="text-xs text-muted-foreground mt-2 flex gap-2 flex-wrap">
+                          <Badge variant="outline">LLM: {res.rag.model.llm_model || "-"}</Badge>
+                          <Badge variant="outline">Embed: {res.rag.model.embedding_model}</Badge>
+                        </div>
+                      </div>
+                      <div className="rounded border p-3">
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>检索结果</span>
+                          <span>{res.retrieval.latency_ms.toFixed(0)} ms</span>
+                        </div>
+                        <div className="mt-2 space-y-2">
+                          {res.retrieval.results.slice(0, 8).map((hit, idx) => (
+                            <div key={hit.chunk_id || idx} className="rounded bg-muted/30 p-2">
+                              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                <span>#{idx + 1}</span>
+                                <span>{hit.score.toFixed(4)}</span>
+                              </div>
+                              <div className="text-sm line-clamp-2">{hit.text}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      {res.chunk_preview && res.chunk_preview.length > 0 && (
+                        <div className="rounded border p-3">
+                          <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+                            <span>切分预览</span>
+                            <span>{res.chunk_preview.length}</span>
+                          </div>
+                          <ScrollArea className="h-24 pr-2">
+                            <div className="space-y-2">
+                              {res.chunk_preview.slice(0, 8).map((c) => (
+                                <div key={c.chunk_id} className="rounded bg-muted/30 p-2 text-sm">
+                                  {c.text}
+                                </div>
+                              ))}
+                            </div>
+                          </ScrollArea>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })
+            )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>上传文件</DialogTitle>
+          </DialogHeader>
+          <div className="text-sm text-muted-foreground">文件</div>
+          <div
+            {...getDialogRootProps()}
+            className={`rounded-lg border-2 border-dashed p-8 text-center cursor-pointer transition-colors ${
+              isDialogDragActive ? "border-primary bg-primary/5" : "border-muted hover:border-muted-foreground/50"
+            }`}
+          >
+            <input {...getDialogInputProps()} />
+            <UploadCloud className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+            <div className="text-sm text-foreground">
+              点击或拖拽文件至此区域即可上传
+            </div>
+            <div className="text-xs text-muted-foreground mt-1">
+              支持单次或批量上传。支持 PDF, DOCX, MD, TXT 格式。
+            </div>
+          </div>
+          
+          {pendingFiles.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-sm text-muted-foreground">
+                已选择 {pendingFiles.length} 个文件
+              </div>
+              <div className="max-h-[200px] overflow-auto space-y-2">
+                {pendingFiles.map((file, idx) => (
+                  <div
+                    key={`${file.name}-${idx}`}
+                    className="flex items-center justify-between rounded-lg border p-3 bg-muted/30"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <FileText className="h-5 w-5 text-muted-foreground shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate">{file.name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {(file.size / 1024).toFixed(1)} KB
+                        </div>
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPendingFiles((prev) => prev.filter((_, i) => i !== idx));
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
-        </ScrollArea>
-      </div>
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setUploadDialogOpen(false); setPendingFiles([]); }}>取消</Button>
+            <Button onClick={confirmDialogUpload} disabled={uploading || pendingFiles.length === 0}>
+              {uploading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

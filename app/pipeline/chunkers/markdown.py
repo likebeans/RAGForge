@@ -40,20 +40,37 @@ class MarkdownChunker(BaseChunkerOperator):
 
     def __init__(
         self,
-        headers_to_split_on: list[Tuple[str, str]] | None = None,
+        headers_to_split_on: list[Tuple[str, str]] | str | None = None,
         chunk_size: int = 1024,
         chunk_overlap: int = 256,
         strip_headers: bool = False,
     ):
         """
         Args:
-            headers_to_split_on: 要分割的标题列表，格式为 [("#", "h1"), ("##", "h2"), ...]
+            headers_to_split_on: 要分割的标题列表
+                - 格式1: [("#", "h1"), ("##", "h2"), ...]
+                - 格式2: 逗号分隔的字符串，如 "#,##,###"
             chunk_size: 超长片段的最大字符数
             chunk_overlap: 超长片段分割时的重叠字符数
             strip_headers: 是否从片段内容中移除标题行
         """
+        # 解析标题配置
+        if headers_to_split_on is None:
+            parsed_headers = self.DEFAULT_HEADERS
+        elif isinstance(headers_to_split_on, str):
+            # 从逗号分隔的字符串解析，如 "#,##,###"
+            parsed_headers = []
+            for h in headers_to_split_on.split(","):
+                h = h.strip()
+                if h:
+                    # 根据 # 数量自动生成 h1/h2/h3...
+                    level = len(h)
+                    parsed_headers.append((h, f"h{level}"))
+        else:
+            parsed_headers = headers_to_split_on
+        
         self.headers_to_split_on = sorted(
-            headers_to_split_on or self.DEFAULT_HEADERS,
+            parsed_headers,
             key=lambda x: len(x[0]),
             reverse=True,  # 按标题长度降序，优先匹配更长的（### 先于 #）
         )

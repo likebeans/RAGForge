@@ -108,6 +108,7 @@ async def get_knowledge_base(
 async def list_knowledge_bases(
     page: int = Query(1, ge=1, description="页码（>=1）"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量（1-100）"),
+    include_ground: bool = Query(False, description="是否包含 Ground 临时知识库"),
     tenant=Depends(get_tenant),
     _: APIKeyContext = Depends(get_current_api_key),
     db: AsyncSession = Depends(get_db_session),
@@ -115,21 +116,19 @@ async def list_knowledge_bases(
     """
     列出当前租户的所有知识库
     """
-    total_result = await db.execute(
-        select(func.count()).select_from(
-            select(KnowledgeBase.id).where(KnowledgeBase.tenant_id == tenant.id).subquery()
-        )
-    )
-    total = total_result.scalar_one()
-
     result = await db.execute(
         select(KnowledgeBase)
         .where(KnowledgeBase.tenant_id == tenant.id)
         .order_by(KnowledgeBase.created_at.desc())
-        .limit(page_size)
-        .offset((page - 1) * page_size)
     )
-    kbs = result.scalars().all()
+    all_kbs = result.scalars().all()
+    if not include_ground:
+        all_kbs = [kb for kb in all_kbs if not ((kb.config or {}).get("is_ground") and (kb.config or {}).get("ground_id"))]
+
+    total = len(all_kbs)
+    start = (page - 1) * page_size
+    end = start + page_size
+    kbs = all_kbs[start:end]
 
     pages = (total + page_size - 1) // page_size if total is not None else 0
     return KnowledgeBaseListResponse(

@@ -24,6 +24,8 @@ from app.api.routes import (
     kb,
     model_providers,
     openai_compat,
+    ground,
+    pipeline_playground,
     query,
     rag,
     rag_stream,
@@ -44,3 +46,5 @@ api_router.include_router(api_keys.router, tags=["api-keys"])
 api_router.include_router(admin.router)  # admin 路由自带 tags
 api_router.include_router(openai_compat.router)  # OpenAI 兼容接口
 api_router.include_router(model_providers.router)  # 模型提供商管理
+api_router.include_router(ground.router)  # Ground (playground)
+api_router.include_router(pipeline_playground.router)  # Pipeline playground

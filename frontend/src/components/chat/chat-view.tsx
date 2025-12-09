@@ -12,6 +12,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Send, Loader2, Database, Sparkles, MessageSquare, Search } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { SourceItem, Message } from "@/lib/api";
@@ -45,7 +51,8 @@ export function ChatView({ conversationId }: ChatViewProps) {
     isConnected, 
     knowledgeBases, 
     selectedKbId, 
-    selectKnowledgeBase, 
+    selectedKbIds,
+    selectKnowledgeBases, 
     refreshKnowledgeBases,
     setCurrentConversationId,
     refreshConversations,
@@ -60,6 +67,7 @@ export function ChatView({ conversationId }: ChatViewProps) {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [retriever, setRetriever] = useState("hybrid");
+  const [kbMenuOpen, setKbMenuOpen] = useState(false);
   const [llmProvider, setLlmProvider] = useState(defaultModels.llm?.provider || "");
   const [llmModel, setLlmModel] = useState(defaultModels.llm?.model || "");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -148,13 +156,22 @@ export function ChatView({ conversationId }: ChatViewProps) {
     }
   };
 
+  const toggleKnowledgeBase = (id: string) => {
+    const current = selectedKbIds || [];
+    const next = current.includes(id)
+      ? current.filter((kbId) => kbId !== id)
+      : [...current, id];
+    selectKnowledgeBases(next);
+  };
+
   const handleSubmit = async () => {
     if (!input.trim() || isLoading) return;
     if (!client) {
       toast.error("请先配置 API Key");
       return;
     }
-    if (!selectedKbId) {
+    const kbIds = selectedKbIds?.length ? selectedKbIds : selectedKbId ? [selectedKbId] : [];
+    if (kbIds.length === 0) {
       toast.error("请先选择知识库");
       return;
     }
@@ -167,7 +184,7 @@ export function ChatView({ conversationId }: ChatViewProps) {
     if (!activeConversationId) {
       try {
         const title = input.trim().slice(0, 50);
-        const newConv = await client.createConversation(title, [selectedKbId]);
+        const newConv = await client.createConversation(title, kbIds);
         activeConversationId = newConv.id;
         // 刷新侧边栏对话列表
         refreshConversations();
@@ -219,7 +236,7 @@ export function ChatView({ conversationId }: ChatViewProps) {
     try {
       abortRef.current = client.streamRAG(
         userMessage.content,
-        [selectedKbId],
+        kbIds,
         retriever,
         5,
         // onSources
@@ -292,19 +309,36 @@ export function ChatView({ conversationId }: ChatViewProps) {
       {/* 顶部工具栏 - 简化版 */}
       <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between p-4 bg-background/80 backdrop-blur-sm border-b border-border/40">
         <div className="flex items-center gap-2">
-          <Select value={selectedKbId || ""} onValueChange={selectKnowledgeBase}>
-            <SelectTrigger className="w-[200px] border-none shadow-none bg-muted/50 hover:bg-muted focus:ring-0">
-              <Database className="mr-2 h-4 w-4 text-muted-foreground" />
-              <SelectValue placeholder="选择知识库" />
-            </SelectTrigger>
-            <SelectContent>
-              {knowledgeBases.map((kb) => (
-                <SelectItem key={kb.id} value={kb.id}>
-                  {kb.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <DropdownMenu open={kbMenuOpen} onOpenChange={setKbMenuOpen}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                className="w-[220px] justify-start border-none bg-muted/50 hover:bg-muted focus:ring-0"
+              >
+                <Database className="mr-2 h-4 w-4 text-muted-foreground" />
+                <span className="truncate">
+                  {selectedKbIds?.length
+                    ? `已选 ${selectedKbIds.length} 个知识库`
+                    : "选择知识库"}
+                </span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-[240px]">
+              {knowledgeBases.length === 0 ? (
+                <div className="px-2 py-1.5 text-sm text-muted-foreground">暂无知识库</div>
+              ) : (
+                knowledgeBases.map((kb) => (
+                  <DropdownMenuCheckboxItem
+                    key={kb.id}
+                    checked={selectedKbIds?.includes(kb.id)}
+                    onCheckedChange={() => toggleKnowledgeBase(kb.id)}
+                  >
+                    {kb.name}
+                  </DropdownMenuCheckboxItem>
+                ))
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <Select value={retriever} onValueChange={setRetriever}>
             <SelectTrigger className="w-[140px] border-none shadow-none bg-transparent hover:bg-muted/50 focus:ring-0 text-muted-foreground">
@@ -377,7 +411,7 @@ export function ChatView({ conversationId }: ChatViewProps) {
               </div>
               
               {/* 快速开始提示 */}
-              {!selectedKbId && (
+              {!selectedKbIds?.length && (
                 <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground bg-muted/30 px-3 py-1.5 rounded-full">
                   <Database className="h-3 w-3" />
                   <span>请先在上方选择一个知识库</span>

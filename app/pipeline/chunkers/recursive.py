@@ -31,11 +31,22 @@ class RecursiveChunker(BaseChunkerOperator):
     # 默认分隔符优先级：段落 → 行 → 空格 → 字符
     DEFAULT_SEPARATORS = ["\n\n", "\n", " ", ""]
 
+    # 预定义分隔符映射（支持转义序列）
+    SEPARATOR_MAP = {
+        "\\n\\n": "\n\n",
+        "\\n": "\n",
+        "\\t": "\t",
+        "。": "。",
+        ".": ".",
+        " ": " ",
+        "": "",
+    }
+
     def __init__(
         self,
         chunk_size: int = 1024,
         chunk_overlap: int = 256,
-        separators: list[str] | None = None,
+        separators: list[str] | str | None = None,
         keep_separator: bool = True,
     ):
         """
@@ -43,6 +54,7 @@ class RecursiveChunker(BaseChunkerOperator):
             chunk_size: 每个片段的最大字符数
             chunk_overlap: 相邻片段的重叠字符数
             separators: 分隔符优先级列表，默认为 ["\\n\\n", "\\n", " ", ""]
+                        支持逗号分隔的字符串格式，如 "\\n\\n,\\n,。,."
             keep_separator: 是否保留分隔符在片段中
         """
         if chunk_overlap >= chunk_size:
@@ -50,8 +62,17 @@ class RecursiveChunker(BaseChunkerOperator):
         
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self.separators = separators or self.DEFAULT_SEPARATORS
         self.keep_separator = keep_separator
+        
+        # 解析分隔符：支持字符串格式
+        if separators is None:
+            self.separators = self.DEFAULT_SEPARATORS
+        elif isinstance(separators, str):
+            # 从逗号分隔的字符串解析
+            raw_seps = [s.strip() for s in separators.split(",") if s.strip()]
+            self.separators = [self.SEPARATOR_MAP.get(s, s) for s in raw_seps]
+        else:
+            self.separators = [self.SEPARATOR_MAP.get(s, s) for s in separators]
 
     def chunk(self, text: str, metadata: dict | None = None) -> list[ChunkPiece]:
         if not text:

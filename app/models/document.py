@@ -14,7 +14,7 @@
 
 from uuid import uuid4
 
-from sqlalchemy import ForeignKey, JSON, String
+from sqlalchemy import ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -113,3 +113,8 @@ class Document(TimestampMixin, Base):
     # ACL 白名单：允许访问的组/部门列表
     # 格式：["sales", "engineering", "hr", ...]
     acl_allow_groups: Mapped[list | None] = mapped_column("acl_groups", JSON)
+    
+    # ==================== 原始内容（用于 Ground/Playground 预览）====================
+    # 存储原始文件内容，供分块预览等功能使用
+    # 只有 Ground 上传的文档会保存此字段，正常知识库文档此字段为空
+    raw_content: Mapped[str | None] = mapped_column(Text)
