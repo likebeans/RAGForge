@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, Field
 
-from app.schemas.config import RetrieverConfig
+from app.schemas.config import RerankConfig, RetrieverConfig
 
 
 class ModelInfo(BaseModel):
@@ -51,6 +51,16 @@ class RetrieveRequest(BaseModel):
     rerank: bool = Field(
         default=False,
         description="可选：是否启用 Rerank 后处理（使用配置的 Rerank 提供商）",
+    )
+    rerank_override: RerankConfig | None = Field(
+        default=None,
+        description="可选：临时覆盖 Rerank 配置（仅当 rerank=True 时生效）",
+        json_schema_extra={
+            "examples": [
+                {"provider": "cohere", "model": "rerank-multilingual-v3.0"},
+                {"provider": "zhipu", "model": "reranker-v1"},
+            ]
+        },
     )
     rerank_top_k: int | None = Field(
         default=None,

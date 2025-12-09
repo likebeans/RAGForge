@@ -249,3 +249,108 @@ def hash_embed(text: str, dim: int = 256) -> list[float]:
     """
     logger.warning("hash_embed 已废弃，请使用 get_embedding 或 deterministic_hash_embed")
     return deterministic_hash_embed(text, dim=dim)
+
+
+# ==================== 动态配置支持 ====================
+
+
+async def get_embedding_with_config(
+    text: str,
+    provider_config: dict[str, Any],
+) -> list[float]:
+    """
+    使用指定配置获取单个文本的 Embedding 向量
+    
+    此函数支持动态配置，配置来自 ModelConfigResolver 解析的结果。
+    
+    Args:
+        text: 输入文本
+        provider_config: 提供商配置，包含 provider, model, api_key, base_url
+    
+    Returns:
+        list[float]: 向量
+    
+    Example:
+        config = await model_config_resolver.get_embedding_config(session, tenant, kb)
+        provider_config = settings._get_provider_config(
+            config["embedding_provider"], 
+            config["embedding_model"],
+            model_type="embedding"
+        )
+        vec = await get_embedding_with_config(text, provider_config)
+    """
+    provider = provider_config.get("provider")
+    
+    try:
+        if provider == "ollama":
+            logger.debug(f"使用 Ollama Embedding: {provider_config['model']}")
+            return await _ollama_embedding(text, provider_config)
+        
+        elif provider == "gemini":
+            if not provider_config.get("api_key"):
+                raise RuntimeError("GEMINI_API_KEY 未配置，无法生成真实 Embedding")
+            logger.debug(f"使用 Gemini Embedding: {provider_config['model']}")
+            return await _gemini_embedding(text, provider_config)
+        
+        elif provider in ("openai", "qwen", "zhipu", "siliconflow", "deepseek", "kimi"):
+            if not provider_config.get("api_key"):
+                raise RuntimeError(f"{provider.upper()}_API_KEY 未配置，无法生成真实 Embedding")
+            logger.debug(f"使用 {provider} Embedding: {provider_config['model']}")
+            return await _openai_compatible_embedding(text, provider_config)
+        
+        else:
+            raise RuntimeError(f"未知 Embedding 提供者: {provider}")
+            
+    except Exception as e:
+        logger.error(f"Embedding 生成失败 ({provider}): {e}")
+        raise
+
+
+async def get_embeddings_with_config(
+    texts: list[str],
+    provider_config: dict[str, Any],
+    batch_size: int | None = None,
+) -> list[list[float]]:
+    """
+    使用指定配置批量获取文本的 Embedding 向量
+    
+    Args:
+        texts: 文本列表
+        provider_config: 提供商配置
+        batch_size: 批处理大小（默认使用环境变量配置）
+    
+    Returns:
+        list[list[float]]: 向量列表，顺序与输入对应
+    """
+    if not texts:
+        return []
+    
+    provider = provider_config.get("provider")
+    
+    if batch_size is None:
+        settings = get_settings()
+        batch_size = settings.embedding_batch_size
+    
+    try:
+        if provider == "ollama":
+            logger.debug(f"使用 Ollama 批量 Embedding: {provider_config['model']}")
+            return await _ollama_embeddings_batch(texts, provider_config)
+        
+        elif provider == "gemini":
+            if not provider_config.get("api_key"):
+                raise RuntimeError("GEMINI_API_KEY 未配置，无法生成真实 Embedding")
+            logger.debug(f"使用 Gemini 批量 Embedding: {provider_config['model']}")
+            return await _gemini_embeddings_batch(texts, provider_config)
+        
+        elif provider in ("openai", "qwen", "zhipu", "siliconflow", "deepseek", "kimi"):
+            if not provider_config.get("api_key"):
+                raise RuntimeError(f"{provider.upper()}_API_KEY 未配置，无法生成真实 Embedding")
+            logger.debug(f"使用 {provider} 批量 Embedding: {provider_config['model']}")
+            return await _openai_compatible_embeddings_batch(texts, provider_config, batch_size)
+        
+        else:
+            raise RuntimeError(f"未知 Embedding 提供者: {provider}")
+            
+    except Exception as e:
+        logger.error(f"批量 Embedding 生成失败 ({provider}): {e}")
+        raise

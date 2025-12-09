@@ -340,3 +340,131 @@ async def _openai_compatible_chat_stream(
     async for chunk in stream:
         if chunk.choices and chunk.choices[0].delta.content:
             yield chunk.choices[0].delta.content
+
+
+# ==================== 动态配置支持 ====================
+
+
+async def chat_completion_with_config(
+    prompt: str,
+    provider_config: dict[str, Any],
+    system_prompt: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    **kwargs,
+) -> str:
+    """
+    使用指定配置调用 LLM 进行对话补全
+    
+    此函数支持动态配置，配置来自 ModelConfigResolver 解析的结果。
+    
+    Args:
+        prompt: 用户输入
+        provider_config: 提供商配置，包含 provider, model, api_key, base_url
+        system_prompt: 系统提示词
+        temperature: 温度参数（0-2）
+        max_tokens: 最大生成 token 数
+        **kwargs: 其他参数
+    
+    Returns:
+        str: LLM 生成的回复
+    
+    Example:
+        config = await model_config_resolver.get_llm_config(session, tenant)
+        provider_config = settings._get_provider_config(
+            config["llm_provider"], 
+            config["llm_model"]
+        )
+        response = await chat_completion_with_config(
+            prompt="你好",
+            provider_config=provider_config,
+            temperature=config.get("llm_temperature"),
+            max_tokens=config.get("llm_max_tokens"),
+        )
+    """
+    provider = provider_config.get("provider")
+    
+    # 使用默认值
+    settings = get_settings()
+    if temperature is None:
+        temperature = settings.llm_temperature
+    if max_tokens is None:
+        max_tokens = settings.llm_max_tokens
+    
+    try:
+        if provider == "ollama":
+            return await _ollama_chat(prompt, system_prompt, provider_config, temperature, max_tokens)
+        
+        elif provider == "gemini":
+            if not provider_config.get("api_key"):
+                raise ValueError("GEMINI_API_KEY 未配置")
+            return await _gemini_chat(prompt, system_prompt, provider_config, temperature, max_tokens)
+        
+        elif provider in ("openai", "qwen", "kimi", "deepseek", "zhipu", "siliconflow"):
+            if not provider_config.get("api_key"):
+                raise ValueError(f"{provider.upper()}_API_KEY 未配置")
+            return await _openai_compatible_chat(
+                prompt, system_prompt, provider_config, temperature, max_tokens
+            )
+        
+        else:
+            raise ValueError(f"未知的 LLM 提供者: {provider}")
+            
+    except Exception as e:
+        logger.error(f"LLM 调用失败 ({provider}): {e}")
+        raise
+
+
+async def chat_completion_stream_with_config(
+    prompt: str,
+    provider_config: dict[str, Any],
+    system_prompt: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    **kwargs,
+) -> AsyncIterator[str]:
+    """
+    使用指定配置流式调用 LLM 进行对话补全
+    
+    Args:
+        prompt: 用户输入
+        provider_config: 提供商配置
+        system_prompt: 系统提示词
+        temperature: 温度参数
+        max_tokens: 最大生成 token 数
+    
+    Yields:
+        str: LLM 生成的文本片段
+    """
+    provider = provider_config.get("provider")
+    
+    settings = get_settings()
+    if temperature is None:
+        temperature = settings.llm_temperature
+    if max_tokens is None:
+        max_tokens = settings.llm_max_tokens
+    
+    try:
+        if provider == "ollama":
+            async for chunk in _ollama_chat_stream(prompt, system_prompt, provider_config, temperature, max_tokens):
+                yield chunk
+        
+        elif provider in ("openai", "qwen", "kimi", "deepseek", "zhipu", "siliconflow"):
+            if not provider_config.get("api_key"):
+                raise ValueError(f"{provider.upper()}_API_KEY 未配置")
+            async for chunk in _openai_compatible_chat_stream(
+                prompt, system_prompt, provider_config, temperature, max_tokens
+            ):
+                yield chunk
+        
+        elif provider == "gemini":
+            logger.warning("Gemini 暂不支持流式输出，将使用非流式模式")
+            result = await _gemini_chat(prompt, system_prompt, provider_config, temperature, max_tokens)
+            yield result
+        
+        else:
+            raise ValueError(f"未知的 LLM 提供者: {provider}")
+            
+    except Exception as e:
+        logger.error(f"LLM 流式调用失败 ({provider}): {e}")
+        raise

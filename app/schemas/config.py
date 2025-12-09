@@ -113,6 +113,108 @@ class QueryConfig(BaseModel):
     )
 
 
+# ============ Embedding 配置 ============
+
+EmbeddingProvider = Literal[
+    "ollama",
+    "openai",
+    "gemini",
+    "qwen",
+    "zhipu",
+    "siliconflow",
+    "deepseek",
+    "kimi",
+]
+
+
+class EmbeddingConfig(BaseModel):
+    """Embedding 模型配置
+    
+    知识库可以指定独立的 Embedding 配置，覆盖系统/租户默认值。
+    注意：一旦知识库有文档，不建议更改 Embedding 配置，因为会导致向量维度不兼容。
+    """
+    provider: EmbeddingProvider | None = Field(
+        default=None,
+        description="Embedding 提供商",
+    )
+    model: str | None = Field(
+        default=None,
+        description="Embedding 模型名称",
+    )
+    dim: int | None = Field(
+        default=None,
+        ge=1,
+        le=8192,
+        description="向量维度（可选，用于校验）",
+    )
+
+
+# ============ LLM 配置 ============
+
+LLMProvider = Literal[
+    "ollama",
+    "openai",
+    "gemini",
+    "qwen",
+    "zhipu",
+    "siliconflow",
+    "deepseek",
+    "kimi",
+]
+
+
+class LLMConfig(BaseModel):
+    """LLM 模型配置
+    
+    用于请求级覆盖 LLM 配置，优先级最高。
+    """
+    provider: LLMProvider = Field(
+        ...,
+        description="LLM 提供商",
+    )
+    model: str = Field(
+        ...,
+        description="LLM 模型名称",
+    )
+    api_key: str | None = Field(
+        default=None,
+        description="API Key（可选，未指定时使用系统配置）",
+    )
+    base_url: str | None = Field(
+        default=None,
+        description="API Base URL（可选，未指定时使用系统配置）",
+    )
+
+
+# ============ Rerank 配置 ============
+
+RerankProvider = Literal[
+    "ollama",
+    "cohere",
+    "zhipu",
+    "siliconflow",
+]
+
+
+class RerankConfig(BaseModel):
+    """Rerank 模型配置
+    
+    用于请求级覆盖 Rerank 配置，优先级最高。
+    """
+    provider: RerankProvider = Field(
+        ...,
+        description="Rerank 提供商",
+    )
+    model: str = Field(
+        ...,
+        description="Rerank 模型名称",
+    )
+    api_key: str | None = Field(
+        default=None,
+        description="API Key（可选，未指定时使用系统配置）",
+    )
+
+
 # ============ 知识库完整配置 ============
 
 class KBConfig(BaseModel):
@@ -127,6 +229,10 @@ class KBConfig(BaseModel):
         "query": {
             "retriever": {"name": "hybrid"},
             "top_k": 10
+        },
+        "embedding": {
+            "provider": "openai",
+            "model": "text-embedding-3-small"
         }
     }
     ```
@@ -139,6 +245,10 @@ class KBConfig(BaseModel):
         default=None,
         description="检索查询配置",
     )
+    embedding: EmbeddingConfig | None = Field(
+        default=None,
+        description="Embedding 模型配置（覆盖系统/租户默认值）",
+    )
 
     class Config:
         json_schema_extra = {
@@ -150,6 +260,10 @@ class KBConfig(BaseModel):
                 "query": {
                     "retriever": {"name": "hyde", "params": {"base_retriever": "dense"}},
                     "top_k": 10,
+                },
+                "embedding": {
+                    "provider": "openai",
+                    "model": "text-embedding-3-small",
                 },
             }
         }

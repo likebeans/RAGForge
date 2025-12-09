@@ -18,7 +18,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import DateTime, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -91,3 +91,16 @@ class Tenant(TimestampMixin, Base):
         default="auto",
         nullable=False,
     )
+    
+    # ==================== 模型配置（租户级别覆盖） ====================
+    
+    # 租户专属模型配置（JSON 格式）
+    # 可覆盖系统默认配置，优先级：请求级 > 租户级 > 系统级 > 环境变量
+    # 示例：
+    # {
+    #     "llm_provider": "openai",
+    #     "llm_model": "gpt-4",
+    #     "rerank_provider": "cohere",
+    #     "rerank_model": "rerank-v3"
+    # }
+    llm_settings: Mapped[dict | None] = mapped_column(JSON, default=dict)

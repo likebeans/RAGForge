@@ -22,7 +22,11 @@ from app.schemas import (
     KnowledgeBaseResponse,
     KnowledgeBaseUpdate,
 )
-from app.services.config_validation import ConfigValidationError, validate_kb_config
+from app.services.config_validation import (
+    ConfigValidationError,
+    validate_embedding_config_compatibility,
+    validate_kb_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +60,7 @@ async def create_knowledge_base(
         )
 
     # 创建知识库记录
-    cfg = payload.config or {}
+    cfg = payload.config.model_dump(exclude_none=True) if payload.config else {}
     if cfg:
         try:
             validate_kb_config(cfg)
@@ -163,14 +167,32 @@ async def update_knowledge_base(
     if payload.description is not None:
         kb.description = payload.description
     if payload.config is not None:
+        # 检查知识库是否有文档
+        doc_count_result = await db.execute(
+            select(func.count()).select_from(
+                select(Document.id).where(Document.knowledge_base_id == kb_id).subquery()
+            )
+        )
+        has_documents = doc_count_result.scalar_one() > 0
+        
+        # 转换 Pydantic 对象为字典
+        new_config = payload.config.model_dump(exclude_none=True)
+        
         try:
-            validate_kb_config(payload.config)
+            # 校验基本配置
+            validate_kb_config(new_config)
+            # 校验 embedding 配置变更兼容性
+            validate_embedding_config_compatibility(
+                old_config=kb.config,
+                new_config=new_config,
+                has_documents=has_documents,
+            )
         except ConfigValidationError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"code": "KB_CONFIG_ERROR", "detail": str(e)},
             )
-        kb.config = payload.config
+        kb.config = new_config
 
     db.add(kb)
     await db.commit()

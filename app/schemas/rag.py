@@ -6,7 +6,7 @@ RAG 生成相关的请求/响应模型
 
 from pydantic import BaseModel, Field
 
-from app.schemas.config import RetrieverConfig
+from app.schemas.config import LLMConfig, RerankConfig, RetrieverConfig
 from app.schemas.query import ChunkHit, ModelInfo
 
 
@@ -21,7 +21,11 @@ class RAGRequest(BaseModel):
         "knowledge_base_ids": ["kb-id-1"],
         "top_k": 5,
         "system_prompt": "你是一个专业的技术助手",
-        "temperature": 0.7
+        "temperature": 0.7,
+        "llm_override": {
+            "provider": "openai",
+            "model": "gpt-4-turbo"
+        }
     }
     ```
     """
@@ -38,8 +42,26 @@ class RAGRequest(BaseModel):
         default=None, ge=0.0, le=1.0,
         description="可选：过滤低于阈值的检索结果"
     )
+    rerank: bool = Field(
+        default=False,
+        description="可选：是否启用 Rerank 后处理",
+    )
+    rerank_override: RerankConfig | None = Field(
+        default=None,
+        description="可选：临时覆盖 Rerank 配置（仅当 rerank=True 时生效）",
+    )
     
     # LLM 生成参数
+    llm_override: LLMConfig | None = Field(
+        default=None,
+        description="可选：临时覆盖 LLM 配置（优先级最高）",
+        json_schema_extra={
+            "examples": [
+                {"provider": "openai", "model": "gpt-4-turbo"},
+                {"provider": "ollama", "model": "qwen3:14b"},
+            ]
+        },
+    )
     system_prompt: str | None = Field(
         default=None,
         description="可选：自定义系统提示词（覆盖默认 RAG 提示词）"
