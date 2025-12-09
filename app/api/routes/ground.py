@@ -407,3 +407,185 @@ async def upload_ground_document(
         source=doc.source,
         file_size=file_size,
     )
+
+
+# ==================== Ground 入库 API ====================
+from app.schemas.internal import IngestionParams
+from app.services.ingestion import ingest_document
+from app.pipeline import operator_registry
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class GroundIngestRequest(BaseModel):
+    """Ground 入库请求"""
+    target_kb_name: str  # 目标知识库名称
+    target_kb_description: str | None = None
+    # 配置覆盖
+    chunker: dict | None = None  # {"name": "recursive", "params": {...}}
+    generate_summary: bool = False
+    enrich_chunks: bool = False
+    embedding_provider: str | None = None
+    embedding_model: str | None = None
+
+
+class GroundIngestResult(BaseModel):
+    """单个文档入库结果"""
+    title: str
+    document_id: str | None = None
+    chunk_count: int | None = None
+    success: bool
+    error: str | None = None
+
+
+class GroundIngestResponse(BaseModel):
+    """Ground 入库响应"""
+    knowledge_base_id: str
+    knowledge_base_name: str
+    results: list[GroundIngestResult]
+    total: int
+    succeeded: int
+    failed: int
+
+
+@router.post("/{ground_id}/ingest", response_model=GroundIngestResponse)
+async def ingest_ground_to_kb(
+    ground_id: str,
+    payload: GroundIngestRequest,
+    tenant=Depends(get_tenant),
+    _: APIKeyContext = Depends(require_role("admin", "write")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    将 Ground 中的所有文档入库到新知识库
+    
+    此接口会：
+    1. 创建一个新的知识库
+    2. 读取 Ground 中所有文档的原始内容
+    3. 使用指定的配置（chunker、enricher 等）进行入库
+    4. 返回入库结果
+    """
+    # 获取 ground 对应的知识库
+    result = await db.execute(
+        select(KnowledgeBase).where(
+            KnowledgeBase.tenant_id == tenant.id,
+        )
+    )
+    ground_kb = None
+    for k in result.scalars().all():
+        cfg = k.config or {}
+        if cfg.get("ground_id") == ground_id:
+            ground_kb = k
+            break
+    
+    if not ground_kb:
+        raise HTTPException(status_code=404, detail="Ground not found")
+    
+    # 获取 Ground 中的所有文档
+    doc_result = await db.execute(
+        select(Document).where(Document.knowledge_base_id == ground_kb.id)
+    )
+    ground_docs = doc_result.scalars().all()
+    
+    if not ground_docs:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "NO_DOCUMENTS", "detail": "Ground 中没有文档"}
+        )
+    
+    # 验证 chunker 配置
+    if payload.chunker:
+        chunker_name = payload.chunker.get("name", "recursive")
+        if chunker_name not in operator_registry.list("chunker"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "INVALID_CHUNKER",
+                    "detail": f"未知 chunker: {chunker_name}，可用: {operator_registry.list('chunker')}"
+                },
+            )
+    
+    # 创建目标知识库
+    target_kb_config: dict = {}
+    if payload.chunker:
+        target_kb_config["ingestion"] = {
+            "chunker": {
+                "name": payload.chunker.get("name", "recursive"),
+                "params": payload.chunker.get("params", {}),
+            }
+        }
+    if payload.embedding_provider and payload.embedding_model:
+        target_kb_config["embedding"] = {
+            "provider": payload.embedding_provider,
+            "model": payload.embedding_model,
+        }
+    
+    target_kb = KnowledgeBase(
+        tenant_id=tenant.id,
+        name=payload.target_kb_name,
+        description=payload.target_kb_description,
+        config=target_kb_config if target_kb_config else None,
+    )
+    db.add(target_kb)
+    await db.commit()
+    await db.refresh(target_kb)
+    
+    # 入库所有文档
+    results: list[GroundIngestResult] = []
+    succeeded = 0
+    failed = 0
+    
+    for doc in ground_docs:
+        if not doc.raw_content:
+            results.append(GroundIngestResult(
+                title=doc.title,
+                success=False,
+                error="文档没有原始内容",
+            ))
+            failed += 1
+            continue
+        
+        try:
+            params = IngestionParams(
+                title=doc.title,
+                content=doc.raw_content,
+                metadata=doc.extra_metadata,
+                source=doc.source,
+                generate_doc_summary=payload.generate_summary,
+                enrich_chunks=payload.enrich_chunks,
+            )
+            ingest_result = await ingest_document(
+                db,
+                tenant_id=tenant.id,
+                kb=target_kb,
+                params=params,
+            )
+            await db.commit()
+            
+            results.append(GroundIngestResult(
+                title=doc.title,
+                document_id=ingest_result.document.id,
+                chunk_count=len(ingest_result.chunks),
+                success=True,
+            ))
+            succeeded += 1
+        except Exception as e:
+            logger.warning(f"入库文档 '{doc.title}' 失败: {e}")
+            await db.rollback()
+            results.append(GroundIngestResult(
+                title=doc.title,
+                success=False,
+                error=str(e),
+            ))
+            failed += 1
+    
+    logger.info(f"Ground {ground_id} 入库完成: {succeeded} 成功, {failed} 失败")
+    return GroundIngestResponse(
+        knowledge_base_id=target_kb.id,
+        knowledge_base_name=target_kb.name,
+        results=results,
+        total=len(ground_docs),
+        succeeded=succeeded,
+        failed=failed,
+    )

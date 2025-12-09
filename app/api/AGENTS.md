@@ -26,6 +26,26 @@ FastAPI 路由层，定义 HTTP 接口和请求处理逻辑。
 | `kb.py` | `/v1/knowledge-bases` | 知识库管理 |
 | `documents.py` | `/v1/knowledge-bases/{kb_id}/documents` | 文档上传和管理 |
 | `query.py` | `/v1/retrieve` | 知识库检索 |
+| `enrichment.py` | `/v1/enrichment` | 增强预览（摘要/Chunk 增强） |
+
+### 增强预览 API (enrichment.py)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/v1/enrichment/preview-summary` | 预览文档摘要（不持久化） |
+| POST | `/v1/enrichment/preview-chunk-enrichment` | 预览 Chunk 上下文增强（最多 5 个） |
+
+### 高级批量入库 API (documents.py)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/v1/knowledge-bases/{kb_id}/documents/advanced-batch` | 高级批量入库（支持自定义配置） |
+
+**高级批量入库支持的配置**:
+- `chunker`: 自定义切分器名称和参数
+- `generate_summary`: 是否生成文档摘要
+- `enrich_chunks`: 是否对 Chunk 进行 LLM 增强
+- `embedding_provider/model`: 覆盖 Embedding 配置
 
 ## 依赖注入
 

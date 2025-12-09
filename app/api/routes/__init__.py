@@ -20,6 +20,7 @@ from app.api.routes import (
     api_keys,
     conversations,
     documents,
+    enrichment,
     health,
     kb,
     model_providers,
@@ -48,3 +49,4 @@ api_router.include_router(openai_compat.router)  # OpenAI 兼容接口
 api_router.include_router(model_providers.router)  # 模型提供商管理
 api_router.include_router(ground.router)  # Ground (playground)
 api_router.include_router(pipeline_playground.router)  # Pipeline playground
+api_router.include_router(enrichment.router, tags=["enrichment"])  # 增强预览

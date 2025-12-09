@@ -26,9 +26,15 @@ from app.schemas import (
     DocumentListResponse,
     DocumentResponse,
 )
-from app.schemas.document import BatchIngestRequest, BatchIngestResponse, BatchIngestResult
+from app.schemas.document import (
+    AdvancedBatchIngestRequest,
+    BatchIngestRequest,
+    BatchIngestResponse,
+    BatchIngestResult,
+)
 from app.schemas.internal import IngestionParams
 from app.services.ingestion import ensure_kb_belongs_to_tenant, ingest_document
+from app.pipeline import operator_registry
 
 logger = logging.getLogger(__name__)
 
@@ -482,6 +488,121 @@ async def batch_ingest_endpoint(
             failed += 1
 
     logger.info(f"Batch ingest completed: {succeeded} succeeded, {failed} failed")
+    return BatchIngestResponse(
+        results=results,
+        total=len(payload.documents),
+        succeeded=succeeded,
+        failed=failed,
+    )
+
+
+@router.post("/v1/knowledge-bases/{kb_id}/documents/advanced-batch", response_model=BatchIngestResponse)
+async def advanced_batch_ingest_endpoint(
+    payload: AdvancedBatchIngestRequest,
+    kb_id: str = Path(..., description="Knowledge base ID"),
+    tenant=Depends(get_tenant),
+    context: APIKeyContext = Depends(require_role("admin", "write")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    高级批量上传文档（支持自定义配置）
+    
+    支持覆盖以下配置：
+    - chunker: 切分器名称和参数
+    - generate_summary: 是否生成文档摘要
+    - enrich_chunks: 是否进行 Chunk 增强
+    - embedding_provider/model: Embedding 模型配置
+    
+    所有文档使用相同的配置进行处理。
+    """
+    # 验证知识库归属
+    kb = await ensure_kb_belongs_to_tenant(db, kb_id=kb_id, tenant_id=tenant.id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "KB_NOT_FOUND", "detail": "Knowledge base not found"},
+        )
+
+    # 验证 chunker 配置
+    if payload.chunker:
+        chunker_name = payload.chunker.name
+        if chunker_name not in operator_registry.list("chunker"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "INVALID_CHUNKER",
+                    "detail": f"未知 chunker: {chunker_name}，可用: {operator_registry.list('chunker')}"
+                },
+            )
+
+    # 构建临时 KB 配置（覆盖原配置）
+    temp_kb_config = dict(kb.config or {})
+    if payload.chunker:
+        if "ingestion" not in temp_kb_config:
+            temp_kb_config["ingestion"] = {}
+        temp_kb_config["ingestion"]["chunker"] = {
+            "name": payload.chunker.name,
+            "params": payload.chunker.params or {},
+        }
+    
+    if payload.embedding_provider and payload.embedding_model:
+        temp_kb_config["embedding"] = {
+            "provider": payload.embedding_provider,
+            "model": payload.embedding_model,
+        }
+    
+    # 临时更新 KB 配置用于入库
+    original_config = kb.config
+    kb.config = temp_kb_config
+
+    results: list[BatchIngestResult] = []
+    succeeded = 0
+    failed = 0
+
+    try:
+        for item in payload.documents:
+            try:
+                params = IngestionParams(
+                    title=item.title,
+                    content=item.content,
+                    metadata=item.metadata,
+                    source=item.source,
+                    generate_doc_summary=payload.generate_summary,
+                    enrich_chunks=payload.enrich_chunks,
+                )
+                result = await ingest_document(
+                    db,
+                    tenant_id=tenant.id,
+                    kb=kb,
+                    params=params,
+                )
+                await db.commit()
+                
+                # 记录多后端写入失败
+                for failed_store in result.failed_stores():
+                    logger.warning(f"文档 {result.document.id} 多后端写入失败: [{failed_store.store_type}] {failed_store.error}")
+                
+                results.append(BatchIngestResult(
+                    title=item.title,
+                    document_id=result.document.id,
+                    chunk_count=len(result.chunks),
+                    success=True,
+                ))
+                succeeded += 1
+            except Exception as e:
+                logger.warning(f"Failed to ingest document '{item.title}': {e}")
+                await db.rollback()
+                results.append(BatchIngestResult(
+                    title=item.title,
+                    success=False,
+                    error=str(e),
+                ))
+                failed += 1
+    finally:
+        # 恢复原配置
+        kb.config = original_config
+
+    logger.info(f"Advanced batch ingest completed: {succeeded} succeeded, {failed} failed")
     return BatchIngestResponse(
         results=results,
         total=len(payload.documents),
