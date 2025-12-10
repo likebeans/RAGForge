@@ -30,7 +30,7 @@ services:
     # 允许容器访问宿主机服务（Ollama）
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8020"]
+    # 使用 Dockerfile 中的启动脚本（含健康检查预热）
     ports:
       - "8020:8020"
     depends_on:

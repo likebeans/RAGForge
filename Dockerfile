@@ -28,6 +28,8 @@ COPY app ./app
 COPY main.py alembic.ini README.md ./
 COPY alembic ./alembic
 COPY sdk ./sdk
+COPY scripts ./scripts
+RUN chmod +x ./scripts/docker-entrypoint.sh
 
 # 安装项目
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -35,5 +37,5 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 EXPOSE 8020
 
-# 使用 uv run 运行应用
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8020"]
+# 使用启动脚本（包含健康检查预热）
+CMD ["./scripts/docker-entrypoint.sh"]

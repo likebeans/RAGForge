@@ -7,12 +7,12 @@
 - 可配置摘要长度
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 
-from openai import OpenAI
-
 from app.config import get_settings
+from app.infra.llm import chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -65,21 +65,7 @@ class DocumentSummarizer:
         self.prompt_template = prompt_template or DEFAULT_SUMMARY_PROMPT
         
         settings = get_settings()
-        self.model = model or settings.doc_summary_model or settings.openai_model
-        self._client: OpenAI | None = None
-    
-    def _get_client(self) -> OpenAI:
-        """延迟初始化 OpenAI 客户端"""
-        if self._client is None:
-            settings = get_settings()
-            if not settings.openai_api_key:
-                raise ValueError("OPENAI_API_KEY 未配置，无法生成摘要")
-            
-            self._client = OpenAI(
-                api_key=settings.openai_api_key,
-                base_url=settings.openai_api_base,
-            )
-        return self._client
+        self.model = model or settings.doc_summary_model
     
     def _estimate_tokens(self, text: str) -> int:
         """
@@ -97,7 +83,31 @@ class DocumentSummarizer:
     
     def generate(self, content: str) -> str | None:
         """
-        生成文档摘要
+        生成文档摘要（同步版本，内部调用异步）
+        
+        Args:
+            content: 文档内容
+            
+        Returns:
+            摘要文本，失败返回 None
+        """
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # 如果事件循环已在运行，创建新线程执行
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(asyncio.run, self.agenerate(content))
+                    return future.result()
+            else:
+                return asyncio.run(self.agenerate(content))
+        except Exception as e:
+            logger.warning(f"同步摘要生成失败: {e}")
+            return None
+    
+    async def agenerate(self, content: str) -> str | None:
+        """
+        异步生成文档摘要
         
         Args:
             content: 文档内容
@@ -110,8 +120,6 @@ class DocumentSummarizer:
             return None
         
         try:
-            client = self._get_client()
-            
             # 如果内容太长，截取前面部分
             max_content_chars = 8000  # 约 4000 tokens
             truncated_content = content[:max_content_chars]
@@ -120,32 +128,28 @@ class DocumentSummarizer:
             
             prompt = self.prompt_template.format(content=truncated_content)
             
-            response = client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=self.max_tokens,
+            logger.info(f"调用 LLM 生成摘要，prompt 长度: {len(prompt)}, max_tokens: {self.max_tokens}")
+            
+            # 使用统一的 LLM 客户端
+            summary = await chat_completion(
+                prompt=prompt,
                 temperature=0.3,  # 低温度，保持一致性
+                max_tokens=self.max_tokens,
             )
             
-            if response.choices:
-                summary = response.choices[0].message.content
-                if summary:
-                    summary = summary.strip()
-                    logger.info(f"摘要生成成功，长度: {len(summary)} 字")
-                    return summary
+            logger.info(f"LLM 返回结果: {repr(summary[:200]) if summary else 'None'}")
             
+            if summary:
+                summary = summary.strip()
+                logger.info(f"摘要生成成功，长度: {len(summary)} 字")
+                return summary
+            
+            logger.warning("LLM 返回空结果")
             return None
             
         except Exception as e:
-            logger.warning(f"摘要生成失败: {e}")
+            logger.error(f"摘要生成异常: {type(e).__name__}: {e}", exc_info=True)
             return None
-    
-    async def agenerate(self, content: str) -> str | None:
-        """异步生成摘要"""
-        import asyncio
-        return await asyncio.to_thread(self.generate, content)
     
     @classmethod
     def from_config(cls, config: SummaryConfig) -> "DocumentSummarizer":
@@ -176,8 +180,10 @@ def get_summarizer(config: SummaryConfig | None = None) -> DocumentSummarizer | 
     if not config.enabled:
         return None
     
-    if not settings.openai_api_key:
-        logger.warning("Document Summary 已启用但 OPENAI_API_KEY 未配置")
+    # 检查 LLM 是否可用（任意提供商即可）
+    llm_config = settings.get_llm_config()
+    if not llm_config.get("provider"):
+        logger.warning("Document Summary 已启用但 LLM 未配置")
         return None
     
     return DocumentSummarizer.from_config(config)

@@ -44,17 +44,22 @@ async def preview_summary(
     - 用于入库前预览增强效果
     """
     try:
+        logger.info(f"开始生成摘要，内容长度: {len(payload.content)}")
+        
         summarizer = DocumentSummarizer(
             min_tokens=0,  # 预览时不限制最小长度
             max_tokens=payload.max_tokens,
         )
         
-        summary = summarizer.generate(content=payload.content)
+        # 使用异步方法
+        summary = await summarizer.agenerate(content=payload.content)
+        
+        logger.info(f"摘要生成结果: {summary[:100] if summary else 'None'}...")
         
         if not summary:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"code": "SUMMARY_FAILED", "detail": "摘要生成失败"}
+                detail={"code": "SUMMARY_FAILED", "detail": "摘要生成失败，LLM 返回空结果"}
             )
         
         return PreviewSummaryResponse(
@@ -63,6 +68,9 @@ async def preview_summary(
             summary_length=len(summary),
         )
         
+    except HTTPException:
+        # 直接重新抛出 HTTPException，不重复包装
+        raise
     except ValueError as e:
         # LLM 未配置等错误
         raise HTTPException(
@@ -70,7 +78,7 @@ async def preview_summary(
             detail={"code": "LLM_NOT_CONFIGURED", "detail": str(e)}
         )
     except Exception as e:
-        logger.error(f"预览摘要失败: {e}")
+        logger.error(f"预览摘要失败: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "PREVIEW_FAILED", "detail": str(e)}
