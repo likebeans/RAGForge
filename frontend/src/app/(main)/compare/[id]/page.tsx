@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -463,6 +463,7 @@ export default function GroundDetailPage() {
   const [isIngesting, setIsIngesting] = useState(false);
   // 增强预览状态
   const [isPreviewingEnrich, setIsPreviewingEnrich] = useState(false);
+  const [enrichPreviewStep, setEnrichPreviewStep] = useState<string>(""); // 当前处理步骤
   const [summaryPreview, setSummaryPreview] = useState<string | null>(null);
   const [chunkEnrichPreview, setChunkEnrichPreview] = useState<Array<{ original: string; enriched: string }>>([]);
 
@@ -530,6 +531,94 @@ export default function GroundDetailPage() {
       loadDocuments();
     }
   }, [ground]);
+
+  // ========== localStorage 持久化设置 ==========
+  const STORAGE_KEY = `ground-settings-${groundId}`;
+  const isInitializedRef = useRef(false);
+
+  // 从 localStorage 恢复设置（仅在初始化时执行一次）
+  useEffect(() => {
+    if (!groundId || isInitializedRef.current) return;
+    
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const settings = JSON.parse(saved);
+        // 恢复分段设置
+        if (settings.chunker) {
+          setSelectedChunker(settings.chunker);
+          setChunkerParams(settings.chunkerParams || getDefaultChunkerParams(settings.chunker));
+        }
+        // 恢复检索设置
+        if (settings.retriever) {
+          setSelectedRetriever(settings.retriever);
+          setRetrieverParams(settings.retrieverParams || getDefaultRetrieverParams(settings.retriever));
+        }
+        if (settings.topK) setTopK(settings.topK);
+        // 恢复增强设置
+        if (settings.enricher) {
+          setSelectedEnricher(settings.enricher);
+          setEnricherParams(settings.enricherParams || getDefaultEnricherParams(settings.enricher));
+        }
+        // 恢复索引设置
+        if (settings.indexer) {
+          setSelectedIndexer(settings.indexer);
+          setIndexerParams(settings.indexerParams || getDefaultIndexerParams(settings.indexer));
+        }
+        // 恢复 Embedding 模型
+        if (settings.embedProvider) setEmbedProvider(settings.embedProvider);
+        if (settings.embedModel) setEmbedModel(settings.embedModel);
+        // 恢复选中的文档
+        if (settings.selectedDocId) setSelectedDocId(settings.selectedDocId);
+        
+        console.log("[Ground] 已从本地缓存恢复设置");
+      }
+    } catch (e) {
+      console.warn("[Ground] 恢复本地设置失败:", e);
+    }
+    isInitializedRef.current = true;
+  }, [groundId]);
+
+  // 保存设置到 localStorage（设置变化时自动保存）
+  useEffect(() => {
+    if (!groundId || !isInitializedRef.current) return;
+    
+    const settings = {
+      chunker: selectedChunker,
+      chunkerParams,
+      retriever: selectedRetriever,
+      retrieverParams,
+      topK,
+      enricher: selectedEnricher,
+      enricherParams,
+      indexer: selectedIndexer,
+      indexerParams,
+      embedProvider,
+      embedModel,
+      selectedDocId,
+      savedAt: Date.now(),
+    };
+    
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    } catch (e) {
+      console.warn("[Ground] 保存本地设置失败:", e);
+    }
+  }, [
+    groundId,
+    selectedChunker,
+    chunkerParams,
+    selectedRetriever,
+    retrieverParams,
+    topK,
+    selectedEnricher,
+    enricherParams,
+    selectedIndexer,
+    indexerParams,
+    embedProvider,
+    embedModel,
+    selectedDocId,
+  ]);
 
   if (isLoading) {
     return (
@@ -1031,8 +1120,10 @@ export default function GroundDetailPage() {
     }
     
     setIsPreviewingEnrich(true);
+    setEnrichPreviewStep("准备中...");
     setSummaryPreview(null);
     setChunkEnrichPreview([]);
+    setPreviewType("enrich"); // 立即切换到增强预览视图，显示加载状态
     
     try {
       const needsSummary = selectedEnricher === "document_summary";
@@ -1047,12 +1138,15 @@ export default function GroundDetailPage() {
       
       // 1. 预览摘要
       if (needsSummary) {
+        setEnrichPreviewStep("正在生成文档摘要...(LLM 处理中，请耐心等待)");
         const summaryResult = await client.previewSummary(fullContent, docTitle);
         setSummaryPreview(summaryResult.summary);
+        setEnrichPreviewStep("文档摘要生成完成");
       }
       
       // 2. 预览 Chunk 增强（取前 3 个 chunks）
       if (needsChunkEnrich) {
+        setEnrichPreviewStep("正在增强 Chunk 上下文...(LLM 处理中，请耐心等待)");
         const chunksToEnrich = chunkPreviewResult.slice(0, 3).map(c => c.text);
         // 如果有摘要，使用摘要；否则用空字符串
         const docSummary = summaryPreview || (needsSummary ? (await client.previewSummary(fullContent, docTitle)).summary : "");
@@ -1069,14 +1163,17 @@ export default function GroundDetailPage() {
             enriched: result.enriched_text,
           }))
         );
+        setEnrichPreviewStep("Chunk 增强完成");
       }
       
-      setPreviewType("enrich");
+      setEnrichPreviewStep("");
       toast.success("增强预览完成");
     } catch (error) {
       toast.error(`预览失败: ${(error as Error).message}`);
+      setEnrichPreviewStep("");
     } finally {
       setIsPreviewingEnrich(false);
+      setEnrichPreviewStep("");
     }
   };
 
@@ -1762,7 +1859,19 @@ export default function GroundDetailPage() {
                   </ScrollArea>
                 ) : previewType === "enrich" ? (
                   <ScrollArea className="h-[500px]">
-                    {!summaryPreview && chunkEnrichPreview.length === 0 ? (
+                    {isPreviewingEnrich ? (
+                      <div className="flex flex-col items-center justify-center py-16 space-y-4">
+                        <div className="relative">
+                          <div className="w-12 h-12 border-4 border-orange-200 rounded-full animate-spin border-t-orange-500" />
+                        </div>
+                        <div className="text-sm font-medium text-orange-600">
+                          {enrichPreviewStep || "处理中..."}
+                        </div>
+                        <div className="text-xs text-muted-foreground max-w-xs text-center">
+                          LLM 正在处理，请耐心等待。根据文档长度，可能需要 5-30 秒
+                        </div>
+                      </div>
+                    ) : !summaryPreview && chunkEnrichPreview.length === 0 ? (
                       <div className="text-sm text-muted-foreground text-center py-12">
                         在左侧选择增强方式后点击"预览增强效果"
                       </div>
