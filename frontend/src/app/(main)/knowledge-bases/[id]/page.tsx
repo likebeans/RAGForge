@@ -58,7 +58,27 @@ import {
   Calendar,
   Layers,
   Eye,
+  Save,
+  Image,
+  Info,
+  HelpCircle,
 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -68,6 +88,7 @@ import {
 import { useAppStore } from "@/lib/store";
 import { Document } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { AllModelsSelector } from "@/components/settings";
 
 // 与列表页面共享的封面图标
 const COVER_ICONS = [
@@ -123,7 +144,38 @@ export default function KnowledgeBaseDetailPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
 
+  // 知识库配置状态
+  const [configName, setConfigName] = useState("");
+  const [configDescription, setConfigDescription] = useState("");
+  const [configEmbeddingModel, setConfigEmbeddingModel] = useState<{ provider: string; model: string }>({ provider: "ollama", model: "bge-m3" });
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
+  // 自定义图标
+  const [customIconUrl, setCustomIconUrl] = useState<string | null>(null);
+  const [isUploadingIcon, setIsUploadingIcon] = useState(false);
+  const iconInputRef = useState<HTMLInputElement | null>(null);
+
   const kb = knowledgeBases.find((k) => k.id === kbId);
+  
+  // 初始化配置
+  useEffect(() => {
+    if (kb) {
+      setConfigName(kb.name || "");
+      setConfigDescription(kb.description || "");
+      // 从 kb.config 中读取配置（如果有）
+      const kbConfig = (kb as any).config || {};
+      if (kbConfig.embedding_provider && kbConfig.embedding_model) {
+        setConfigEmbeddingModel({
+          provider: kbConfig.embedding_provider,
+          model: kbConfig.embedding_model,
+        });
+      }
+      // 从 localStorage 读取自定义图标
+      const customIcons = JSON.parse(localStorage.getItem("kb_custom_icons") || "{}");
+      if (customIcons[kbId]) {
+        setCustomIconUrl(customIcons[kbId]);
+      }
+    }
+  }, [kb, kbId]);
   
   // 获取封面
   useEffect(() => {
@@ -284,6 +336,246 @@ export default function KnowledgeBaseDetailPage() {
     });
   };
 
+  // 处理图标上传
+  const handleIconUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    // 验证文件类型
+    if (!file.type.startsWith("image/")) {
+      toast.error("请上传图片文件");
+      return;
+    }
+    
+    // 验证文件大小（最大 2MB）
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error("图片大小不能超过 2MB");
+      return;
+    }
+    
+    setIsUploadingIcon(true);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      setCustomIconUrl(dataUrl);
+      // 保存到 localStorage
+      const customIcons = JSON.parse(localStorage.getItem("kb_custom_icons") || "{}");
+      customIcons[kbId] = dataUrl;
+      localStorage.setItem("kb_custom_icons", JSON.stringify(customIcons));
+      setIsUploadingIcon(false);
+      toast.success("图标已更新");
+    };
+    reader.onerror = () => {
+      setIsUploadingIcon(false);
+      toast.error("图片读取失败");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // 选择预设图标
+  const handleSelectPresetIcon = (iconId: string) => {
+    setCoverIconId(iconId);
+    setCustomIconUrl(null);
+    // 保存到 localStorage
+    const covers = JSON.parse(localStorage.getItem("kb_covers") || "{}");
+    covers[kbId] = iconId;
+    localStorage.setItem("kb_covers", JSON.stringify(covers));
+    // 清除自定义图标
+    const customIcons = JSON.parse(localStorage.getItem("kb_custom_icons") || "{}");
+    delete customIcons[kbId];
+    localStorage.setItem("kb_custom_icons", JSON.stringify(customIcons));
+  };
+
+  // 保存知识库配置
+  const handleSaveConfig = async () => {
+    if (!client) return;
+    setIsSavingConfig(true);
+    try {
+      // 调用更新知识库 API
+      await client.updateKnowledgeBase(kbId, {
+        name: configName,
+        description: configDescription,
+        config: {
+          embedding_provider: configEmbeddingModel.provider,
+          embedding_model: configEmbeddingModel.model,
+        },
+      });
+      toast.success("配置保存成功");
+    } catch (error) {
+      toast.error(`保存失败: ${(error as Error).message}`);
+    } finally {
+      setIsSavingConfig(false);
+    }
+  };
+
+  // 配置面板内容
+  const renderConfigPanel = () => (
+    <TooltipProvider>
+      <div className="flex-1 overflow-auto">
+        <div className="max-w-3xl space-y-6 pb-8">
+          {/* 知识库图标 */}
+          <Card>
+            <CardHeader className="pb-4">
+              <div className="flex items-center gap-2">
+                <Image className="h-5 w-5 text-primary" />
+                <CardTitle className="text-lg">知识库图标</CardTitle>
+              </div>
+              <CardDescription>选择预设图标或上传自定义图片</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* 当前图标预览 */}
+              <div className="flex items-center gap-4">
+                <div className={cn(
+                  "w-16 h-16 rounded-lg flex items-center justify-center overflow-hidden",
+                  customIconUrl ? "bg-muted" : coverIcon.color
+                )}>
+                  {customIconUrl ? (
+                    <img src={customIconUrl} alt="自定义图标" className="max-w-full max-h-full object-contain" />
+                  ) : (
+                    <CoverIconComponent className="h-8 w-8 text-white" />
+                  )}
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium">当前图标</p>
+                  <p className="text-xs text-muted-foreground">
+                    {customIconUrl ? "自定义图片" : `预设图标: ${coverIcon.id}`}
+                  </p>
+                </div>
+              </div>
+
+              {/* 预设图标选择 */}
+              <div>
+                <Label className="text-sm text-muted-foreground mb-2 block">预设图标</Label>
+                <div className="flex flex-wrap gap-2">
+                  {COVER_ICONS.map((icon) => {
+                    const IconComp = icon.icon;
+                    const isSelected = !customIconUrl && coverIconId === icon.id;
+                    return (
+                      <button
+                        key={icon.id}
+                        onClick={() => handleSelectPresetIcon(icon.id)}
+                        className={cn(
+                          "w-10 h-10 rounded-lg flex items-center justify-center transition-all",
+                          icon.color,
+                          isSelected ? "ring-2 ring-offset-2 ring-primary" : "hover:opacity-80"
+                        )}
+                      >
+                        <IconComp className="h-5 w-5 text-white" />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 上传自定义图标 */}
+              <div>
+                <Label className="text-sm text-muted-foreground mb-2 block">自定义图片</Label>
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => document.getElementById("icon-upload")?.click()}
+                    disabled={isUploadingIcon}
+                  >
+                    {isUploadingIcon ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <Upload className="h-4 w-4 mr-2" />
+                    )}
+                    上传图片
+                  </Button>
+                  <span className="text-xs text-muted-foreground">支持 JPG、PNG、GIF，最大 2MB</span>
+                  <input
+                    id="icon-upload"
+                    type="file"
+                    accept="image/*"
+                    onChange={handleIconUpload}
+                    className="hidden"
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 基础信息 */}
+          <Card>
+            <CardHeader className="pb-4">
+              <div className="flex items-center gap-2">
+                <Info className="h-5 w-5 text-primary" />
+                <CardTitle className="text-lg">基础信息</CardTitle>
+              </div>
+              <CardDescription>设置知识库的基本信息</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* 名称 */}
+              <div className="grid grid-cols-[120px_1fr] items-center gap-4">
+                <Label className="text-right text-muted-foreground">
+                  名称 <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  value={configName}
+                  onChange={(e) => setConfigName(e.target.value)}
+                  placeholder="知识库名称"
+                  className="max-w-md"
+                />
+              </div>
+
+              {/* 描述 */}
+              <div className="grid grid-cols-[120px_1fr] items-start gap-4">
+                <Label className="text-right text-muted-foreground pt-2">描述</Label>
+                <Textarea
+                  value={configDescription}
+                  onChange={(e) => setConfigDescription(e.target.value)}
+                  placeholder="知识库描述（可选）"
+                  className="max-w-md min-h-[80px]"
+                />
+              </div>
+
+              {/* 嵌入模型 - 使用新的 AllModelsSelector */}
+              <div className="grid grid-cols-[120px_1fr] items-start gap-4">
+                <Label className="text-right text-muted-foreground pt-2 flex items-center gap-1 justify-end">
+                  嵌入模型
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/60" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>用于将文本转换为向量的模型</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </Label>
+                <div className="max-w-md">
+                  <AllModelsSelector
+                    type="embedding"
+                    value={configEmbeddingModel}
+                    onChange={setConfigEmbeddingModel}
+                    label=""
+                    placeholder="选择嵌入模型"
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 保存按钮 */}
+          <div className="flex justify-end gap-3">
+            <Button variant="outline" onClick={() => setActiveNav("files")}>
+              取消
+            </Button>
+            <Button onClick={handleSaveConfig} disabled={isSavingConfig || !configName.trim()}>
+              {isSavingConfig ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4 mr-2" />
+              )}
+              保存
+            </Button>
+          </div>
+        </div>
+      </div>
+    </TooltipProvider>
+  );
+
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
       {/* 左侧边栏 */}
@@ -304,9 +596,15 @@ export default function KnowledgeBaseDetailPage() {
         {/* 知识库信息卡片 */}
         <div className="p-4 border-b">
           <div className="flex items-center gap-3">
-            <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center shrink-0", coverIcon.color)}>
-              <CoverIconComponent className="h-6 w-6 text-white" />
-            </div>
+            {customIconUrl ? (
+              <div className="w-12 h-12 rounded-lg overflow-hidden shrink-0 bg-muted flex items-center justify-center">
+                <img src={customIconUrl} alt="知识库图标" className="max-w-full max-h-full object-contain" />
+              </div>
+            ) : (
+              <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center shrink-0", coverIcon.color)}>
+                <CoverIconComponent className="h-6 w-6 text-white" />
+              </div>
+            )}
             <div className="flex-1 min-w-0">
               <h2 className="font-semibold truncate" title={kb?.name}>
                 {kb?.name || "知识库"}
@@ -348,55 +646,91 @@ export default function KnowledgeBaseDetailPage() {
 
       {/* 右侧主内容区 */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* 顶部工具栏 */}
-        <div className="flex items-center justify-between px-6 py-4 border-b bg-background">
-          <div>
-            <h1 className="text-xl font-semibold">文件列表</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              上传文档后即可进行智能问答
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            {/* 搜索框 */}
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="搜索文档..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 h-8 w-48 text-sm"
-              />
+        {/* 顶部工具栏 - 根据 activeNav 显示不同内容 */}
+        {activeNav === "files" && (
+          <div className="flex items-center justify-between px-6 py-4 border-b bg-background">
+            <div>
+              <h1 className="text-xl font-semibold">文件列表</h1>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                上传文档后即可进行智能问答
+              </p>
             </div>
-            <Button variant="outline" size="sm" onClick={loadDocuments} disabled={isLoading}>
-              <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
-            </Button>
-            {/* 新增文件下拉菜单 */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" disabled={!isConnected || isUploading}>
-                  {isUploading ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Plus className="h-4 w-4 mr-2" />
-                  )}
-                  新增文件
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-40">
-                <DropdownMenuItem onClick={openUploadDialog}>
-                  <Upload className="h-4 w-4 mr-2" />
-                  上传文件
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setNewFileDialogOpen(true)}>
-                  <FileText className="h-4 w-4 mr-2" />
-                  新增空文件
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <div className="flex items-center gap-3">
+              {/* 搜索框 */}
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="搜索文档..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-8 h-8 w-48 text-sm"
+                />
+              </div>
+              <Button variant="outline" size="sm" onClick={loadDocuments} disabled={isLoading}>
+                <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+              </Button>
+              {/* 新增文件下拉菜单 */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" disabled={!isConnected || isUploading}>
+                    {isUploading ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Plus className="h-4 w-4 mr-2" />
+                    )}
+                    新增文件
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-40">
+                  <DropdownMenuItem onClick={openUploadDialog}>
+                    <Upload className="h-4 w-4 mr-2" />
+                    上传文件
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setNewFileDialogOpen(true)}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    新增空文件
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* 内容区域 */}
+        {activeNav === "config" && (
+          <div className="flex items-center justify-between px-6 py-4 border-b bg-background">
+            <div>
+              <h1 className="text-xl font-semibold">配置</h1>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                在这里更新您的知识库详细信息，尤其是切片方法。
+              </p>
+            </div>
+          </div>
+        )}
+
+        {activeNav === "search" && (
+          <div className="flex items-center justify-between px-6 py-4 border-b bg-background">
+            <div>
+              <h1 className="text-xl font-semibold">检索测试</h1>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                测试知识库检索效果
+              </p>
+            </div>
+          </div>
+        )}
+
+        {activeNav === "logs" && (
+          <div className="flex items-center justify-between px-6 py-4 border-b bg-background">
+            <div>
+              <h1 className="text-xl font-semibold">日志</h1>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                查看知识库操作日志
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* 内容区域 - 根据 activeNav 切换 */}
+        {activeNav === "files" && (
         <div className="flex-1 flex flex-col min-h-0 px-6">
           {/* 上传进度显示 */}
           {Object.keys(uploadProgress).length > 0 && (
@@ -503,6 +837,30 @@ export default function KnowledgeBaseDetailPage() {
             )}
           </div>
         </div>
+        )}
+
+        {/* 配置面板 */}
+        {activeNav === "config" && (
+          <div className="flex-1 flex flex-col min-h-0 px-6 py-4 overflow-auto">
+            {renderConfigPanel()}
+          </div>
+        )}
+
+        {/* 检索测试面板 - 暂未实现 */}
+        {activeNav === "search" && (
+          <div className="flex-1 flex flex-col items-center justify-center">
+            <Search className="h-12 w-12 text-muted-foreground/30 mb-4" />
+            <p className="text-muted-foreground">检索测试功能开发中...</p>
+          </div>
+        )}
+
+        {/* 日志面板 - 暂未实现 */}
+        {activeNav === "logs" && (
+          <div className="flex-1 flex flex-col items-center justify-center">
+            <ScrollText className="h-12 w-12 text-muted-foreground/30 mb-4" />
+            <p className="text-muted-foreground">日志功能开发中...</p>
+          </div>
+        )}
       </div>
 
       {/* 删除确认对话框 */}

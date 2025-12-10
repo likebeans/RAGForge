@@ -561,6 +561,23 @@ async def ingest_ground_to_kb(
                 kb=target_kb,
                 params=params,
             )
+            
+            # 检查向量库写入是否成功（核心索引）
+            qdrant_result = next(
+                (r for r in ingest_result.indexing_results if r.store_type == "qdrant"),
+                None
+            )
+            if qdrant_result and not qdrant_result.success:
+                # 向量库写入失败，回滚并标记失败
+                await db.rollback()
+                results.append(GroundIngestResult(
+                    title=doc.title,
+                    success=False,
+                    error=f"向量索引失败: {qdrant_result.error}",
+                ))
+                failed += 1
+                continue
+            
             await db.commit()
             
             results.append(GroundIngestResult(

@@ -6,7 +6,7 @@ RAG Pipeline 的管理界面，基于 Next.js 15 + React 19 + TailwindCSS + shad
 
 - **框架**: Next.js 15 (App Router)
 - **UI**: TailwindCSS + shadcn/ui + Lucide Icons
-- **状态**: React Context + useState
+- **状态**: Zustand（全局状态） + React useState（本地状态）
 - **请求**: fetch API
 - **包管理**: pnpm
 
@@ -36,14 +36,24 @@ frontend/
 │   │   │   ├── compare/        # Ground 实验页面
 │   │   │   │   ├── page.tsx    # 实验列表
 │   │   │   │   └── [id]/page.tsx # 实验详情（分段设置）
+│   │   │   ├── knowledge-bases/ # 知识库管理页面
+│   │   │   │   ├── page.tsx    # 知识库列表
+│   │   │   │   └── [id]/page.tsx # 知识库详情（文件管理、配置）
 │   │   │   └── layout.tsx      # 主布局
 │   │   ├── globals.css         # 全局样式
 │   │   └── layout.tsx          # 根布局
 │   ├── components/             # 通用组件
 │   │   ├── ui/                 # shadcn/ui 组件
 │   │   ├── chat/               # 聊天相关组件
-│   │   └── provider-model-selector.tsx # 模型选择器
+│   │   ├── settings/           # 设置相关组件
+│   │   │   ├── all-models-selector.tsx  # 全局模型选择器
+│   │   │   ├── model-selector.tsx       # 单提供商模型选择器
+│   │   │   ├── model-provider-config.tsx # 模型提供商配置
+│   │   │   └── default-model-config.tsx  # 默认模型配置
+│   │   └── provider-model-selector.tsx # 旧版模型选择器（兼容）
 │   └── lib/
+│       ├── store.ts            # Zustand 全局状态管理
+│       ├── api.ts              # API 客户端
 │       └── utils.ts            # 工具函数
 ├── public/                     # 静态资源
 └── package.json
@@ -89,16 +99,75 @@ RAG Pipeline 分段设置与预览页面，核心功能：
 - 普通分块：显示每个 chunk 的文本和元数据
 - 父子分块：按父块分组，子块高亮显示
 
-### 模型配置
+### 知识库详情页面 (`/knowledge-bases/[id]`)
 
-通过 `ProviderModelSelector` 组件支持：
-- Embedding 模型选择
-- LLM 模型选择
-- 多提供商支持（Ollama、OpenAI、Qwen 等）
+知识库管理页面，包含以下导航标签：
+
+**文件管理** (`files`)
+- 文件上传（支持拖拽、批量上传）
+- 文件列表（名称、上传时间、分块数、状态）
+- 文件删除
+- 解析状态显示
+
+**检索测试** (`search`)
+- 查询测试界面
+
+**日志** (`logs`)
+- 操作日志记录
+
+**配置** (`config`)
+- 知识库基础信息（名称、描述）
+- 知识库图标配置（预设图标选择、自定义图片上传）
+- 嵌入模型配置（使用 AllModelsSelector 选择）
+
+**图标配置功能**
+- 支持 8 种预设图标（Database、BookOpen、Sparkles、Brain、Lightbulb、ScrollText、GraduationCap、Archive）
+- 支持自定义图片上传（JPG、PNG、GIF，最大 2MB）
+- 图标存储在 localStorage（`kb_covers` 和 `kb_custom_icons`）
+
+### 模型选择组件
+
+#### AllModelsSelector（推荐）
+
+全局模型选择器，聚合所有已验证提供商的可用模型：
+
+```typescript
+import { AllModelsSelector } from "@/components/settings";
+
+<AllModelsSelector
+  type="embedding"  // "llm" | "embedding" | "rerank"
+  value={{ provider: "ollama", model: "bge-m3" }}
+  onChange={(val) => setModel(val)}
+  label="嵌入模型"
+  placeholder="选择模型"
+/>
+```
+
+**特性**：
+- 按提供商分组显示所有可用模型
+- 支持搜索过滤（按模型名或提供商名）
+- 显示提供商图标和验证状态
+- 无可用模型时显示配置链接
+
+#### ProviderModelSelector（旧版）
+
+单提供商模型选择器，需先选择提供商再选择模型：
+
+```typescript
+import { ProviderModelSelector } from "@/components/settings";
+
+<ProviderModelSelector
+  type="embedding"
+  value={{ provider: "ollama", model: "bge-m3" }}
+  onChange={(provider, model) => setModel({ provider, model })}
+/>
+```
 
 ## API 交互
 
-前端通过 `/api/v1/ground/*` 端点与后端交互：
+前端通过以下端点与后端交互：
+
+### Ground 实验 API
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
@@ -107,6 +176,17 @@ RAG Pipeline 分段设置与预览页面，核心功能：
 | `/ground/{id}/documents/{doc_id}` | DELETE | 删除文档 |
 | `/ground/{id}/preview-chunks` | POST | 预览分块结果 |
 | `/pipeline/chunkers` | GET | 获取可用切分器 |
+
+### 知识库 API
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/v1/knowledge-bases` | GET | 获取知识库列表 |
+| `/v1/knowledge-bases` | POST | 创建知识库 |
+| `/v1/knowledge-bases/{id}` | PATCH | 更新知识库（名称、描述、配置） |
+| `/v1/knowledge-bases/{id}` | DELETE | 删除知识库 |
+| `/v1/knowledge-bases/{id}/documents` | GET | 获取知识库文档列表 |
+| `/v1/knowledge-bases/{id}/upload` | POST | 上传文档到知识库 |
 
 ## 组件开发指南
 

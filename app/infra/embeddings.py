@@ -34,6 +34,36 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# 各 Embedding 提供商的 API 批次限制
+# 参考官方文档，超过限制会导致 API 调用失败
+EMBEDDING_BATCH_LIMITS: dict[str, int] = {
+    "ollama": 1000,      # 本地部署，无硬性限制
+    "openai": 2048,      # https://platform.openai.com/docs/api-reference/embeddings
+    "qwen": 10,          # 阿里云 DashScope text-embedding-v3 限制
+    "zhipu": 16,         # 智谱 AI embedding-3 限制
+    "gemini": 100,       # Google AI 限制
+    "siliconflow": 64,   # SiliconFlow 限制
+    "deepseek": 100,     # DeepSeek 限制（假设值）
+    "kimi": 100,         # Moonshot 限制（假设值）
+}
+
+
+def get_provider_batch_limit(provider: str, user_batch_size: int | None = None) -> int:
+    """
+    获取指定提供商的有效批次大小
+    
+    Args:
+        provider: 提供商名称
+        user_batch_size: 用户配置的批次大小（可选）
+    
+    Returns:
+        有效的批次大小（取用户配置和提供商限制的较小值）
+    """
+    provider_limit = EMBEDDING_BATCH_LIMITS.get(provider, 100)
+    if user_batch_size is not None:
+        return min(user_batch_size, provider_limit)
+    return provider_limit
+
 
 @lru_cache(maxsize=8)
 def _get_openai_compatible_client(api_key: str | None, base_url: str | None) -> AsyncOpenAI:
@@ -187,7 +217,8 @@ async def get_embeddings(texts: list[str]) -> list[list[float]]:
     settings = get_settings()
     config = settings.get_embedding_config()
     provider = config["provider"]
-    batch_size = settings.embedding_batch_size
+    # 使用统一的批次限制逻辑（取用户配置和提供商限制的较小值）
+    batch_size = get_provider_batch_limit(provider, settings.embedding_batch_size)
     
     try:
         if provider == "ollama":
@@ -197,13 +228,13 @@ async def get_embeddings(texts: list[str]) -> list[list[float]]:
         elif provider == "gemini":
             if not config.get("api_key"):
                 raise RuntimeError("GEMINI_API_KEY 未配置，无法生成真实 Embedding")
-            logger.debug(f"使用 Gemini 批量 Embedding: {config['model']}")
+            logger.debug(f"使用 Gemini 批量 Embedding: {config['model']} (batch_size={batch_size})")
             return await _gemini_embeddings_batch(texts, config)
         
         elif provider in ("openai", "qwen", "zhipu", "siliconflow", "deepseek", "kimi"):
             if not config.get("api_key"):
                 raise RuntimeError(f"{provider.upper()}_API_KEY 未配置，无法生成真实 Embedding")
-            logger.debug(f"使用 {provider} 批量 Embedding: {config['model']}")
+            logger.debug(f"使用 {provider} 批量 Embedding: {config['model']} (batch_size={batch_size})")
             return await _openai_compatible_embeddings_batch(texts, config, batch_size)
         
         else:
@@ -327,9 +358,8 @@ async def get_embeddings_with_config(
     
     provider = provider_config.get("provider")
     
-    if batch_size is None:
-        settings = get_settings()
-        batch_size = settings.embedding_batch_size
+    # 使用统一的批次限制逻辑（取用户配置和提供商限制的较小值）
+    actual_batch_size = get_provider_batch_limit(provider, batch_size)
     
     try:
         if provider == "ollama":
@@ -339,14 +369,14 @@ async def get_embeddings_with_config(
         elif provider == "gemini":
             if not provider_config.get("api_key"):
                 raise RuntimeError("GEMINI_API_KEY 未配置，无法生成真实 Embedding")
-            logger.debug(f"使用 Gemini 批量 Embedding: {provider_config['model']}")
+            logger.debug(f"使用 Gemini 批量 Embedding: {provider_config['model']} (batch_size={actual_batch_size})")
             return await _gemini_embeddings_batch(texts, provider_config)
         
         elif provider in ("openai", "qwen", "zhipu", "siliconflow", "deepseek", "kimi"):
             if not provider_config.get("api_key"):
                 raise RuntimeError(f"{provider.upper()}_API_KEY 未配置，无法生成真实 Embedding")
-            logger.debug(f"使用 {provider} 批量 Embedding: {provider_config['model']}")
-            return await _openai_compatible_embeddings_batch(texts, provider_config, batch_size)
+            logger.debug(f"使用 {provider} 批量 Embedding: {provider_config['model']} (batch_size={actual_batch_size})")
+            return await _openai_compatible_embeddings_batch(texts, provider_config, actual_batch_size)
         
         else:
             raise RuntimeError(f"未知 Embedding 提供者: {provider}")

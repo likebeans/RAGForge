@@ -436,8 +436,8 @@ export default function GroundDetailPage() {
   const [chunkPreviewResult, setChunkPreviewResult] = useState<ChunkPreviewItem[]>([]);
   const [chunkPreviewDocTitle, setChunkPreviewDocTitle] = useState("");
   const [isPreviewing, setIsPreviewing] = useState(false);
-  // 预览类型: 'result' | 'chunk' | 'enrich'
-  const [previewType, setPreviewType] = useState<"result" | "chunk" | "enrich">("result");
+  // 预览类型: 'result' | 'chunk' | 'enrich' | 'retrieval'
+  const [previewType, setPreviewType] = useState<"result" | "chunk" | "enrich" | "retrieval">("result");
   // 检索器设置状态
   const [selectedRetriever, setSelectedRetriever] = useState("hybrid");
   const [retrieverParams, setRetrieverParams] = useState<Record<string, unknown>>(
@@ -461,6 +461,9 @@ export default function GroundDetailPage() {
   const [newKbName, setNewKbName] = useState("");
   const [newKbDesc, setNewKbDesc] = useState("");
   const [isIngesting, setIsIngesting] = useState(false);
+  // 入库后的知识库状态（用于检索）
+  const [ingestedKbId, setIngestedKbId] = useState<string | null>(null);
+  const [ingestedKbName, setIngestedKbName] = useState<string>("");
   // 增强预览状态
   const [isPreviewingEnrich, setIsPreviewingEnrich] = useState(false);
   const [enrichPreviewStep, setEnrichPreviewStep] = useState<string>(""); // 当前处理步骤
@@ -1230,15 +1233,24 @@ export default function GroundDetailPage() {
         }
       );
       
-      if (result.failed > 0) {
+      if (result.succeeded === 0) {
+        // 全部失败，不允许检索
+        toast.error(`入库失败：所有 ${result.total} 个文档都未能成功入库。请检查 Embedding 配置。`);
+        // 不设置 ingestedKbId，不允许检索
+        setIngestDialogOpen(false);
+        return;
+      } else if (result.failed > 0) {
+        // 部分成功
         toast.warning(`入库完成: ${result.succeeded}/${result.total} 成功，${result.failed} 失败`);
       } else {
-        toast.success(`入库成功！${result.succeeded} 个文档已入库到「${result.knowledge_base_name}」`);
+        // 全部成功
+        toast.success(`入库成功！${result.succeeded} 个文档已入库到「${result.knowledge_base_name}」，可以开始检索了`);
       }
 
+      // 至少有部分成功，保存知识库 ID 用于后续检索
+      setIngestedKbId(result.knowledge_base_id);
+      setIngestedKbName(result.knowledge_base_name);
       setIngestDialogOpen(false);
-      // 跳转到知识库详情页
-      router.push(`/knowledge-bases/${result.knowledge_base_id}`);
     } catch (error) {
       toast.error(`入库失败: ${(error as Error).message}`);
     } finally {
@@ -1273,6 +1285,10 @@ export default function GroundDetailPage() {
 
   const runExperiments = async () => {
     if (!client || !ground) return;
+    if (!ingestedKbId) {
+      toast.error("请先完成入库操作");
+      return;
+    }
     if (!query.trim()) {
       toast.error("请输入测试问题");
       return;
@@ -1290,7 +1306,7 @@ export default function GroundDetailPage() {
       
       const payload: PlaygroundRunRequest = {
         query,
-        knowledge_base_ids: [ground.knowledge_base_id],
+        knowledge_base_ids: [ingestedKbId],
         top_k: topK,
         retriever: retrieverConfig,
         rerank: retrieverParams.rerank as boolean | undefined,
@@ -1307,6 +1323,7 @@ export default function GroundDetailPage() {
       
       const response = await client.runPlayground(payload);
       setResults({ current: response });
+      setPreviewType("retrieval"); // 切换到检索结果视图
     } catch (error) {
       toast.error(`运行失败: ${(error as Error).message}`);
     } finally {
@@ -1702,8 +1719,19 @@ export default function GroundDetailPage() {
                   />
                 </div>
                 
-                <div className="flex justify-end">
-                  <Button onClick={runExperiments} disabled={isRunning || documents.length === 0}>
+                <div className="flex items-center justify-between">
+                  {ingestedKbId ? (
+                    <div className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
+                      <Badge variant="outline" className="border-green-500 text-green-600">
+                        已入库: {ingestedKbName}
+                      </Badge>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">
+                      请先在「索引增强设置」中入库到知识库
+                    </div>
+                  )}
+                  <Button onClick={runExperiments} disabled={isRunning || !ingestedKbId}>
                     {isRunning ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -1743,6 +1771,8 @@ export default function GroundDetailPage() {
                     ? `分块预览效果${chunkPreviewDocTitle ? ` - ${chunkPreviewDocTitle}` : ""} (${chunkPreviewResult.length} 块)`
                     : previewType === "enrich"
                     ? `增强预览效果${summaryPreview ? " - 含文档摘要" : ""}${chunkEnrichPreview.length > 0 ? ` + ${chunkEnrichPreview.length} 个 Chunk 增强` : ""}`
+                    : previewType === "retrieval" && results.current
+                    ? `检索结果 - ${RETRIEVER_UI_CONFIG[results.current.retrieval.retriever]?.label || results.current.retrieval.retriever} (${results.current.retrieval.results.length} 条)`
                     : "上传文件并运行实验后在此查看"}
                 </CardDescription>
               </CardHeader>
@@ -1919,6 +1949,39 @@ export default function GroundDetailPage() {
                       </div>
                     )}
                   </ScrollArea>
+                ) : previewType === "retrieval" && results.current ? (
+                  <ScrollArea className="h-[500px]">
+                    <div className="space-y-4 pr-4">
+                      {/* RAG 回答 */}
+                      <div className="rounded border p-3 bg-muted/30">
+                        <div className="text-xs text-muted-foreground mb-1 font-medium">RAG 回答</div>
+                        <div className="text-sm leading-relaxed">{results.current.rag.answer}</div>
+                        <div className="text-xs text-muted-foreground mt-2 flex gap-2 flex-wrap">
+                          <Badge variant="outline">LLM: {results.current.rag.model.llm_model || "-"}</Badge>
+                          <Badge variant="outline">Embed: {results.current.rag.model.embedding_model}</Badge>
+                          <Badge variant="outline">时延: {Math.round(results.current.metrics?.total_ms || 0)} ms</Badge>
+                        </div>
+                      </div>
+                      {/* 检索结果列表 */}
+                      <div className="rounded border p-3">
+                        <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+                          <span className="font-medium">检索结果 ({results.current.retrieval.results.length} 条)</span>
+                          <span>{results.current.retrieval.latency_ms.toFixed(0)} ms</span>
+                        </div>
+                        <div className="space-y-2">
+                          {results.current.retrieval.results.map((hit, idx) => (
+                            <div key={hit.chunk_id || idx} className="rounded bg-muted/30 p-2">
+                              <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+                                <span className="font-medium">#{idx + 1}</span>
+                                <span>score: {hit.score.toFixed(4)}</span>
+                              </div>
+                              <div className="text-sm whitespace-pre-wrap">{hit.text}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </ScrollArea>
                 ) : (
                   <div className="text-sm text-muted-foreground text-center py-12">
                     运行实验后在此查看结果
@@ -1926,65 +1989,6 @@ export default function GroundDetailPage() {
                 )}
               </CardContent>
             </Card>
-
-            {/* 检索结果卡片 */}
-            {results.current && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    检索结果
-                    <Badge variant="secondary">
-                      {RETRIEVER_UI_CONFIG[results.current.retrieval.retriever]?.label || results.current.retrieval.retriever}
-                    </Badge>
-                  </CardTitle>
-                  <CardDescription>时延 {Math.round(results.current.metrics?.total_ms || 0)} ms</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="rounded border p-3 bg-muted/30">
-                    <div className="text-xs text-muted-foreground mb-1">回答</div>
-                    <div className="text-sm leading-relaxed">{results.current.rag.answer}</div>
-                    <div className="text-xs text-muted-foreground mt-2 flex gap-2 flex-wrap">
-                      <Badge variant="outline">LLM: {results.current.rag.model.llm_model || "-"}</Badge>
-                      <Badge variant="outline">Embed: {results.current.rag.model.embedding_model}</Badge>
-                    </div>
-                  </div>
-                  <div className="rounded border p-3">
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>检索结果 ({results.current.retrieval.results.length} 条)</span>
-                      <span>{results.current.retrieval.latency_ms.toFixed(0)} ms</span>
-                    </div>
-                    <div className="mt-2 space-y-2">
-                      {results.current.retrieval.results.slice(0, 8).map((hit, idx) => (
-                        <div key={hit.chunk_id || idx} className="rounded bg-muted/30 p-2">
-                          <div className="flex items-center justify-between text-xs text-muted-foreground">
-                            <span>#{idx + 1}</span>
-                            <span>{hit.score.toFixed(4)}</span>
-                          </div>
-                          <div className="text-sm line-clamp-2">{hit.text}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  {results.current.chunk_preview && results.current.chunk_preview.length > 0 && (
-                    <div className="rounded border p-3">
-                      <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
-                        <span>切分预览</span>
-                        <span>{results.current.chunk_preview.length}</span>
-                      </div>
-                      <ScrollArea className="h-24 pr-2">
-                        <div className="space-y-2">
-                          {results.current.chunk_preview.slice(0, 8).map((c) => (
-                            <div key={c.chunk_id} className="rounded bg-muted/30 p-2 text-sm">
-                              {c.text}
-                            </div>
-                          ))}
-                        </div>
-                      </ScrollArea>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
             </div>
           </div>
         </div>

@@ -65,11 +65,18 @@ const COVER_ICONS = [
   { id: "archive", icon: Archive, color: "bg-teal-500" },
 ];
 
-// 从 localStorage 获取知识库封面
+// 从 localStorage 获取知识库封面（预设图标 ID）
 const getKbCover = (kbId: string): string => {
   if (typeof window === "undefined") return "database";
   const covers = JSON.parse(localStorage.getItem("kb_covers") || "{}");
   return covers[kbId] || "database";
+};
+
+// 从 localStorage 获取自定义图标 URL
+const getKbCustomIcon = (kbId: string): string | null => {
+  if (typeof window === "undefined") return null;
+  const customIcons = JSON.parse(localStorage.getItem("kb_custom_icons") || "{}");
+  return customIcons[kbId] || null;
 };
 
 // 保存知识库封面到 localStorage
@@ -108,8 +115,10 @@ export default function KnowledgeBasesPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   
-  // 封面映射状态
+  // 封面映射状态（预设图标 ID）
   const [coverMap, setCoverMap] = useState<Record<string, string>>({});
+  // 自定义图标映射状态
+  const [customIconMap, setCustomIconMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (client && isConnected) {
@@ -130,13 +139,19 @@ export default function KnowledgeBasesPage() {
     setEmbedModel(defaultModels.embedding?.model || "");
   }, [defaultModels]);
 
-  // 加载封面映射
+  // 加载封面映射（预设图标和自定义图标）
   useEffect(() => {
     const covers: Record<string, string> = {};
+    const customIcons: Record<string, string> = {};
     knowledgeBases.forEach((kb) => {
       covers[kb.id] = getKbCover(kb.id);
+      const customIcon = getKbCustomIcon(kb.id);
+      if (customIcon) {
+        customIcons[kb.id] = customIcon;
+      }
     });
     setCoverMap(covers);
+    setCustomIconMap(customIcons);
   }, [knowledgeBases]);
 
   const loadKnowledgeBases = async () => {
@@ -305,6 +320,7 @@ export default function KnowledgeBasesPage() {
           {knowledgeBases.map((kb) => {
             const cover = getCoverIcon(coverMap[kb.id] || "database");
             const IconComponent = cover.icon;
+            const customIcon = customIconMap[kb.id];
             
             return (
               <div
@@ -313,8 +329,12 @@ export default function KnowledgeBasesPage() {
                 onClick={() => router.push(`/knowledge-bases/${kb.id}`)}
               >
                 {/* 封面区域 */}
-                <div className={cn("relative h-[100px] flex items-center justify-center", cover.color)}>
-                  <IconComponent className="h-10 w-10 text-white/90" />
+                <div className={cn("relative h-[100px] flex items-center justify-center", customIcon ? "bg-muted" : cover.color)}>
+                  {customIcon ? (
+                    <img src={customIcon} alt="知识库图标" className="max-w-full max-h-full object-contain" />
+                  ) : (
+                    <IconComponent className="h-10 w-10 text-white/90" />
+                  )}
                   {/* 操作菜单 */}
                   <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
                     <DropdownMenu>
