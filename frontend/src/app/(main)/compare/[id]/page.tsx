@@ -30,6 +30,7 @@ import {
   PlaygroundRunResponse,
   GroundInfo,
   ChunkPreviewItem,
+  KnowledgeBase,
 } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import {
@@ -48,7 +49,7 @@ import {
   Database,
   Eye,
 } from "lucide-react";
-import { ProviderModelSelector } from "@/components/settings";
+import { AllModelsSelector } from "@/components/settings";
 import { useDropzone } from "react-dropzone";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -177,6 +178,36 @@ type RetrieverConfig = {
   description: string;
   params: ParamConfig[];
 };
+
+// 根据检索器类型获取评分标签
+function getScoreLabel(retrieverType: string, reranked?: boolean): string {
+  if (reranked) return "重排分数";
+  switch (retrieverType) {
+    case "dense":
+    case "llama_dense":
+    case "hyde":
+      return "向量相似度";
+    case "bm25":
+    case "llama_bm25":
+      return "BM25 分数";
+    case "hybrid":
+    case "llama_hybrid":
+    case "fusion":
+      return "混合分数";
+    case "parent_document":
+      return "子块匹配度";
+    case "multi_query":
+      return "多查询分数";
+    default:
+      return "相关度";
+  }
+}
+
+// 判断是否为父子检索结果（有 parent_id 或 context_text）
+function isParentChildResult(hit: { metadata?: Record<string, unknown>; context_text?: string | null }): boolean {
+  const meta = hit.metadata || {};
+  return !!(meta.parent_id || meta.child || hit.context_text);
+}
 
 const RETRIEVER_UI_CONFIG: Record<string, RetrieverConfig> = {
   dense: {
@@ -464,14 +495,101 @@ export default function GroundDetailPage() {
   // 入库后的知识库状态（用于检索）
   const [ingestedKbId, setIngestedKbId] = useState<string | null>(null);
   const [ingestedKbName, setIngestedKbName] = useState<string>("");
+  // 入库时的配置快照（用于检测配置变更）
+  const [ingestedConfig, setIngestedConfig] = useState<{
+    chunker: string;
+    chunkerParams: Record<string, unknown>;
+    indexer: string;
+    indexerParams: Record<string, unknown>;
+    enricher: string;
+    enricherParams: Record<string, unknown>;
+  } | null>(null);
+  // 知识库选择器 Dialog 状态
+  const [kbSelectorOpen, setKbSelectorOpen] = useState(false);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [isLoadingKbs, setIsLoadingKbs] = useState(false);
   // 增强预览状态
   const [isPreviewingEnrich, setIsPreviewingEnrich] = useState(false);
   const [enrichPreviewStep, setEnrichPreviewStep] = useState<string>(""); // 当前处理步骤
   const [summaryPreview, setSummaryPreview] = useState<string | null>(null);
   const [chunkEnrichPreview, setChunkEnrichPreview] = useState<Array<{ original: string; enriched: string }>>([]);
+  // 检索结果详情 Dialog 状态
+  const [chunkDetailOpen, setChunkDetailOpen] = useState(false);
+  const [selectedChunkHit, setSelectedChunkHit] = useState<{
+    hit: PlaygroundRunResponse["retrieval"]["results"][0];
+    index: number;
+    retrieverType: string;
+  } | null>(null);
 
   const retrieverOptions = useMemo(() => operators?.retrievers || [], [operators]);
   const chunkerOptions = useMemo(() => operators?.chunkers || [], [operators]);
+  
+  // 根据分段设置和索引设置过滤可用的检索器
+  const filteredRetrieverOptions = useMemo(() => {
+    return retrieverOptions.filter((r) => {
+      // parent_document 检索器只在使用 parent_child 切分器时可用
+      if (r.name === 'parent_document' && selectedChunker !== 'parent_child') {
+        return false;
+      }
+      // raptor 检索器只在使用 raptor 索引器时可用
+      if (r.name === 'raptor' && selectedIndexer !== 'raptor') {
+        return false;
+      }
+      // llama_dense/llama_bm25/llama_hybrid 需要特定存储后端配置，暂时保留
+      return true;
+    });
+  }, [retrieverOptions, selectedChunker, selectedIndexer]);
+  
+  // 记录上一次的 chunker/indexer，用于检测变化
+  const prevChunkerRef = useRef(selectedChunker);
+  const prevIndexerRef = useRef(selectedIndexer);
+  
+  // 智能联动：当 chunker/indexer 变化时，自动推荐匹配的检索器
+  useEffect(() => {
+    const chunkerChanged = prevChunkerRef.current !== selectedChunker;
+    const indexerChanged = prevIndexerRef.current !== selectedIndexer;
+    
+    // 更新 ref
+    prevChunkerRef.current = selectedChunker;
+    prevIndexerRef.current = selectedIndexer;
+    
+    // 只在 chunker 或 indexer 真正变化时才触发联动
+    if (!chunkerChanged && !indexerChanged) return;
+    
+    let recommendedRetriever: string | null = null;
+    
+    // parent_child 切分器 -> parent_document 检索器
+    if (chunkerChanged && selectedChunker === 'parent_child') {
+      recommendedRetriever = 'parent_document';
+    }
+    // raptor 索引器 -> raptor 检索器
+    if (indexerChanged && selectedIndexer === 'raptor') {
+      recommendedRetriever = 'raptor';
+    }
+    
+    if (recommendedRetriever && filteredRetrieverOptions.some(r => r.name === recommendedRetriever)) {
+      const oldLabel = RETRIEVER_UI_CONFIG[selectedRetriever]?.label || selectedRetriever;
+      const newLabel = RETRIEVER_UI_CONFIG[recommendedRetriever]?.label || recommendedRetriever;
+      setSelectedRetriever(recommendedRetriever);
+      setRetrieverParams(getDefaultRetrieverParams(recommendedRetriever));
+      toast.info(`已自动切换检索器: "${oldLabel}" → "${newLabel}"`);
+    }
+  }, [selectedChunker, selectedIndexer, filteredRetrieverOptions]);
+  
+  // 当设置变化导致当前检索器不可用时，自动切换到默认检索器
+  useEffect(() => {
+    const isCurrentRetrieverAvailable = filteredRetrieverOptions.some(r => r.name === selectedRetriever);
+    
+    if (!isCurrentRetrieverAvailable && filteredRetrieverOptions.length > 0) {
+      // 优先选择 hybrid，否则选第一个可用的
+      const defaultRetriever = filteredRetrieverOptions.find(r => r.name === 'hybrid') || filteredRetrieverOptions[0];
+      const oldLabel = RETRIEVER_UI_CONFIG[selectedRetriever]?.label || selectedRetriever;
+      const newLabel = RETRIEVER_UI_CONFIG[defaultRetriever.name]?.label || defaultRetriever.name;
+      setSelectedRetriever(defaultRetriever.name);
+      setRetrieverParams(getDefaultRetrieverParams(defaultRetriever.name));
+      toast.info(`"${oldLabel}" 不适用于当前配置，已切换为 "${newLabel}"`);
+    }
+  }, [filteredRetrieverOptions]);
 
   // useDropzone 必须在条件返回之前调用，保证 Hooks 顺序一致
   const {
@@ -573,6 +691,11 @@ export default function GroundDetailPage() {
         if (settings.embedModel) setEmbedModel(settings.embedModel);
         // 恢复选中的文档
         if (settings.selectedDocId) setSelectedDocId(settings.selectedDocId);
+        // 恢复入库状态
+        if (settings.ingestedKbId) {
+          setIngestedKbId(settings.ingestedKbId);
+          setIngestedKbName(settings.ingestedKbName || "");
+        }
         
         console.log("[Ground] 已从本地缓存恢复设置");
       }
@@ -599,6 +722,8 @@ export default function GroundDetailPage() {
       embedProvider,
       embedModel,
       selectedDocId,
+      ingestedKbId,
+      ingestedKbName,
       savedAt: Date.now(),
     };
     
@@ -621,7 +746,61 @@ export default function GroundDetailPage() {
     embedProvider,
     embedModel,
     selectedDocId,
+    ingestedKbId,
+    ingestedKbName,
   ]);
+
+  // 配置变更检测：当分段或索引设置改变时，清除入库状态
+  useEffect(() => {
+    if (!ingestedConfig || !ingestedKbId) return;
+    
+    // 比较当前配置与入库时的配置
+    const hasChanged = 
+      ingestedConfig.chunker !== selectedChunker ||
+      JSON.stringify(ingestedConfig.chunkerParams) !== JSON.stringify(chunkerParams) ||
+      ingestedConfig.indexer !== selectedIndexer ||
+      JSON.stringify(ingestedConfig.indexerParams) !== JSON.stringify(indexerParams) ||
+      ingestedConfig.enricher !== selectedEnricher ||
+      JSON.stringify(ingestedConfig.enricherParams) !== JSON.stringify(enricherParams);
+    
+    if (hasChanged) {
+      toast.warning(`配置已变更，需要重新入库`, { duration: 3000 });
+      setIngestedKbId(null);
+      setIngestedKbName("");
+      setIngestedConfig(null);
+    }
+  }, [selectedChunker, chunkerParams, selectedIndexer, indexerParams, selectedEnricher, enricherParams]);
+
+  // 加载知识库列表
+  const loadKnowledgeBases = async () => {
+    if (!client) return;
+    setIsLoadingKbs(true);
+    try {
+      const res = await client.listKnowledgeBases();
+      setKnowledgeBases(res.items);
+    } catch (error) {
+      console.error("加载知识库列表失败:", error);
+    } finally {
+      setIsLoadingKbs(false);
+    }
+  };
+
+  // 选择已有知识库
+  const handleSelectKnowledgeBase = (kb: KnowledgeBase) => {
+    setIngestedKbId(kb.id);
+    setIngestedKbName(kb.name);
+    // 设置配置快照（使用当前配置）
+    setIngestedConfig({
+      chunker: selectedChunker,
+      chunkerParams,
+      indexer: selectedIndexer,
+      indexerParams,
+      enricher: selectedEnricher,
+      enricherParams,
+    });
+    setKbSelectorOpen(false);
+    toast.success(`已选择知识库: ${kb.name}`);
+  };
 
   if (isLoading) {
     return (
@@ -1250,6 +1429,15 @@ export default function GroundDetailPage() {
       // 至少有部分成功，保存知识库 ID 用于后续检索
       setIngestedKbId(result.knowledge_base_id);
       setIngestedKbName(result.knowledge_base_name);
+      // 保存入库时的配置快照（用于检测配置变更）
+      setIngestedConfig({
+        chunker: selectedChunker,
+        chunkerParams,
+        indexer: selectedIndexer,
+        indexerParams,
+        enricher: selectedEnricher,
+        enricherParams,
+      });
       setIngestDialogOpen(false);
     } catch (error) {
       toast.error(`入库失败: ${(error as Error).message}`);
@@ -1619,12 +1807,21 @@ export default function GroundDetailPage() {
                     </div>
                   </div>
                   
-                  <ProviderModelSelector
+                  <AllModelsSelector
                     type="embedding"
-                    providerValue={embedProvider}
-                    modelValue={embedModel}
-                    onProviderChange={handleEmbedProviderChange}
-                    onModelChange={handleEmbedModelChange}
+                    value={embedProvider && embedModel ? { provider: embedProvider, model: embedModel } : undefined}
+                    onChange={(val) => {
+                      if (val) {
+                        setEmbedProvider(val.provider);
+                        setEmbedModel(val.model);
+                        setDefaultModel("embedding", val);
+                      } else {
+                        setEmbedProvider("");
+                        setEmbedModel("");
+                        setDefaultModel("embedding", null);
+                      }
+                    }}
+                    placeholder="选择 Embedding 模型"
                   />
                 </div>
 
@@ -1675,7 +1872,7 @@ export default function GroundDetailPage() {
                           <SelectValue placeholder="选择检索器" />
                         </SelectTrigger>
                         <SelectContent>
-                          {retrieverOptions.map((r) => (
+                          {filteredRetrieverOptions.map((r) => (
                             <SelectItem key={r.name} value={r.name}>
                               {RETRIEVER_UI_CONFIG[r.name]?.label || r.label || r.name}
                             </SelectItem>
@@ -1720,17 +1917,37 @@ export default function GroundDetailPage() {
                 </div>
                 
                 <div className="flex items-center justify-between">
-                  {ingestedKbId ? (
-                    <div className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
-                      <Badge variant="outline" className="border-green-500 text-green-600">
+                  <div className="flex items-center gap-2">
+                    {ingestedKbId ? (
+                      <Badge 
+                        variant="outline" 
+                        className="border-green-500 text-green-600 cursor-pointer hover:bg-green-50 dark:hover:bg-green-950"
+                        onClick={() => {
+                          loadKnowledgeBases();
+                          setKbSelectorOpen(true);
+                        }}
+                      >
                         已入库: {ingestedKbName}
                       </Badge>
-                    </div>
-                  ) : (
-                    <div className="text-xs text-muted-foreground">
-                      请先在「索引增强设置」中入库到知识库
-                    </div>
-                  )}
+                    ) : (
+                      <>
+                        <div className="text-xs text-muted-foreground">
+                          请先入库或选择已有知识库
+                        </div>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => {
+                            loadKnowledgeBases();
+                            setKbSelectorOpen(true);
+                          }}
+                        >
+                          <Database className="h-3 w-3 mr-1" />
+                          选择知识库
+                        </Button>
+                      </>
+                    )}
+                  </div>
                   <Button onClick={runExperiments} disabled={isRunning || !ingestedKbId}>
                     {isRunning ? (
                       <>
@@ -1754,7 +1971,12 @@ export default function GroundDetailPage() {
                 <CardDescription>选择默认 LLM 模型</CardDescription>
               </CardHeader>
               <CardContent>
-                <ProviderModelSelector type="llm" />
+                <AllModelsSelector
+                  type="llm"
+                  value={defaultModels.llm || undefined}
+                  onChange={(val) => setDefaultModel("llm", val)}
+                  placeholder="选择 LLM 模型"
+                />
               </CardContent>
             </Card>
             </div>
@@ -1860,23 +2082,23 @@ export default function GroundDetailPage() {
                                 </div>
                                 {/* 子块内容区域 */}
                                 <div className="p-4">
-                                  <div className="flex flex-wrap items-start gap-1 leading-relaxed">
+                                  <div className="space-y-2">
                                     {children.length > 0 ? (
                                       children.map((child, idx) => (
-                                        <span 
+                                        <div 
                                           key={child.index} 
-                                          className="group inline-flex items-start gap-1 cursor-pointer"
+                                          className="group flex items-start gap-2 cursor-pointer"
                                         >
                                           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 shrink-0 group-hover:bg-blue-200 dark:group-hover:bg-blue-800">
                                             C-{idx + 1}
                                           </span>
-                                          <span className="text-sm group-hover:bg-blue-50 dark:group-hover:bg-blue-950/50 rounded px-1 -mx-1 transition-colors">
+                                          <span className="text-sm break-all group-hover:bg-blue-50 dark:group-hover:bg-blue-950/50 rounded px-1 -mx-1 transition-colors min-w-0">
                                             {child.text}
                                           </span>
-                                        </span>
+                                        </div>
                                       ))
                                     ) : (
-                                      <span className="text-sm text-muted-foreground">{parent.text}</span>
+                                      <span className="text-sm text-muted-foreground break-all">{parent.text}</span>
                                     )}
                                   </div>
                                 </div>
@@ -1963,22 +2185,78 @@ export default function GroundDetailPage() {
                         </div>
                       </div>
                       {/* 检索结果列表 */}
-                      <div className="rounded border p-3">
-                        <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
-                          <span className="font-medium">检索结果 ({results.current.retrieval.results.length} 条)</span>
-                          <span>{results.current.retrieval.latency_ms.toFixed(0)} ms</span>
-                        </div>
-                        <div className="space-y-2">
-                          {results.current.retrieval.results.map((hit, idx) => (
-                            <div key={hit.chunk_id || idx} className="rounded bg-muted/30 p-2">
-                              <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-                                <span className="font-medium">#{idx + 1}</span>
-                                <span>score: {hit.score.toFixed(4)}</span>
+                      <div className="text-sm font-medium text-muted-foreground mb-3">
+                        {results.current.retrieval.results.length} 个召回段落
+                      </div>
+                      <div className="space-y-3">
+                        {results.current.retrieval.results.map((hit, idx) => {
+                          const meta = hit.metadata || {};
+                          const filename = (meta.original_filename as string) || (meta.title as string) || "未知文件";
+                          const chunkIndex = meta.chunk_index ?? meta.chunk_id ?? idx;
+                          const charCount = hit.text?.length || 0;
+                          const retrieverType = results.current!.retrieval.retriever;
+                          const reranked = results.current!.retrieval.rerank_applied;
+                          const scoreLabel = getScoreLabel(retrieverType, reranked);
+                          const isParentChild = isParentChildResult(hit);
+                          
+                          return (
+                            <div 
+                              key={hit.chunk_id || idx} 
+                              className="rounded-lg border bg-card hover:border-blue-300 transition-colors"
+                            >
+                              {/* 卡片头部：Chunk 信息 + 评分 */}
+                              <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/20">
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                  <span className="font-mono">Chunk-{String(chunkIndex).padStart(2, "0")}</span>
+                                  <span className="text-muted-foreground/50">·</span>
+                                  <span>{charCount} 字符</span>
+                                  {isParentChild && (
+                                    <>
+                                      <span className="text-muted-foreground/50">·</span>
+                                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-purple-50 text-purple-600 border-purple-200">
+                                        {meta.child ? "子块" : "父块"}
+                                      </Badge>
+                                    </>
+                                  )}
+                                </div>
+                                <Badge 
+                                  variant="outline" 
+                                  className="text-xs font-mono bg-blue-50 text-blue-600 border-blue-200"
+                                >
+                                  {scoreLabel} {hit.score.toFixed(2)}
+                                </Badge>
                               </div>
-                              <div className="text-sm whitespace-pre-wrap">{hit.text}</div>
+                              
+                              {/* 内容区域 */}
+                              <div className="p-3">
+                                {/* 文本内容（截断显示） */}
+                                <div className="text-sm text-muted-foreground line-clamp-2 leading-relaxed">
+                                  {hit.text}
+                                </div>
+                              </div>
+                              
+                              {/* 底部：文件名 + 打开按钮 */}
+                              <div className="flex items-center justify-between px-3 py-2 border-t bg-muted/10">
+                                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                  <FileText className="h-3.5 w-3.5" />
+                                  <span className="truncate max-w-[200px]">{filename}</span>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50 gap-1"
+                                  onClick={() => {
+                                    setSelectedChunkHit({ hit, index: idx, retrieverType });
+                                    setChunkDetailOpen(true);
+                                  }}
+                                >
+                                  打开
+                                  <Eye className="h-3 w-3" />
+                                </Button>
+                              </div>
                             </div>
-                          ))}
-                        </div>
+                          );
+                        })}
                       </div>
                     </div>
                   </ScrollArea>
@@ -2125,6 +2403,198 @@ export default function GroundDetailPage() {
               创建并入库
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 检索结果详情 Dialog */}
+      <Dialog open={chunkDetailOpen} onOpenChange={setChunkDetailOpen}>
+        <DialogContent className={`!max-w-none ${selectedChunkHit && isParentChildResult(selectedChunkHit.hit) ? 'w-[95vw] h-[90vh]' : 'w-[85vw] h-[85vh]'}`}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              段落详情
+              {selectedChunkHit && (
+                <span className="text-xs font-normal text-muted-foreground">
+                  #{selectedChunkHit.index + 1}
+                </span>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+          
+          {selectedChunkHit && (() => {
+            const { hit, retrieverType } = selectedChunkHit;
+            const meta = hit.metadata || {};
+            const filename = (meta.original_filename as string) || (meta.title as string) || "未知文件";
+            const chunkIndex = meta.chunk_index ?? meta.chunk_id ?? selectedChunkHit.index;
+            const scoreLabel = getScoreLabel(retrieverType, results.current?.retrieval.rerank_applied);
+            const hasParentContext = isParentChildResult(hit);
+            
+            // 获取子块列表（用于父子检索显示）
+            const childChunks = hasParentContext && results.current 
+              ? results.current.retrieval.results.filter(r => {
+                  const rMeta = r.metadata || {};
+                  return rMeta.parent_id === meta.parent_id && rMeta.child;
+                })
+              : [];
+            
+            if (hasParentContext) {
+              // 父子检索模式：左侧父段，右侧子段列表
+              return (
+                <div className="grid grid-cols-2 gap-8 w-full">
+                  {/* 左侧：父段内容 */}
+                  <div className="space-y-3 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <span className="font-mono">父分段-{String(chunkIndex).padStart(2, "0")}</span>
+                        <span className="text-muted-foreground/50">·</span>
+                        <FileText className="h-3 w-3" />
+                        <span className="truncate max-w-[150px]">{filename}</span>
+                      </div>
+                      <Badge 
+                        variant="outline" 
+                        className="text-xs font-mono bg-blue-50 text-blue-600 border-blue-200"
+                      >
+                        {scoreLabel} {hit.score.toFixed(2)}
+                      </Badge>
+                    </div>
+                    
+                    <ScrollArea className="h-[calc(75vh-100px)] rounded-lg border bg-muted/20 p-4">
+                      <div className="text-sm leading-relaxed whitespace-pre-wrap">
+                        {hit.context_text || hit.text}
+                      </div>
+                    </ScrollArea>
+                  </div>
+                  
+                  {/* 右侧：命中子段列表 */}
+                  <div className="space-y-3 min-w-0">
+                    <div className="text-xs text-muted-foreground font-medium">
+                      命中 {childChunks.length > 0 ? childChunks.length : 1} 个子段落
+                    </div>
+                    
+                    <ScrollArea className="h-[calc(75vh-100px)]">
+                      {(childChunks.length > 0 ? childChunks : [hit]).map((child, cidx) => {
+                        const childMeta = child.metadata || {};
+                        const childIndex = childMeta.child_index ?? cidx;
+                        return (
+                          <div 
+                            key={child.chunk_id || cidx} 
+                            className="rounded-lg border bg-purple-50/50 dark:bg-purple-950/20 p-3 mb-2"
+                          >
+                            <div className="flex items-center justify-between mb-2">
+                              <Badge 
+                                variant="outline" 
+                                className="text-[10px] px-1.5 py-0 h-4 bg-purple-100 text-purple-700 border-purple-300"
+                              >
+                                C-{String(childIndex)}
+                              </Badge>
+                              <span className="text-[10px] text-muted-foreground font-mono">
+                                {scoreLabel} {child.score.toFixed(2)}
+                              </span>
+                            </div>
+                            <div className="text-sm leading-relaxed whitespace-pre-wrap">
+                              {child.text}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </ScrollArea>
+                  </div>
+                </div>
+              );
+            } else {
+              // 普通检索模式
+              return (
+                <div className="space-y-4">
+                  {/* 头部信息 */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span className="font-mono">分段-{String(chunkIndex).padStart(2, "0")}</span>
+                      <span className="text-muted-foreground/50">·</span>
+                      <FileText className="h-3 w-3" />
+                      <span className="truncate max-w-[200px]">{filename}</span>
+                    </div>
+                    <Badge 
+                      variant="outline" 
+                      className="text-xs font-mono bg-blue-50 text-blue-600 border-blue-200"
+                    >
+                      {scoreLabel} {hit.score.toFixed(2)}
+                    </Badge>
+                  </div>
+                  
+                  {/* 内容区域 */}
+                  <ScrollArea className="h-[calc(75vh-100px)] rounded-lg border bg-muted/20 p-4">
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap">
+                      {hit.text}
+                    </div>
+                  </ScrollArea>
+                </div>
+              );
+            }
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* 知识库选择器 Dialog */}
+      <Dialog open={kbSelectorOpen} onOpenChange={setKbSelectorOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>选择知识库</DialogTitle>
+            <DialogDescription>
+              选择一个已有的知识库进行检索测试
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {isLoadingKbs ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                <span className="ml-2 text-muted-foreground">加载中...</span>
+              </div>
+            ) : knowledgeBases.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Database className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                <p>暂无可用的知识库</p>
+                <p className="text-xs mt-1">请先在「索引增强设置」中入库文档</p>
+              </div>
+            ) : (
+              <ScrollArea className="h-[300px]">
+                <div className="space-y-2 pr-4">
+                  {knowledgeBases.map((kb) => (
+                    <div
+                      key={kb.id}
+                      className={`p-3 rounded-lg border cursor-pointer transition-colors hover:bg-accent ${
+                        ingestedKbId === kb.id
+                          ? "border-primary bg-primary/5"
+                          : "border-border"
+                      }`}
+                      onClick={() => handleSelectKnowledgeBase(kb)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Database className="h-4 w-4 text-muted-foreground" />
+                          <span className="font-medium">{kb.name}</span>
+                        </div>
+                        {ingestedKbId === kb.id && (
+                          <Badge variant="default" className="text-xs">
+                            当前
+                          </Badge>
+                        )}
+                      </div>
+                      {kb.description && (
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                          {kb.description}
+                        </p>
+                      )}
+                      <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+                        {kb.document_count !== undefined && (
+                          <span>{kb.document_count} 个文档</span>
+                        )}
+                        <span>{new Date(kb.created_at).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

@@ -236,13 +236,15 @@ async def _attach_parent_context(raw_hits: list[dict], *, tenant_id: str, sessio
     if not parent_ids:
         return raw_hits
 
+    # 使用 PostgreSQL JSON 操作符 ->> 提取文本值
+    from sqlalchemy import cast, String
     result = await session.execute(
         select(Chunk).where(
             Chunk.tenant_id == tenant_id,
-            Chunk.extra_metadata["parent_id"].astext.in_(parent_ids),
+            cast(Chunk.extra_metadata["parent_id"], String).in_(parent_ids),
             or_(
-                Chunk.extra_metadata["child"].astext.is_(None),
-                Chunk.extra_metadata["child"].astext == "false",
+                Chunk.extra_metadata["child"].is_(None),
+                cast(Chunk.extra_metadata["child"], String) == "false",
             ),
         )
     )

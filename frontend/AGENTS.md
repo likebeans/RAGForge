@@ -127,9 +127,13 @@ RAG Pipeline 分段设置与预览页面，核心功能：
 
 ### 模型选择组件
 
-#### AllModelsSelector（推荐）
+#### AllModelsSelector（统一组件）
 
-全局模型选择器，聚合所有已验证提供商的可用模型：
+**所有需要选择模型的场景都应该使用此组件**，包括：
+- 知识库配置页的 Embedding 模型选择
+- Ground 实验页的 Embedding 模型选择
+- Ground 实验页的 LLM 模型选择
+- 任何其他需要选择 LLM / Embedding / Rerank 模型的场景
 
 ```typescript
 import { AllModelsSelector } from "@/components/settings";
@@ -138,30 +142,26 @@ import { AllModelsSelector } from "@/components/settings";
   type="embedding"  // "llm" | "embedding" | "rerank"
   value={{ provider: "ollama", model: "bge-m3" }}
   onChange={(val) => setModel(val)}
-  label="嵌入模型"
   placeholder="选择模型"
 />
 ```
+
+**Props**：
+| 属性 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `type` | `"llm" \| "embedding" \| "rerank"` | 是 | 模型类型 |
+| `value` | `{ provider: string; model: string } \| undefined` | 否 | 当前选中值 |
+| `onChange` | `(val: { provider: string; model: string } \| null) => void` | 是 | 选择回调 |
+| `placeholder` | `string` | 否 | 占位文本 |
+| `label` | `string` | 否 | 标签文本 |
+| `disabled` | `boolean` | 否 | 禁用状态 |
 
 **特性**：
 - 按提供商分组显示所有可用模型
 - 支持搜索过滤（按模型名或提供商名）
 - 显示提供商图标和验证状态
 - 无可用模型时显示配置链接
-
-#### ProviderModelSelector（旧版）
-
-单提供商模型选择器，需先选择提供商再选择模型：
-
-```typescript
-import { ProviderModelSelector } from "@/components/settings";
-
-<ProviderModelSelector
-  type="embedding"
-  value={{ provider: "ollama", model: "bge-m3" }}
-  onChange={(provider, model) => setModel({ provider, model })}
-/>
-```
+- 自动从全局状态读取已验证的提供商列表
 
 ## API 交互
 

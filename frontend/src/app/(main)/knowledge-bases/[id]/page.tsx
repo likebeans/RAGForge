@@ -121,7 +121,7 @@ export default function KnowledgeBaseDetailPage() {
   const router = useRouter();
   const kbId = params.id as string;
   
-  const { client, isConnected, knowledgeBases } = useAppStore();
+  const { client, isConnected, knowledgeBases, defaultModels } = useAppStore();
   
   const [documents, setDocuments] = useState<Document[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -552,6 +552,123 @@ export default function KnowledgeBaseDetailPage() {
                     label=""
                     placeholder="选择嵌入模型"
                   />
+                </div>
+              </div>
+
+              {/* 分段设置（只读） */}
+              <div className="grid grid-cols-[120px_1fr] items-start gap-4">
+                <Label className="text-right text-muted-foreground pt-2">分段设置</Label>
+                {kb?.config?.chunking ? (
+                  <div className="max-w-md p-3 rounded-lg border bg-muted/30">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge variant="secondary" className="text-xs">
+                        {kb.config.chunking.method || "未设置"}
+                      </Badge>
+                    </div>
+                    {kb.config.chunking.params && Object.keys(kb.config.chunking.params).length > 0 && (
+                      <div className="text-xs text-muted-foreground space-y-1">
+                        {Object.entries(kb.config.chunking.params).map(([key, value]) => (
+                          <div key={key} className="flex justify-between">
+                            <span>{key}:</span>
+                            <span className="font-mono">{String(value)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="max-w-md text-sm text-muted-foreground">
+                    未配置（将使用默认设置）
+                  </div>
+                )}
+              </div>
+
+              {/* 索引增强设置（只读） */}
+              <div className="grid grid-cols-[120px_1fr] items-start gap-4">
+                <Label className="text-right text-muted-foreground pt-2">索引增强</Label>
+                {(kb?.config?.indexer || kb?.config?.enricher) ? (
+                  <div className="max-w-md space-y-2">
+                    {kb.config?.indexer && (
+                      <div className="p-3 rounded-lg border bg-muted/30">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-xs text-muted-foreground">索引器:</span>
+                          <Badge variant="secondary" className="text-xs">
+                            {kb.config.indexer.method || "默认"}
+                          </Badge>
+                        </div>
+                        {kb.config.indexer.params && Object.keys(kb.config.indexer.params).length > 0 && (
+                          <div className="text-xs text-muted-foreground space-y-1">
+                            {Object.entries(kb.config.indexer.params).map(([key, value]) => (
+                              <div key={key} className="flex justify-between">
+                                <span>{key}:</span>
+                                <span className="font-mono">{String(value)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {kb.config?.enricher && (
+                      <div className="p-3 rounded-lg border bg-muted/30">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-xs text-muted-foreground">增强器:</span>
+                          <Badge variant="secondary" className="text-xs">
+                            {kb.config.enricher.method || "无"}
+                          </Badge>
+                        </div>
+                        {kb.config.enricher.params && Object.keys(kb.config.enricher.params).length > 0 && (
+                          <div className="text-xs text-muted-foreground space-y-1">
+                            {Object.entries(kb.config.enricher.params).map(([key, value]) => (
+                              <div key={key} className="flex justify-between">
+                                <span>{key}:</span>
+                                <span className="font-mono">{String(value)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="max-w-md text-sm text-muted-foreground">
+                    未配置
+                  </div>
+                )}
+              </div>
+
+              {/* 全局默认模型配置（只读展示） */}
+              <Separator className="my-4" />
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Label className="text-muted-foreground text-sm">全局默认模型</Label>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/60" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      <p>项目中使用模型时的默认配置，可在主导航「设置」中修改</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <div className="max-w-md p-3 rounded-lg border bg-muted/30 space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted-foreground">LLM:</span>
+                    <span className="font-mono">
+                      {defaultModels.llm ? `${defaultModels.llm.provider} / ${defaultModels.llm.model}` : "未设置"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted-foreground">Embedding:</span>
+                    <span className="font-mono">
+                      {defaultModels.embedding ? `${defaultModels.embedding.provider} / ${defaultModels.embedding.model}` : "未设置"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted-foreground">Rerank:</span>
+                    <span className="font-mono">
+                      {defaultModels.rerank ? `${defaultModels.rerank.provider} / ${defaultModels.rerank.model}` : "未设置"}
+                    </span>
+                  </div>
                 </div>
               </div>
             </CardContent>

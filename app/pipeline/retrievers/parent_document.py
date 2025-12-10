@@ -18,7 +18,7 @@
 import logging
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import SessionLocal
@@ -102,15 +102,16 @@ class ParentDocumentRetriever(BaseRetrieverOperator):
             return {}
         
         # 查询父块：有 parent_id 但没有 child 标记
+        # 使用 cast 将 JSON 值转换为 String 进行比较
+        # 注意：当 key 不存在时，extra_metadata["child"] 返回 SQL NULL
         stmt = select(Chunk).where(
             Chunk.tenant_id == tenant_id,
             Chunk.knowledge_base_id.in_(kb_ids),
-            Chunk.extra_metadata["parent_id"].astext.in_(parent_ids),
-            # 父块没有 child 标记或 child=False
+            cast(Chunk.extra_metadata["parent_id"], String).in_(parent_ids),
+            # 父块没有 child 标记或 child=False（键不存在时返回 NULL）
             or_(
-                Chunk.extra_metadata["child"].astext.is_(None),
-                Chunk.extra_metadata["child"].astext == "false",
-                ~Chunk.extra_metadata.has_key("child"),
+                Chunk.extra_metadata["child"].is_(None),
+                cast(Chunk.extra_metadata["child"], String) == "false",
             ),
         )
         
