@@ -58,12 +58,35 @@ response = await chat_completion(
 ```python
 from app.infra.embeddings import get_embedding, get_embeddings
 
-# 单个文本
+# 单个文本（使用环境变量配置）
 vec = await get_embedding("什么是 RAG？")
 
 # 批量文本
 vecs = await get_embeddings(["文本1", "文本2"])
+
+# 使用动态配置（知识库级别的 embedding 模型）
+embedding_config = {
+    "provider": "openai",
+    "model": "text-embedding-3-small",
+    "base_url": "https://api.openai.com/v1",
+    "api_key": "sk-xxx",
+}
+vec = await get_embedding("什么是 RAG？", embedding_config=embedding_config)
 ```
+
+### 动态 Embedding 配置
+
+系统支持按知识库配置不同的 embedding 模型，确保入库和检索使用一致的模型：
+
+| 配置来源 | 优先级 | 说明 |
+|----------|--------|------|
+| `embedding_config` 参数 | 高 | 来自知识库配置，动态传入 |
+| 环境变量 | 低 | `EMBEDDING_PROVIDER`、`EMBEDDING_MODEL` |
+
+**工作流程**：
+1. 创建知识库时配置 embedding 模型
+2. 入库时使用该配置进行向量化
+3. 检索时自动从知识库配置读取，使用相同模型
 
 ## Rerank
 
@@ -96,18 +119,47 @@ results = vector_store.search(query, tenant_id, kb_ids, top_k=5)
 ```python
 from app.infra.llamaindex import build_index_by_store
 
-# Qdrant
+# Qdrant（使用默认 embedding）
 index = build_index_by_store("qdrant", tenant_id, kb_id)
 
-# Milvus
-index = build_index_by_store("milvus", tenant_id, kb_id, params={
-    "index_params": {"index_type": "IVF_PQ", ...}
-})
+# Milvus（带自定义 embedding 配置）
+index = build_index_by_store(
+    "milvus", 
+    tenant_id, 
+    kb_id, 
+    params={"index_params": {"index_type": "IVF_PQ", ...}},
+    embedding_config={"provider": "openai", "model": "text-embedding-3-small", ...}
+)
 
-# Elasticsearch
-index = build_index_by_store("es", tenant_id, kb_id, params={
-    "body": {"mappings": {...}}
-})
+# Elasticsearch（带自定义 embedding 配置）
+index = build_index_by_store(
+    "es", 
+    tenant_id, 
+    kb_id, 
+    params={"body": {"mappings": {...}}},
+    embedding_config=embedding_config
+)
+```
+
+### LlamaIndex RealEmbedding
+
+`RealEmbedding` 是 LlamaIndex 的 embedding 适配器，支持动态配置：
+
+```python
+from app.infra.llamaindex import RealEmbedding
+
+# 使用环境变量配置
+embed_model = RealEmbedding(dim=1024)
+
+# 使用动态配置
+embed_model = RealEmbedding(
+    dim=1024,
+    embedding_config={
+        "provider": "ollama",
+        "model": "bge-m3",
+        "base_url": "http://localhost:11434",
+    }
+)
 ```
 
 ## BM25 存储

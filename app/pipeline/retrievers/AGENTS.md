@@ -40,17 +40,22 @@
 
 ## 参数说明
 
-### DenseRetriever / BM25Retriever
+### DenseRetriever
+- `embedding_config`: 可选，动态 embedding 配置（来自知识库配置）
+
+### BM25Retriever
 - 无构造参数，使用全局配置
 
 ### HybridRetriever
 - `dense_weight`: 稠密检索权重，默认 0.7
 - `sparse_weight`: 稀疏检索权重，默认 0.3
+- `embedding_config`: 可选，动态 embedding 配置
 
 ### LlamaDenseRetriever
 - `top_k`: 默认返回数量，默认 5
 - `store_type`: 向量存储类型（"qdrant" | "milvus" | "es"），默认 "qdrant"
 - `store_params`: 存储参数（如 Milvus 的 index_params、ES 的 body）
+- `embedding_config`: 可选，动态 embedding 配置
 
 ### LlamaBM25Retriever
 - `top_k`: 默认返回数量，默认 5
@@ -64,22 +69,26 @@
 
 ### FusionRetriever
 - `mode`: 融合模式（"rrf" | "weighted"），默认 "rrf"
-- `weights`: 各检索器权重，默认 `{"dense": 0.5, "bm25": 0.5}`
+- `dense_weight`: 稠密检索权重，默认 0.7
+- `bm25_weight`: BM25 检索权重，默认 0.3
 - `rrf_k`: RRF 参数，默认 60
-- `use_rerank`: 是否启用 Rerank，默认 False
+- `rerank`: 是否启用 Rerank，默认 False
 - `rerank_model`: Rerank 模型名称
+- `embedding_config`: 可选，动态 embedding 配置
 
 ### HyDERetriever
 - `base_retriever`: 底层检索器类型，默认 "dense"
 - `num_queries`: 生成假设文档数量，默认 3
 - `include_original`: 是否保留原始查询，默认 True
 - `max_tokens`: LLM 生成最大 token 数，默认 2000（qwen3 thinking 模式需要）
+- `base_retriever_params`: 传递给底层检索器的参数（包括 `embedding_config`）
 
 ### MultiQueryRetriever
 - `base_retriever`: 底层检索器名称，默认 "dense"
 - `num_queries`: 生成的查询变体数量，默认 3
 - `include_original`: 是否保留原始查询，默认 True
 - `rrf_k`: RRF 融合常数，默认 60
+- `base_retriever_params`: 传递给底层检索器的参数（包括 `embedding_config`）
 
 ## 使用示例
 
@@ -186,6 +195,34 @@ results = await retriever.retrieve(
 | dense=0.3, bm25=0.7 | 术语/实体检索 |
 | dense=0.9, bm25=0.1 | 纯语义匹配 |
 
+## 动态 Embedding 配置
+
+检索器支持从知识库配置中读取 embedding 模型，确保检索时使用与入库时相同的模型：
+
+```python
+# 检索服务会自动从知识库配置提取 embedding_config
+embedding_config = {
+    "provider": "ollama",
+    "model": "bge-m3",
+    "base_url": "http://localhost:11434",
+}
+
+# 支持动态配置的检索器
+retriever = operator_registry.get("retriever", "dense")(
+    embedding_config=embedding_config
+)
+
+# HyDE/MultiQuery 通过 base_retriever_params 传递
+retriever = operator_registry.get("retriever", "hyde")(
+    base_retriever="dense",
+    base_retriever_params={"embedding_config": embedding_config}
+)
+```
+
+**支持动态配置的检索器**：
+- `dense` / `hybrid` / `fusion` / `llama_dense`：直接接受 `embedding_config`
+- `hyde` / `multi_query`：通过 `base_retriever_params` 传递给底层检索器
+
 ## 添加新检索器
 
 1. 创建新文件 `my_retriever.py`
@@ -193,3 +230,4 @@ results = await retriever.retrieve(
 3. 使用装饰器注册：`@register_operator("retriever", "my_retriever")`
 4. 在 `__init__.py` 中导入
 5. 返回结果包含 `source` 字段标记来源
+6. 如需支持动态 embedding，添加 `embedding_config` 参数
