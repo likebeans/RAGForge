@@ -292,6 +292,7 @@ curl -X POST http://localhost:8020/admin/tenants/{id}/disable \
 | 智谱 AI | ✅ | ✅ | ✅ |
 | SiliconFlow | ✅ | ✅ | ✅ |
 | Cohere | - | - | ✅ |
+| vLLM | ✅ | ✅ | ✅ |
 
 配置示例：
 ```bash

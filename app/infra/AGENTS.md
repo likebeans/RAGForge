@@ -35,6 +35,7 @@
 | **智谱 AI** | ✅ | ✅ | ✅ | GLM 系列 |
 | **SiliconFlow** | ✅ | ✅ | ✅ | 聚合多种开源模型 |
 | **Cohere** | - | - | ✅ | 专业 Rerank 服务 |
+| **vLLM** | ✅ | ✅ | ✅ | 自部署 vLLM 服务（OpenAI 兼容） |
 
 ## LLM 调用
 
