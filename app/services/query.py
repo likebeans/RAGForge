@@ -9,9 +9,12 @@
 5. 组装返回结果
 """
 
+import logging
 import time
 
 from sqlalchemy import or_, select
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.pipeline import operator_registry
@@ -114,10 +117,15 @@ async def retrieve_chunks(
     # Rerank 后处理（使用配置的 Rerank 提供商）
     rerank_applied = False
     if params.rerank and raw_hits:
+        # 将 rerank_override 转换为 dict
+        rerank_override_dict = None
+        if params.rerank_override:
+            rerank_override_dict = params.rerank_override.model_dump() if hasattr(params.rerank_override, 'model_dump') else params.rerank_override
         raw_hits, rerank_applied = await _apply_rerank(
             query=params.query,
             hits=raw_hits,
             top_k=params.rerank_top_k or params.top_k,
+            rerank_override=rerank_override_dict,
         )
 
     def _metadata_match(hit_meta: dict, filter_meta: dict) -> bool:
@@ -207,6 +215,12 @@ def _resolve_retriever(kbs: list[KnowledgeBase], override: dict | None = None) -
             base_params["embedding_config"] = embedding_config
             params["base_retriever_params"] = base_params
 
+    # 日志记录使用的 embedding 配置
+    if embedding_config:
+        provider = embedding_config.get("provider", "unknown")
+        model = embedding_config.get("model", "unknown")
+        logger.info(f"检索使用知识库配置: {provider}/{model}")
+    
     factory = operator_registry.get("retriever", name)
     if not factory:
         return DenseRetriever(embedding_config=embedding_config), "dense"
@@ -322,6 +336,7 @@ async def _apply_rerank(
     query: str,
     hits: list[dict],
     top_k: int,
+    rerank_override: dict | None = None,
 ) -> tuple[list[dict], bool]:
     """
     应用 Rerank 后处理
@@ -330,6 +345,7 @@ async def _apply_rerank(
         query: 原始查询
         hits: 检索结果
         top_k: 返回数量
+        rerank_override: 临时覆盖 Rerank 配置（provider/model/api_key/base_url）
     
     Returns:
         (reranked_hits, applied): 重排结果和是否成功应用
@@ -349,6 +365,7 @@ async def _apply_rerank(
             query=query,
             documents=documents,
             top_k=top_k,
+            rerank_override=rerank_override,
         )
         
         # 根据 rerank 结果重排原始 hits

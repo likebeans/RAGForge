@@ -122,13 +122,16 @@ class Settings(BaseSettings):
     # - Gemini text-embedding-004: 768
 
     # ==================== Rerank 配置（重排模型） ====================
-    # provider: ollama / cohere / zhipu / siliconflow / none
+    # provider: ollama / cohere / zhipu / siliconflow / vllm / none
     rerank_provider: str = "ollama"
     rerank_model: str = "qllama/bge-reranker-large"
     rerank_top_k: int = 10  # 重排后返回的数量
     
     # Cohere Rerank（商业服务）
     cohere_api_key: str | None = None
+    
+    # vLLM Rerank（自部署 cross-encoder）
+    vllm_rerank_base_url: str | None = None  # 如 http://192.168.1.235:8050
     
     # ==================== Milvus/Elasticsearch 配置 ====================
     milvus_host: str | None = None
@@ -182,6 +185,12 @@ class Settings(BaseSettings):
             return {
                 "provider": "cohere",
                 "api_key": self.cohere_api_key,
+                "model": self.rerank_model,
+            }
+        if self.rerank_provider == "vllm":
+            return {
+                "provider": "vllm",
+                "base_url": self.vllm_rerank_base_url,
                 "model": self.rerank_model,
             }
         return self._get_provider_config(self.rerank_provider, self.rerank_model)

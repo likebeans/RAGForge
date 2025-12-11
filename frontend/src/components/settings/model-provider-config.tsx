@@ -36,6 +36,7 @@ const providerIcons: Record<string, React.ReactNode> = {
   siliconflow: <Cloud className="h-4 w-4" />,
   gemini: <Cloud className="h-4 w-4" />,
   kimi: <Cloud className="h-4 w-4" />,
+  vllm: <Server className="h-4 w-4" />,
 };
 
 interface ProviderState {

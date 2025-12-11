@@ -75,6 +75,14 @@ PROVIDER_CONFIGS = {
         "default_base_url": "https://api.moonshot.cn/v1",
         "supports": {"llm": True, "embedding": False, "rerank": False},
     },
+    "vllm": {
+        "name": "vLLM",
+        "description": "自部署 vLLM 服务（OpenAI 兼容）",
+        "base_url_required": True,
+        "api_key_required": False,
+        "default_base_url": "http://localhost:8000/v1",
+        "supports": {"llm": True, "embedding": True, "rerank": True},
+    },
 }
 
 # 各提供商的常用模型（用于无法自动获取时的备选）
@@ -118,6 +126,11 @@ DEFAULT_MODELS = {
         "llm": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
         "embedding": [],
         "rerank": [],
+    },
+    "vllm": {
+        "llm": [],
+        "embedding": [],
+        "rerank": ["BAAI/bge-reranker-v2-m3"],
     },
 }
 
@@ -254,10 +267,11 @@ async def _get_ollama_models(base_url: str) -> dict[str, list[str]]:
         
         for model in models:
             name_lower = model.lower()
-            if "embed" in name_lower or "bge-m3" in name_lower:
-                embedding_models.append(model)
-            elif "rerank" in name_lower:
+            # rerank 判断优先（bge-reranker 等）
+            if "rerank" in name_lower:
                 rerank_models.append(model)
+            elif "embed" in name_lower or "bge-m3" in name_lower:
+                embedding_models.append(model)
             else:
                 llm_models.append(model)
         
@@ -276,10 +290,12 @@ def _classify_models(model_ids: Iterable[str]) -> dict[str, list[str]]:
 
     for model in model_ids:
         name_lower = model.lower()
-        if "embed" in name_lower or "embedding" in name_lower or "bge" in name_lower:
-            embedding_models.append(model)
-        elif "rerank" in name_lower:
+        # rerank 判断优先（bge-reranker 等）
+        if "rerank" in name_lower:
             rerank_models.append(model)
+        elif "embed" in name_lower or "embedding" in name_lower or "bge-m3" in name_lower:
+            # bge-m3 是 embedding 模型，但 bge-reranker 已被上面捕获
+            embedding_models.append(model)
         else:
             llm_models.append(model)
 

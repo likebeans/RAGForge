@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -39,36 +39,47 @@ export function ModelSelector({
   const [models, setModels] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const providerConfig = providerConfigs[provider];
+  // 防止重复加载
+  const loadedRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    if (!client || !isConnected || !provider) {
-      setModels([]);
-      return;
-    }
-    const cached = providerConfig?.models?.[type];
-    if (cached && cached.length > 0) {
-      setModels(cached);
-      setIsLoading(false);
-      return;
-    }
-    loadModels();
-  }, [client, isConnected, provider, type, providerConfig?.models]);
-
-  const loadModels = async () => {
+  const loadModels = useCallback(async () => {
     if (!client || !provider) return;
+    // 防止重复请求同一个 provider + type
+    const key = `${provider}:${type}`;
+    if (loadedRef.current === key) return;
+    loadedRef.current = key;
+    
     setIsLoading(true);
     try {
-      const result = await client.getProviderModels(provider, providerConfig?.apiKey, providerConfig?.baseUrl);
+      const config = providerConfigs[provider];
+      const result = await client.getProviderModels(provider, config?.apiKey, config?.baseUrl);
       const modelList = result[type] || [];
       setModels(modelList);
       upsertProviderConfig(provider, { models: result });
     } catch (error) {
       console.error("Failed to load models:", error);
       setModels([]);
+      loadedRef.current = null; // 失败后允许重试
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [client, provider, type, providerConfigs, upsertProviderConfig]);
+
+  useEffect(() => {
+    if (!client || !isConnected || !provider) {
+      setModels([]);
+      loadedRef.current = null;
+      return;
+    }
+    const cached = providerConfig?.models?.[type];
+    if (cached && cached.length > 0) {
+      setModels(cached);
+      setIsLoading(false);
+      loadedRef.current = `${provider}:${type}`;
+      return;
+    }
+    loadModels();
+  }, [client, isConnected, provider, type]); // 移除 providerConfig?.models 依赖
 
   const typeLabels: Record<ModelType, string> = {
     llm: "LLM 模型",

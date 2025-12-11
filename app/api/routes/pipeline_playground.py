@@ -167,6 +167,7 @@ async def run_playground(
         retriever_override=payload.retriever,
         rerank=payload.rerank,
         rerank_top_k=payload.rerank_top_k,
+        rerank_override=payload.rerank_override,
     )
 
     user_context = api_key_ctx.get_user_context()

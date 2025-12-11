@@ -13,7 +13,7 @@
 
 from pydantic import BaseModel, Field
 
-from app.schemas.config import LLMConfig, RetrieverConfig
+from app.schemas.config import LLMConfig, RerankConfig, RetrieverConfig
 from app.pipeline.postprocessors.context_window import ContextWindowConfig
 
 
@@ -84,6 +84,10 @@ class RetrieveParams(BaseModel):
         ge=1,
         le=100,
         description="Rerank 后返回的结果数量，默认等于 top_k"
+    )
+    rerank_override: RerankConfig | None = Field(
+        default=None,
+        description="临时覆盖 Rerank 配置（provider/model/api_key/base_url）"
     )
     
     def to_retriever_override_dict(self) -> dict | None:

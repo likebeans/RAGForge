@@ -385,6 +385,16 @@ function RetrievalCompareContent() {
     updateCompareSlot(index, { isLoading: true, error: null, results: null });
     
     try {
+      // Debug: 检查 rerank 配置
+      if (slot.rerankModel) {
+        const rerankOverride = {
+          provider: slot.rerankModel.provider,
+          model: slot.rerankModel.model,
+          api_key: providerConfigs[slot.rerankModel.provider]?.apiKey,
+          base_url: providerConfigs[slot.rerankModel.provider]?.baseUrl,
+        };
+        console.log("DEBUG rerank override 将发送:", JSON.stringify(rerankOverride));
+      }
       const payload: PlaygroundRunRequest = {
         query: compareQuery,
         knowledge_base_ids: [slot.kbId],
@@ -394,6 +404,8 @@ function RetrievalCompareContent() {
         rerank_override: slot.rerankModel ? {
           provider: slot.rerankModel.provider,
           model: slot.rerankModel.model,
+          api_key: providerConfigs[slot.rerankModel.provider]?.apiKey,
+          base_url: providerConfigs[slot.rerankModel.provider]?.baseUrl,
         } : undefined,
         llm_override:
           defaultModels.llm && defaultModels.llm.model && defaultModels.llm.provider

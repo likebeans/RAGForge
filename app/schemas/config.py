@@ -193,6 +193,7 @@ RerankProvider = Literal[
     "cohere",
     "zhipu",
     "siliconflow",
+    "vllm",
 ]
 
 
@@ -212,6 +213,10 @@ class RerankConfig(BaseModel):
     api_key: str | None = Field(
         default=None,
         description="API Key（可选，未指定时使用系统配置）",
+    )
+    base_url: str | None = Field(
+        default=None,
+        description="Base URL（可选，未指定时使用系统配置）",
     )
 
 

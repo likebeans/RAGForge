@@ -27,6 +27,7 @@ const PROVIDER_ICONS: Record<string, { icon: string; color: string }> = {
   deepseek: { icon: "🔍", color: "text-indigo-600" },
   kimi: { icon: "🌙", color: "text-orange-600" },
   cohere: { icon: "🔗", color: "text-pink-600" },
+  vllm: { icon: "⚡", color: "text-amber-600" },
 };
 
 // 提供商中文名
@@ -40,6 +41,7 @@ const PROVIDER_NAMES: Record<string, string> = {
   deepseek: "DeepSeek",
   kimi: "Kimi",
   cohere: "Cohere",
+  vllm: "vLLM",
 };
 
 interface ModelOption {

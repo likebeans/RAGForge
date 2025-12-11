@@ -35,6 +35,7 @@ async def rerank_results(
     query: str,
     documents: list[str],
     top_k: int | None = None,
+    rerank_override: dict | None = None,
 ) -> list[dict[str, Any]]:
     """
     对文档列表进行重排序
@@ -43,6 +44,7 @@ async def rerank_results(
         query: 查询文本
         documents: 待排序的文档列表
         top_k: 返回的文档数量，None 返回全部
+        rerank_override: 临时覆盖 Rerank 配置（provider/model/api_key/base_url）
     
     Returns:
         list[dict]: 重排后的结果，每项包含 index, score, text
@@ -51,8 +53,20 @@ async def rerank_results(
         return []
     
     settings = get_settings()
-    config = settings.get_rerank_config()
-    provider = config.get("provider", "none")
+    
+    # 如果有 override，使用 override 配置
+    if rerank_override:
+        provider = rerank_override.get("provider", "none")
+        config = {
+            "provider": provider,
+            "model": rerank_override.get("model"),
+            "api_key": rerank_override.get("api_key"),
+            "base_url": rerank_override.get("base_url"),
+        }
+        logger.info(f"使用 rerank_override: {provider}/{config.get('model')}, base_url={config.get('base_url')}")
+    else:
+        config = settings.get_rerank_config()
+        provider = config.get("provider", "none")
     
     if provider == "none":
         # 不进行重排，保持原顺序
@@ -77,6 +91,11 @@ async def rerank_results(
             if not config.get("api_key"):
                 raise ValueError(f"{provider.upper()}_API_KEY 未配置")
             return await _openai_compatible_rerank(query, documents, config, top_k)
+        
+        elif provider == "vllm":
+            if not config.get("base_url"):
+                raise ValueError("VLLM_RERANK_BASE_URL 未配置")
+            return await _vllm_rerank(query, documents, config, top_k)
         
         else:
             logger.warning(f"未知的 Rerank 提供者: {provider}，跳过重排")
@@ -224,3 +243,74 @@ async def _openai_compatible_rerank(
             }
             for i, r in enumerate(results)
         ][:top_k]
+
+
+def _sigmoid(x: float) -> float:
+    """Sigmoid 函数，将 logits 转换为 0-1 概率"""
+    import math
+    try:
+        return 1 / (1 + math.exp(-x))
+    except OverflowError:
+        return 0.0 if x < 0 else 1.0
+
+
+async def _vllm_rerank(
+    query: str,
+    documents: list[str],
+    config: dict[str, Any],
+    top_k: int,
+) -> list[dict[str, Any]]:
+    """
+    vLLM Cross-Encoder Rerank (OpenAI 兼容格式)
+    
+    使用 /v1/rerank 端点（OpenAI 兼容）
+    请求格式: {"model": "xxx", "query": "...", "documents": [...]}
+    
+    注意：Cross-encoder 模型（如 bge-reranker）返回的是原始 logits，
+    可能是负数，需要应用 sigmoid 转换为 0-1 范围的分数。
+    """
+    base_url = config.get("base_url", "").rstrip("/")
+    # base_url 已经包含 /v1，直接拼接 /rerank
+    url = f"{base_url}/rerank"
+    model = config["model"]
+    
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        response = await client.post(
+            url,
+            headers={"Content-Type": "application/json"},
+            json={
+                "model": model,
+                "query": query,
+                "documents": documents,
+                "top_n": top_k,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        # 调试: 打印 vLLM 原始返回
+        logger.info(f"vLLM rerank 原始响应: {data}")
+        
+        # OpenAI 兼容格式: {"results": [{"index": 0, "relevance_score": 0.85}, ...]}
+        # 或 {"data": [{"index": 0, "score": 0.85}, ...]}
+        results = data.get("results", data.get("data", []))
+        
+        # 构建结果列表
+        scored_results = []
+        for i, r in enumerate(results):
+            raw_score = r.get("relevance_score", r.get("score", 0.0))
+            # Cross-encoder 返回的是 logits，需要转换为概率
+            # 如果分数不在 0-1 范围内，应用 sigmoid
+            if raw_score < 0 or raw_score > 1:
+                score = _sigmoid(raw_score)
+            else:
+                score = raw_score
+            scored_results.append({
+                "index": r.get("index", i),
+                "score": score,
+                "text": documents[r.get("index", i)],
+            })
+        
+        # 按分数降序排序（有些服务已经排序，但保险起见再排一次）
+        scored_results.sort(key=lambda x: x["score"], reverse=True)
+        return scored_results[:top_k]
