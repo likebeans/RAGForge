@@ -29,7 +29,7 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
 
 from app.config import get_settings
-from app.infra.embeddings import get_embedding, get_embeddings
+from app.infra.embeddings import get_embedding, get_embeddings, get_embeddings_with_config
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +222,7 @@ class AsyncQdrantVectorStore:
         tenant_id: str,
         chunks: list[dict],
         strategy: IsolationStrategy = "auto",
+        embedding_config: dict | None = None,
     ) -> None:
         """
         批量插入/更新 chunks
@@ -230,15 +231,19 @@ class AsyncQdrantVectorStore:
             tenant_id: 租户 ID
             chunks: chunk 列表，每个包含 chunk_id, knowledge_base_id, text, metadata
             strategy: 隔离策略
+            embedding_config: 可选的 embedding 配置（来自前端），格式为 {provider, model, api_key, base_url}
         """
         if not chunks:
             return
         
         collection, effective = await self._ensure_collection(tenant_id, strategy)
         
-        # 批量获取 Embedding
+        # 批量获取 Embedding（优先使用传入的配置）
         texts = [c["text"] for c in chunks]
-        vectors = await get_embeddings(texts)
+        if embedding_config:
+            vectors = await get_embeddings_with_config(texts, embedding_config)
+        else:
+            vectors = await get_embeddings(texts)
         
         # 构建 points（Partition 模式需要添加 tenant_id）
         points = []
@@ -273,6 +278,8 @@ class AsyncQdrantVectorStore:
         kb_ids: Iterable[str],
         top_k: int = 5,
         strategy: IsolationStrategy = "auto",
+        score_threshold: float | None = None,
+        embedding_config: dict | None = None,
     ) -> list[tuple[float, VectorRecord]]:
         """
         语义搜索
@@ -283,14 +290,20 @@ class AsyncQdrantVectorStore:
             kb_ids: 知识库 ID 列表
             top_k: 返回数量
             strategy: 隔离策略
+            score_threshold: 最低分数阈值，低于此分数的结果将被过滤
+            embedding_config: 可选的 embedding 配置（来自知识库配置）
         
         Returns:
             list[tuple[score, VectorRecord]]
         """
         collection, effective = await self._ensure_collection(tenant_id, strategy)
         
-        # 使用真实 Embedding
-        vector = await get_embedding(query)
+        # 优先使用传入的 embedding 配置，否则使用默认配置
+        if embedding_config:
+            vector = await get_embeddings_with_config([query], embedding_config)
+            vector = vector[0]
+        else:
+            vector = await get_embedding(query)
         
         kb_list = list(kb_ids)
         
@@ -320,6 +333,7 @@ class AsyncQdrantVectorStore:
                 query_filter=filter_,
                 limit=top_k,
                 with_payload=True,
+                score_threshold=score_threshold,
             )
         except Exception as exc:
             logger.error(f"向量搜索失败: {exc}")

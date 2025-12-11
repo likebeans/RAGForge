@@ -56,8 +56,34 @@ export default function GroundListPage() {
     }
     if (!confirm("确定删除此 ground？临时知识库将一并删除。")) return;
     try {
+      // 从 localStorage 读取 Pipeline 配置，获取所有已入库的知识库 ID
+      const pipelinesKey = `ground_pipelines_${groundId}`;
+      const savedPipelines = localStorage.getItem(pipelinesKey);
+      if (savedPipelines) {
+        try {
+          const pipelines = JSON.parse(savedPipelines) as { ingestedKbId: string | null }[];
+          const kbIdsToDelete = pipelines
+            .filter(p => p.ingestedKbId)
+            .map(p => p.ingestedKbId as string);
+          
+          // 依次删除关联的知识库
+          for (const kbId of kbIdsToDelete) {
+            try {
+              await client.deleteKnowledgeBase(kbId);
+            } catch {
+              // 忽略单个删除失败（可能已被删除）
+            }
+          }
+        } catch {
+          // 忽略解析错误
+        }
+        // 清除 localStorage 中的 Pipeline 配置
+        localStorage.removeItem(pipelinesKey);
+      }
+      
+      // 删除 Ground 本身
       await client.deleteGround(groundId);
-      toast.success("已删除");
+      toast.success("已删除 Ground 及关联知识库");
       load();
     } catch (error) {
       toast.error(`删除失败: ${(error as Error).message}`);

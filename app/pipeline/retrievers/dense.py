@@ -22,6 +22,13 @@ class DenseRetriever(BaseRetrieverOperator):
     """
     name = "dense"
     kind = "retriever"
+    
+    def __init__(self, embedding_config: dict | None = None):
+        """
+        Args:
+            embedding_config: 可选的 embedding 配置（来自知识库配置）
+        """
+        self.embedding_config = embedding_config
 
     async def retrieve(
         self,
@@ -37,6 +44,7 @@ class DenseRetriever(BaseRetrieverOperator):
             tenant_id=tenant_id,
             kb_ids=kb_ids,
             top_k=top_k,
+            embedding_config=self.embedding_config,
         )
         
         # 转换为统一的返回格式

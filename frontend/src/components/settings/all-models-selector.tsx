@@ -160,7 +160,7 @@ export function AllModelsSelector({
             role="combobox"
             aria-expanded={open}
             disabled={disabled || allModels.length === 0}
-            className="w-full justify-between font-normal"
+            className="w-full justify-between font-normal h-10"
           >
             {displayText ? (
               <span className="flex items-center gap-2">

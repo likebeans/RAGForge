@@ -44,20 +44,34 @@ async def create_knowledge_base(
     创建知识库
     
     在当前租户下创建一个新的知识库。
-    知识库名称在租户内必须唯一。
+    知识库名称在租户内必须唯一（包括 Ground 临时知识库）。
     """
-    # 检查同名知识库是否已存在
-    exists = await db.execute(
-        select(KnowledgeBase.id).where(
+    # 检查同名知识库是否已存在（包括 Ground 临时库）
+    existing_result = await db.execute(
+        select(KnowledgeBase).where(
             KnowledgeBase.tenant_id == tenant.id,
             KnowledgeBase.name == payload.name,
         )
     )
-    if exists.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "VALIDATION_ERROR", "detail": "Knowledge base name already exists"},
-        )
+    existing_kb = existing_result.scalar_one_or_none()
+    
+    if existing_kb:
+        existing_cfg = existing_kb.config or {}
+        if existing_cfg.get("is_ground") and existing_cfg.get("ground_id"):
+            # 与 Ground 临时库重名，返回更清晰的错误信息
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "NAME_CONFLICT_WITH_GROUND",
+                    "detail": f"该名称已被 Playground 实验占用，请使用其他名称",
+                },
+            )
+        else:
+            # 普通知识库重名
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "VALIDATION_ERROR", "detail": "Knowledge base name already exists"},
+            )
 
     # 创建知识库记录
     cfg = payload.config.model_dump(exclude_none=True) if payload.config else {}

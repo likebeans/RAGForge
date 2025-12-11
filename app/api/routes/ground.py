@@ -413,6 +413,7 @@ async def upload_ground_document(
 from app.schemas.internal import IngestionParams
 from app.services.ingestion import ingest_document
 from app.pipeline import operator_registry
+from app.config import get_settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -536,6 +537,22 @@ async def ingest_ground_to_kb(
     succeeded = 0
     failed = 0
     
+    # 构建 embedding 配置（优先使用前端传入的配置）
+    embedding_config: dict | None = None
+    if payload.embedding_provider and payload.embedding_model:
+        settings = get_settings()
+        try:
+            embedding_config = settings._get_provider_config(
+                payload.embedding_provider, 
+                payload.embedding_model
+            )
+            logger.info(f"Ground 入库使用前端配置: {payload.embedding_provider}/{payload.embedding_model}")
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "INVALID_EMBEDDING_CONFIG", "detail": str(e)}
+            )
+    
     for doc in ground_docs:
         if not doc.raw_content:
             results.append(GroundIngestResult(
@@ -560,6 +577,7 @@ async def ingest_ground_to_kb(
                 tenant_id=tenant.id,
                 kb=target_kb,
                 params=params,
+                embedding_config=embedding_config,
             )
             
             # 检查向量库写入是否成功（核心索引）

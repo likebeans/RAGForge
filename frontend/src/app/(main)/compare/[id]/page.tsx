@@ -48,6 +48,8 @@ import {
   Sparkles,
   Database,
   Eye,
+  Plus,
+  X,
 } from "lucide-react";
 import { AllModelsSelector } from "@/components/settings";
 import { useDropzone } from "react-dropzone";
@@ -237,7 +239,7 @@ const RETRIEVER_UI_CONFIG: Record<string, RetrieverConfig> = {
         showWhen: { mode: 'rrf' }, description: '论文推荐值 60' },
       { key: 'dense_weight', label: '向量权重', type: 'slider', default: 0.7, min: 0, max: 1, step: 0.1,
         showWhen: { mode: 'weighted' } },
-      { key: 'bm25_weight', label: 'BM25 权重', type: 'slider', default: 0.3, min: 0, max: 1, step: 0.1,
+      { key: 'sparse_weight', label: 'BM25 权重', type: 'slider', default: 0.3, min: 0, max: 1, step: 0.1,
         showWhen: { mode: 'weighted' } },
       { key: 'rerank', label: '启用 Rerank', type: 'boolean', default: false, group: 'Rerank 设置' },
       { key: 'rerank_top_n', label: 'Rerank 数量', type: 'number', default: 10, min: 1, max: 50,
@@ -520,6 +522,201 @@ export default function GroundDetailPage() {
     index: number;
     retrieverType: string;
   } | null>(null);
+  
+  // Pipeline 配置类型（最多4个）
+  type PipelineConfig = {
+    id: string;
+    name: string; // 显示名称: "1", "2", "3", "4"
+    // 分段配置
+    chunker: string;
+    chunkerParams: Record<string, unknown>;
+    // 索引配置
+    indexer: string;
+    indexerParams: Record<string, unknown>;
+    // 增强配置
+    enricher: string;
+    enricherParams: Record<string, unknown>;
+    // 检索配置
+    retriever: string;
+    retrieverParams: Record<string, unknown>;
+    topK: number;
+    // 模型配置
+    embedProvider: string;
+    embedModel: string;
+    // 入库状态
+    ingestedKbId: string | null;
+    ingestedKbName: string;
+    isIngesting: boolean;
+  };
+
+  // 检索对比状态（最多4个槽位）
+  type CompareSlot = {
+    id: string;
+    kbId: string | null;
+    kbName: string;
+    retriever: string;
+    retrieverParams: Record<string, unknown>;
+    topK: number;
+    results: PlaygroundRunResponse["retrieval"]["results"] | null;
+    isLoading: boolean;
+    error: string | null;
+  };
+  const [compareQuery, setCompareQuery] = useState("");
+  const [compareSlots, setCompareSlots] = useState<CompareSlot[]>([
+    { id: "slot-1", kbId: null, kbName: "", retriever: "hybrid", retrieverParams: getDefaultRetrieverParams("hybrid"), topK: 5, results: null, isLoading: false, error: null },
+    { id: "slot-2", kbId: null, kbName: "", retriever: "dense", retrieverParams: getDefaultRetrieverParams("dense"), topK: 5, results: null, isLoading: false, error: null },
+  ]);
+  const [compareKbSelectorOpen, setCompareKbSelectorOpen] = useState(false);
+  const [compareKbSelectorSlotIndex, setCompareKbSelectorSlotIndex] = useState<number>(0);
+  const [isComparingAll, setIsComparingAll] = useState(false);
+
+  // Pipeline 状态管理（最多4个）
+  const createDefaultPipeline = (index: number): PipelineConfig => ({
+    id: `pipeline-${index}`,
+    name: String(index + 1),
+    chunker: "recursive",
+    chunkerParams: getDefaultChunkerParams("recursive"),
+    indexer: "standard",
+    indexerParams: getDefaultIndexerParams("standard"),
+    enricher: "none",
+    enricherParams: getDefaultEnricherParams("none"),
+    retriever: "hybrid",
+    retrieverParams: getDefaultRetrieverParams("hybrid"),
+    topK: 5,
+    embedProvider: defaultModels.embedding?.provider || "",
+    embedModel: defaultModels.embedding?.model || "",
+    ingestedKbId: null,
+    ingestedKbName: "",
+    isIngesting: false,
+  });
+  
+  const [pipelines, setPipelines] = useState<PipelineConfig[]>([createDefaultPipeline(0)]);
+  const [currentPipelineIndex, setCurrentPipelineIndex] = useState(0);
+  const [pipelinesLoaded, setPipelinesLoaded] = useState(false);
+  
+  // localStorage key for pipelines
+  const pipelinesStorageKey = `ground_pipelines_${groundId}`;
+  
+  // 从 localStorage 加载 Pipeline 配置
+  useEffect(() => {
+    if (!groundId || pipelinesLoaded) return;
+    try {
+      const saved = localStorage.getItem(pipelinesStorageKey);
+      if (saved) {
+        const savedPipelines = JSON.parse(saved) as PipelineConfig[];
+        if (savedPipelines.length > 0) {
+          setPipelines(savedPipelines);
+          // 恢复第一个 Pipeline 的配置到 UI
+          const firstPipeline = savedPipelines[0];
+          setSelectedChunker(firstPipeline.chunker);
+          setChunkerParams(firstPipeline.chunkerParams);
+          setSelectedIndexer(firstPipeline.indexer);
+          setIndexerParams(firstPipeline.indexerParams);
+          setSelectedEnricher(firstPipeline.enricher);
+          setEnricherParams(firstPipeline.enricherParams);
+          setSelectedRetriever(firstPipeline.retriever);
+          setRetrieverParams(firstPipeline.retrieverParams);
+          setTopK(firstPipeline.topK);
+          setEmbedProvider(firstPipeline.embedProvider);
+          setEmbedModel(firstPipeline.embedModel);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load pipelines from localStorage:", e);
+    }
+    setPipelinesLoaded(true);
+  }, [groundId, pipelinesLoaded]);
+  
+  // 保存 Pipeline 配置到 localStorage
+  useEffect(() => {
+    if (!groundId || !pipelinesLoaded) return;
+    try {
+      localStorage.setItem(pipelinesStorageKey, JSON.stringify(pipelines));
+    } catch (e) {
+      console.error("Failed to save pipelines to localStorage:", e);
+    }
+  }, [pipelines, groundId, pipelinesLoaded, pipelinesStorageKey]);
+  
+  // 获取当前 Pipeline
+  const currentPipeline = pipelines[currentPipelineIndex];
+  
+  // 更新当前 Pipeline 配置
+  const updateCurrentPipeline = (updates: Partial<PipelineConfig>) => {
+    setPipelines(prev => prev.map((p, i) => 
+      i === currentPipelineIndex ? { ...p, ...updates } : p
+    ));
+  };
+  
+  // 添加新 Pipeline
+  const addPipeline = () => {
+    if (pipelines.length >= 4) {
+      toast.error("最多只能创建 4 个 Pipeline");
+      return;
+    }
+    const newPipeline = createDefaultPipeline(pipelines.length);
+    setPipelines(prev => [...prev, newPipeline]);
+    setCurrentPipelineIndex(pipelines.length);
+    toast.success(`已创建 Pipeline ${pipelines.length + 1}`);
+  };
+  
+  // 删除 Pipeline
+  const deletePipeline = (index: number) => {
+    if (pipelines.length <= 1) {
+      toast.error("至少需要保留一个 Pipeline");
+      return;
+    }
+    setPipelines(prev => {
+      const newPipelines = prev.filter((_, i) => i !== index);
+      // 重新编号
+      return newPipelines.map((p, i) => ({ ...p, id: `pipeline-${i}`, name: String(i + 1) }));
+    });
+    // 调整当前索引
+    if (currentPipelineIndex >= index && currentPipelineIndex > 0) {
+      setCurrentPipelineIndex(currentPipelineIndex - 1);
+    }
+    toast.success("已删除 Pipeline");
+  };
+  
+  // 切换 Pipeline 时同步 UI 状态
+  const switchPipeline = (index: number) => {
+    if (index === currentPipelineIndex) return;
+    // 保存当前配置到当前 Pipeline
+    updateCurrentPipeline({
+      chunker: selectedChunker,
+      chunkerParams: chunkerParams,
+      indexer: selectedIndexer,
+      indexerParams: indexerParams,
+      enricher: selectedEnricher,
+      enricherParams: enricherParams,
+      retriever: selectedRetriever,
+      retrieverParams: retrieverParams,
+      topK: topK,
+      embedProvider: embedProvider,
+      embedModel: embedModel,
+    });
+    // 切换到目标 Pipeline
+    setCurrentPipelineIndex(index);
+    // 恢复目标 Pipeline 的配置到 UI
+    const targetPipeline = pipelines[index];
+    setSelectedChunker(targetPipeline.chunker);
+    setChunkerParams(targetPipeline.chunkerParams);
+    setSelectedIndexer(targetPipeline.indexer);
+    setIndexerParams(targetPipeline.indexerParams);
+    setSelectedEnricher(targetPipeline.enricher);
+    setEnricherParams(targetPipeline.enricherParams);
+    setSelectedRetriever(targetPipeline.retriever);
+    setRetrieverParams(targetPipeline.retrieverParams);
+    setTopK(targetPipeline.topK);
+    setEmbedProvider(targetPipeline.embedProvider);
+    setEmbedModel(targetPipeline.embedModel);
+  };
+  
+  // 获取所有已入库的知识库 ID
+  const getIngestedKbIds = () => {
+    return pipelines
+      .filter(p => p.ingestedKbId)
+      .map(p => p.ingestedKbId as string);
+  };
 
   const retrieverOptions = useMemo(() => operators?.retrievers || [], [operators]);
   const chunkerOptions = useMemo(() => operators?.chunkers || [], [operators]);
@@ -1369,7 +1566,9 @@ export default function GroundDetailPage() {
       toast.error("请先选择 Embedding 模型");
       return;
     }
-    setNewKbName(ground?.name || "");
+    // 默认名称使用 "kb-" 前缀，避免与 Ground 名称冲突
+    const defaultName = ground?.name ? `kb-${ground.name.replace(/^ground-/, "")}` : "";
+    setNewKbName(defaultName);
     setNewKbDesc("");
     setIngestDialogOpen(true);
   };
@@ -1426,7 +1625,12 @@ export default function GroundDetailPage() {
         toast.success(`入库成功！${result.succeeded} 个文档已入库到「${result.knowledge_base_name}」，可以开始检索了`);
       }
 
-      // 至少有部分成功，保存知识库 ID 用于后续检索
+      // 至少有部分成功，保存知识库 ID 到当前 Pipeline
+      updateCurrentPipeline({
+        ingestedKbId: result.knowledge_base_id,
+        ingestedKbName: result.knowledge_base_name,
+      });
+      // 同时更新旧的状态（保持兼容）
       setIngestedKbId(result.knowledge_base_id);
       setIngestedKbName(result.knowledge_base_name);
       // 保存入库时的配置快照（用于检测配置变更）
@@ -1534,6 +1738,135 @@ export default function GroundDetailPage() {
     }
   };
 
+  // ==================== 检索对比功能 ====================
+  
+  // 更新槽位配置
+  const updateCompareSlot = (index: number, updates: Partial<typeof compareSlots[0]>) => {
+    setCompareSlots(prev => prev.map((slot, i) => i === index ? { ...slot, ...updates } : slot));
+  };
+  
+  // 添加对比槽位（最多4个）
+  const addCompareSlot = () => {
+    if (compareSlots.length >= 4) {
+      toast.warning("最多支持 4 个对比槽位");
+      return;
+    }
+    const newId = `slot-${compareSlots.length + 1}`;
+    setCompareSlots(prev => [...prev, {
+      id: newId,
+      kbId: null,
+      kbName: "",
+      retriever: "hybrid",
+      retrieverParams: getDefaultRetrieverParams("hybrid"),
+      topK: 5,
+      results: null,
+      isLoading: false,
+      error: null,
+    }]);
+  };
+  
+  // 移除对比槽位
+  const removeCompareSlot = (index: number) => {
+    if (compareSlots.length <= 1) {
+      toast.warning("至少保留 1 个对比槽位");
+      return;
+    }
+    setCompareSlots(prev => prev.filter((_, i) => i !== index));
+  };
+  
+  // 打开知识库选择器
+  const openCompareKbSelector = (slotIndex: number) => {
+    setCompareKbSelectorSlotIndex(slotIndex);
+    loadKnowledgeBases();
+    setCompareKbSelectorOpen(true);
+  };
+  
+  // 选择知识库
+  const selectCompareKb = (kb: KnowledgeBase) => {
+    updateCompareSlot(compareKbSelectorSlotIndex, {
+      kbId: kb.id,
+      kbName: kb.name,
+    });
+    setCompareKbSelectorOpen(false);
+  };
+  
+  // 运行单个槽位的检索
+  const runCompareSlot = async (index: number) => {
+    const slot = compareSlots[index];
+    if (!client || !slot.kbId || !compareQuery.trim()) {
+      toast.error("请选择知识库并输入查询内容");
+      return;
+    }
+    
+    updateCompareSlot(index, { isLoading: true, error: null, results: null });
+    
+    try {
+      const payload: PlaygroundRunRequest = {
+        query: compareQuery,
+        knowledge_base_ids: [slot.kbId],
+        retriever: { name: slot.retriever, params: slot.retrieverParams },
+        top_k: slot.topK,
+        rerank: slot.retrieverParams.rerank as boolean | undefined,
+        llm_override:
+          defaultModels.llm && defaultModels.llm.model && defaultModels.llm.provider
+            ? {
+                provider: defaultModels.llm.provider,
+                model: defaultModels.llm.model,
+                api_key: providerConfigs[defaultModels.llm.provider]?.apiKey,
+                base_url: providerConfigs[defaultModels.llm.provider]?.baseUrl,
+              }
+            : undefined,
+      };
+      
+      const response = await client.runPlayground(payload);
+      updateCompareSlot(index, { 
+        results: response.retrieval.results,
+        isLoading: false,
+      });
+    } catch (error) {
+      updateCompareSlot(index, { 
+        error: (error as Error).message,
+        isLoading: false,
+      });
+    }
+  };
+  
+  // 运行所有槽位的检索
+  const runAllCompareSlots = async () => {
+    if (!compareQuery.trim()) {
+      toast.error("请输入查询内容");
+      return;
+    }
+    
+    const slotsWithKb = compareSlots.filter(s => s.kbId);
+    if (slotsWithKb.length === 0) {
+      toast.error("请至少选择一个知识库");
+      return;
+    }
+    
+    setIsComparingAll(true);
+    
+    // 并行执行所有检索
+    await Promise.all(
+      compareSlots.map((slot, index) => {
+        if (slot.kbId) {
+          return runCompareSlot(index);
+        }
+        return Promise.resolve();
+      })
+    );
+    
+    setIsComparingAll(false);
+  };
+  
+  // 更新槽位检索器并重置参数
+  const updateSlotRetriever = (index: number, retriever: string) => {
+    updateCompareSlot(index, {
+      retriever,
+      retrieverParams: getDefaultRetrieverParams(retriever),
+    });
+  };
+
   return (
     <div className="flex h-full flex-col bg-slate-50">
       <div className="border-b bg-white px-6 py-4 flex items-center justify-between">
@@ -1547,26 +1880,85 @@ export default function GroundDetailPage() {
               {ground?.document_count || 0} 个文件
             </div>
           </div>
+          {/* Pipeline 按钮 */}
+          <div className="flex items-center gap-1 ml-2">
+            {pipelines.map((pipeline, index) => (
+              <Button
+                key={pipeline.id}
+                variant={index === currentPipelineIndex ? "default" : "outline"}
+                size="sm"
+                className="h-7 w-7 p-0 relative"
+                onClick={() => switchPipeline(index)}
+              >
+                {pipeline.name}
+                {pipeline.ingestedKbId && (
+                  <span className="absolute -top-1 -right-1 h-2 w-2 bg-green-500 rounded-full" />
+                )}
+              </Button>
+            ))}
+            {pipelines.length < 4 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={addPipeline}
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            {pipelines.length > 1 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                onClick={() => deletePipeline(currentPipelineIndex)}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
         </div>
-        <Button
-          onClick={() => saveGround()}
-          disabled={ground?.saved || saving}
-        >
-          {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-          {ground?.saved ? "已保存" : "保存到知识库"}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              // 跳转到检索对比，并传递所有已入库的知识库
+              const kbIds = getIngestedKbIds();
+              if (kbIds.length === 0) {
+                router.push(`/retrieval-compare?ground=${groundId}`);
+              } else {
+                router.push(`/retrieval-compare?ground=${groundId}&kbs=${kbIds.join(",")}`);
+              }
+            }}
+          >
+            <Search className="h-4 w-4 mr-2" />
+            检索对比
+            {getIngestedKbIds().length > 0 && (
+              <Badge variant="secondary" className="ml-1 h-5 px-1.5">
+                {getIngestedKbIds().length}
+              </Badge>
+            )}
+          </Button>
+          <Button
+            onClick={() => saveGround()}
+            disabled={ground?.saved || saving}
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+            {ground?.saved ? "已保存" : "保存到知识库"}
+          </Button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-hidden p-6">
         <div className="grid gap-4 lg:grid-cols-[400px_1fr] h-[calc(100vh-140px)]">
           <div className="overflow-y-auto h-full pr-2">
             <div className="space-y-4">
-              <Card>
+              <Card className="overflow-hidden">
               <CardHeader>
                 <CardTitle>文件上传</CardTitle>
                 <CardDescription>上传用于本 ground 的文件</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="space-y-3 overflow-hidden">
                 <div className="flex items-center gap-2">
                   <Input type="text" readOnly value={pendingFiles.length ? `${pendingFiles.length} 个待上传` : "点击上传文件"} className="flex-1" />
                   <Button variant="outline" onClick={() => setUploadDialogOpen(true)}>
@@ -1577,9 +1969,9 @@ export default function GroundDetailPage() {
                 <ScrollArea className="max-h-[200px] pr-2">
                   <div className="space-y-2">
                     {documents.map((doc) => (
-                      <div key={doc.id} className="rounded border p-2 bg-muted/30 flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium truncate">{doc.title}</div>
+                      <div key={doc.id} className="rounded border p-2 bg-muted/30 flex items-start justify-between gap-2 overflow-hidden">
+                        <div className="flex-1 min-w-0 overflow-hidden">
+                          <div className="font-medium truncate max-w-full">{doc.title}</div>
                           <div className="text-xs text-muted-foreground">
                             {doc.chunk_count || 0} chunks · {new Date(doc.created_at).toLocaleString()}
                           </div>
@@ -1846,139 +2238,6 @@ export default function GroundDetailPage() {
               </CardContent>
             </Card>
 
-            {/* 检索配置卡片 */}
-            <Card>
-              <CardHeader>
-                <CardTitle>检索设置</CardTitle>
-                <CardDescription>配置检索策略和参数</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="rounded-lg border-2 border-blue-500/20 p-4 space-y-4 bg-blue-500/5">
-                  <div className="flex items-center gap-2">
-                    <div className="h-8 w-8 rounded-full bg-blue-500/10 flex items-center justify-center">
-                      <Search className="h-4 w-4 text-blue-500" />
-                    </div>
-                    <div>
-                      <div className="font-medium">检索策略</div>
-                      <div className="text-xs text-muted-foreground">选择检索器并配置参数</div>
-                    </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <div className="text-sm text-muted-foreground">检索器</div>
-                      <Select value={selectedRetriever} onValueChange={handleRetrieverChange}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="选择检索器" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {filteredRetrieverOptions.map((r) => (
-                            <SelectItem key={r.name} value={r.name}>
-                              {RETRIEVER_UI_CONFIG[r.name]?.label || r.label || r.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="text-sm text-muted-foreground">返回数量 (Top K)</div>
-                      <Input
-                        type="number"
-                        min={1}
-                        max={50}
-                        value={topK}
-                        onChange={(e) => setTopK(Number(e.target.value))}
-                      />
-                    </div>
-                  </div>
-                  
-                  {/* 动态检索器参数 */}
-                  {RETRIEVER_UI_CONFIG[selectedRetriever] && (
-                    <div className="space-y-3 pt-2 border-t border-blue-500/10">
-                      <div className="text-xs text-muted-foreground">
-                        {RETRIEVER_UI_CONFIG[selectedRetriever].description}
-                      </div>
-                      <div className="space-y-3">
-                        {renderRetrieverParams()}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                
-                {/* 测试查询 */}
-                <div className="space-y-2">
-                  <div className="text-sm text-muted-foreground">测试问题</div>
-                  <Textarea
-                    placeholder="输入测试问题进行检索..."
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    className="min-h-[80px]"
-                  />
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {ingestedKbId ? (
-                      <Badge 
-                        variant="outline" 
-                        className="border-green-500 text-green-600 cursor-pointer hover:bg-green-50 dark:hover:bg-green-950"
-                        onClick={() => {
-                          loadKnowledgeBases();
-                          setKbSelectorOpen(true);
-                        }}
-                      >
-                        已入库: {ingestedKbName}
-                      </Badge>
-                    ) : (
-                      <>
-                        <div className="text-xs text-muted-foreground">
-                          请先入库或选择已有知识库
-                        </div>
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          onClick={() => {
-                            loadKnowledgeBases();
-                            setKbSelectorOpen(true);
-                          }}
-                        >
-                          <Database className="h-3 w-3 mr-1" />
-                          选择知识库
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                  <Button onClick={runExperiments} disabled={isRunning || !ingestedKbId}>
-                    {isRunning ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                        运行中...
-                      </>
-                    ) : (
-                      <>
-                        <Play className="h-4 w-4 mr-2" />
-                        运行检索
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>模型配置</CardTitle>
-                <CardDescription>选择默认 LLM 模型</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <AllModelsSelector
-                  type="llm"
-                  value={defaultModels.llm || undefined}
-                  onChange={(val) => setDefaultModel("llm", val)}
-                  placeholder="选择 LLM 模型"
-                />
-              </CardContent>
-            </Card>
             </div>
           </div>
 
@@ -2273,7 +2532,7 @@ export default function GroundDetailPage() {
       </div>
 
       <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg overflow-hidden">
           <DialogHeader>
             <DialogTitle>上传文件</DialogTitle>
           </DialogHeader>
@@ -2295,7 +2554,7 @@ export default function GroundDetailPage() {
           </div>
           
           {pendingFiles.length > 0 && (
-            <div className="space-y-2">
+            <div className="space-y-2 min-w-0">
               <div className="text-sm text-muted-foreground">
                 已选择 {pendingFiles.length} 个文件
               </div>
@@ -2303,12 +2562,12 @@ export default function GroundDetailPage() {
                 {pendingFiles.map((file, idx) => (
                   <div
                     key={`${file.name}-${idx}`}
-                    className="flex items-center justify-between rounded-lg border p-3 bg-muted/30"
+                    className="flex items-center justify-between gap-2 rounded-lg border p-3 bg-muted/30"
                   >
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
                       <FileText className="h-5 w-5 text-muted-foreground shrink-0" />
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium truncate">{file.name}</div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium truncate max-w-full">{file.name}</div>
                         <div className="text-xs text-muted-foreground">
                           {(file.size / 1024).toFixed(1)} KB
                         </div>
@@ -2358,6 +2617,9 @@ export default function GroundDetailPage() {
                 value={newKbName}
                 onChange={(e) => setNewKbName(e.target.value)}
               />
+              <p className="text-xs text-muted-foreground">
+                知识库名称不能与 Playground 名称相同（如 {ground?.name}）
+              </p>
             </div>
             <div className="space-y-2">
               <Label>描述（可选）</Label>

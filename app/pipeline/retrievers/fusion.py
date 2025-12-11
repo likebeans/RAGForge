@@ -114,6 +114,7 @@ class FusionRetriever(BaseRetrieverOperator):
         rerank_model: str = "BAAI/bge-reranker-base",
         rerank_top_n: int = 10,
         top_k: int = 20,
+        embedding_config: dict | None = None,
     ):
         """
         Args:
@@ -125,6 +126,7 @@ class FusionRetriever(BaseRetrieverOperator):
             rerank_model: Rerank 模型名称
             rerank_top_n: Rerank 后返回的结果数
             top_k: 默认召回数量
+            embedding_config: 可选的 embedding 配置（来自知识库配置）
         """
         self.mode = mode
         self.dense_weight = dense_weight
@@ -133,6 +135,7 @@ class FusionRetriever(BaseRetrieverOperator):
         self.rerank_enabled = rerank
         self.rerank_top_n = rerank_top_n
         self.default_top_k = top_k
+        self.embedding_config = embedding_config
         
         # 延迟初始化子检索器
         self._dense = None
@@ -140,7 +143,9 @@ class FusionRetriever(BaseRetrieverOperator):
 
     def _get_dense(self):
         if self._dense is None:
-            self._dense = operator_registry.get("retriever", "llama_dense")()
+            self._dense = operator_registry.get("retriever", "llama_dense")(
+                embedding_config=self.embedding_config
+            )
         return self._dense
 
     def _get_bm25(self):

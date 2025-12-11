@@ -67,13 +67,17 @@ class RealEmbedding(BaseEmbedding):
     
     调用项目配置的 Embedding 服务（Ollama/OpenAI 等），
     生成真实的语义向量。
+    
+    支持动态 embedding 配置，优先使用传入的配置，否则回退到环境变量。
     """
 
     _dim: int = 1024
+    _embedding_config: dict | None = None
 
-    def __init__(self, dim: int | None = None):
+    def __init__(self, dim: int | None = None, embedding_config: dict | None = None):
         super().__init__()
         self._dim = dim or settings.embedding_dim
+        self._embedding_config = embedding_config
 
     @property
     def embed_dim(self) -> int:
@@ -92,13 +96,30 @@ class RealEmbedding(BaseEmbedding):
             # 没有运行中的事件循环，直接运行
             return asyncio.run(coro)
 
+    def _get_embedding_async(self, text: str):
+        """根据配置获取 embedding"""
+        if self._embedding_config:
+            from app.infra.embeddings import get_embeddings_with_config
+            return get_embeddings_with_config([text], self._embedding_config)
+        return get_embedding(text)
+
     def _get_query_embedding(self, query: str) -> List[float]:
+        if self._embedding_config:
+            result = self._run_async(self._get_embedding_async(query))
+            return result[0] if isinstance(result, list) and len(result) > 0 else result
         return self._run_async(get_embedding(query))
 
     def _get_text_embedding(self, text: str) -> List[float]:
+        if self._embedding_config:
+            result = self._run_async(self._get_embedding_async(text))
+            return result[0] if isinstance(result, list) and len(result) > 0 else result
         return self._run_async(get_embedding(text))
 
     async def _aget_query_embedding(self, query: str) -> List[float]:
+        if self._embedding_config:
+            from app.infra.embeddings import get_embeddings_with_config
+            result = await get_embeddings_with_config([query], self._embedding_config)
+            return result[0]
         return await get_embedding(query)
 
     def get_query_embedding(self, query: str) -> List[float]:
@@ -108,6 +129,9 @@ class RealEmbedding(BaseEmbedding):
         return self._get_text_embedding(text)
 
     def _get_text_embeddings(self, texts: List[str]) -> List[List[float]]:
+        if self._embedding_config:
+            from app.infra.embeddings import get_embeddings_with_config
+            return self._run_async(get_embeddings_with_config(texts, self._embedding_config))
         return self._run_async(get_embeddings(texts))
 
 
@@ -124,10 +148,24 @@ def _qdrant_store(collection_name: str) -> QdrantVectorStore:
     )
 
 
-def build_qdrant_index(collection_name: str, use_real_embedding: bool = True) -> VectorStoreIndex:
-    """构建 Qdrant 向量索引，默认使用真实 Embedding"""
+def build_qdrant_index(
+    collection_name: str, 
+    use_real_embedding: bool = True,
+    embedding_config: dict | None = None,
+) -> VectorStoreIndex:
+    """
+    构建 Qdrant 向量索引，默认使用真实 Embedding
+    
+    Args:
+        collection_name: Qdrant 集合名称
+        use_real_embedding: 是否使用真实 Embedding（否则使用 Hash）
+        embedding_config: 可选的 embedding 配置（来自知识库配置）
+    """
     store = _qdrant_store(collection_name)
-    embed_model = RealEmbedding(dim=settings.embedding_dim) if use_real_embedding else HashEmbedding(dim=settings.embedding_dim)
+    if use_real_embedding:
+        embed_model = RealEmbedding(dim=settings.embedding_dim, embedding_config=embedding_config)
+    else:
+        embed_model = HashEmbedding(dim=settings.embedding_dim)
     storage_context = StorageContext.from_defaults(vector_store=store)
     return VectorStoreIndex.from_vector_store(
         vector_store=store,
@@ -142,6 +180,7 @@ def build_index_by_store(
     kb_id: str,
     params: dict | None = None,
     use_real_embedding: bool = True,
+    embedding_config: dict | None = None,
 ) -> VectorStoreIndex:
     """
     按存储类型构建向量索引
@@ -152,10 +191,14 @@ def build_index_by_store(
         kb_id: 知识库 ID
         params: 存储参数
         use_real_embedding: 是否使用真实 Embedding（默认 True）
+        embedding_config: 可选的 embedding 配置（来自知识库配置）
     """
     store_type = store_type.lower()
     params = params or {}
-    embed_model = RealEmbedding(dim=settings.embedding_dim) if use_real_embedding else HashEmbedding(dim=settings.embedding_dim)
+    if use_real_embedding:
+        embed_model = RealEmbedding(dim=settings.embedding_dim, embedding_config=embedding_config)
+    else:
+        embed_model = HashEmbedding(dim=settings.embedding_dim)
 
     if store_type == "qdrant":
         collection_name = f"{settings.qdrant_collection_prefix}{tenant_id}"

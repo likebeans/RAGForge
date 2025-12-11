@@ -29,15 +29,22 @@ class HybridRetriever(BaseRetrieverOperator):
     name = "hybrid"
     kind = "retriever"
 
-    def __init__(self, dense_weight: float = 0.7, sparse_weight: float = 0.3):
+    def __init__(
+        self, 
+        dense_weight: float = 0.7, 
+        sparse_weight: float = 0.3,
+        embedding_config: dict | None = None,
+    ):
         """
         Args:
             dense_weight: 稠密检索结果的权重
             sparse_weight: 稀疏检索结果的权重
+            embedding_config: 可选的 embedding 配置（来自知识库配置）
         """
         self.dense_weight = dense_weight
         self.sparse_weight = sparse_weight
-        self.dense = operator_registry.get("retriever", "dense")()
+        self.embedding_config = embedding_config
+        self.dense = operator_registry.get("retriever", "dense")(embedding_config=embedding_config)
         self.bm25 = operator_registry.get("retriever", "bm25")()
 
     async def retrieve(
@@ -58,14 +65,20 @@ class HybridRetriever(BaseRetrieverOperator):
         
         # 加权融合：相同 chunk_id 的分数累加
         merged: dict[str, dict] = {}
+        scores: dict[str, float] = {}  # 单独记录加权分数
         for hit in chain(dense_hits, bm25_hits):
             cid = hit["chunk_id"]
             score = hit.get("score", 0.0)
             source = hit.get("source") or ("dense" if hit in dense_hits else "bm25")
             weight = self.dense_weight if source == "dense" else self.sparse_weight
-            merged.setdefault(cid, hit)
-            merged[cid]["score"] = merged.get(cid, {}).get("score", 0.0) + score * weight
-            merged[cid]["source"] = source
+            if cid not in merged:
+                merged[cid] = hit.copy()
+                merged[cid]["source"] = source
+            scores[cid] = scores.get(cid, 0.0) + score * weight
+        
+        # 更新融合分数
+        for cid in merged:
+            merged[cid]["score"] = scores[cid]
         
         # 按融合分数降序排序
         sorted_hits = sorted(merged.values(), key=lambda x: x.get("score", 0.0), reverse=True)

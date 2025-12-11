@@ -126,6 +126,7 @@ async def ingest_document(
     tenant_id: str,
     kb: KnowledgeBase,
     params: IngestionParams,
+    embedding_config: dict | None = None,
 ) -> IngestionResult:
     """
     摄取文档
@@ -135,6 +136,7 @@ async def ingest_document(
         tenant_id: 租户 ID
         kb: 知识库（已验证）
         params: 摄取参数对象，包含标题、内容、元数据等配置
+        embedding_config: 可选的 embedding 配置（来自前端），格式为 {provider, model, api_key, base_url}
     
     Returns:
         IngestionResult: 包含文档、chunks 和各后端写入状态的结果对象
@@ -224,7 +226,11 @@ async def ingest_document(
             if not _is_parent_chunk(chunk.extra_metadata or {})
         ]
         try:
-            await vector_store.upsert_chunks(tenant_id=tenant_id, chunks=chunk_data)
+            await vector_store.upsert_chunks(
+                tenant_id=tenant_id, 
+                chunks=chunk_data,
+                embedding_config=embedding_config,
+            )
         except Exception as e:
             indexing_error = str(e)
             logger.error(f"向量库写入失败: {e}")

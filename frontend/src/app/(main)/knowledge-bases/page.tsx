@@ -42,6 +42,8 @@ import {
   Archive,
   Settings,
   MoreHorizontal,
+  CheckSquare,
+  Square,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -51,7 +53,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
-import { ProviderModelSelector } from "@/components/settings";
 
 // 预设封面图片选项
 const COVER_ICONS = [
@@ -93,10 +94,6 @@ export default function KnowledgeBasesPage() {
     isConnected,
     knowledgeBases,
     refreshKnowledgeBases,
-    defaultModels,
-    setDefaultModel,
-    providerCatalog,
-    setProviderCatalog,
   } = useAppStore();
   
   // 创建对话框状态
@@ -106,10 +103,11 @@ export default function KnowledgeBasesPage() {
   const [selectedCover, setSelectedCover] = useState("database");
   const [isCreating, setIsCreating] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [llmProvider, setLlmProvider] = useState(defaultModels.llm?.provider || "");
-  const [llmModel, setLlmModel] = useState(defaultModels.llm?.model || "");
-  const [embedProvider, setEmbedProvider] = useState(defaultModels.embedding?.provider || "");
-  const [embedModel, setEmbedModel] = useState(defaultModels.embedding?.model || "");
+  
+  // 批量选择状态
+  const [selectedKbs, setSelectedKbs] = useState<string[]>([]);
+  const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+  const [batchDeleteDialogOpen, setBatchDeleteDialogOpen] = useState(false);
   
   // 删除确认对话框
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -126,18 +124,6 @@ export default function KnowledgeBasesPage() {
     }
   }, [client, isConnected]);
 
-  useEffect(() => {
-    if (client && isConnected && Object.keys(providerCatalog).length === 0) {
-      client.listProviders().then(setProviderCatalog).catch(() => undefined);
-    }
-  }, [client, isConnected, providerCatalog, setProviderCatalog]);
-
-  useEffect(() => {
-    setLlmProvider(defaultModels.llm?.provider || "");
-    setLlmModel(defaultModels.llm?.model || "");
-    setEmbedProvider(defaultModels.embedding?.provider || "");
-    setEmbedModel(defaultModels.embedding?.model || "");
-  }, [defaultModels]);
 
   // 加载封面映射（预设图标和自定义图标）
   useEffect(() => {
@@ -204,6 +190,54 @@ export default function KnowledgeBasesPage() {
     setDeleteDialogOpen(true);
   };
 
+  // 切换知识库选择
+  const toggleKbSelection = (e: React.MouseEvent, kbId: string) => {
+    e.stopPropagation();
+    setSelectedKbs(prev => 
+      prev.includes(kbId) 
+        ? prev.filter(id => id !== kbId) 
+        : [...prev, kbId]
+    );
+  };
+
+  // 全选/取消全选
+  const toggleSelectAll = () => {
+    if (selectedKbs.length === knowledgeBases.length) {
+      setSelectedKbs([]);
+    } else {
+      setSelectedKbs(knowledgeBases.map(kb => kb.id));
+    }
+  };
+
+  // 批量删除
+  const confirmBatchDelete = async () => {
+    if (!client || selectedKbs.length === 0) return;
+    
+    setIsBatchDeleting(true);
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (const kbId of selectedKbs) {
+      try {
+        await client.deleteKnowledgeBase(kbId);
+        successCount++;
+      } catch {
+        failCount++;
+      }
+    }
+    
+    if (failCount === 0) {
+      toast.success(`成功删除 ${successCount} 个知识库`);
+    } else {
+      toast.warning(`删除完成：成功 ${successCount} 个，失败 ${failCount} 个`);
+    }
+    
+    setSelectedKbs([]);
+    setBatchDeleteDialogOpen(false);
+    setIsBatchDeleting(false);
+    refreshKnowledgeBases();
+  };
+
   const confirmDelete = async () => {
     if (!client || !deleteTarget) return;
     
@@ -234,26 +268,6 @@ export default function KnowledgeBasesPage() {
     });
   };
 
-  const handleProviderChange = (type: "llm" | "embedding", provider: string) => {
-    if (type === "llm") {
-      setLlmProvider(provider);
-      setLlmModel("");
-    } else {
-      setEmbedProvider(provider);
-      setEmbedModel("");
-    }
-    setDefaultModel(type, provider ? { provider, model: "" } : null);
-  };
-
-  const handleModelChange = (type: "llm" | "embedding", model: string) => {
-    if (type === "llm") {
-      setLlmModel(model);
-      if (llmProvider) setDefaultModel("llm", { provider: llmProvider, model });
-    } else {
-      setEmbedModel(model);
-      if (embedProvider) setDefaultModel("embedding", { provider: embedProvider, model });
-    }
-  };
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
@@ -274,29 +288,38 @@ export default function KnowledgeBasesPage() {
         </div>
       </div>
 
-      {isConnected && (
-        <Card className="mb-6">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">模型选择</CardTitle>
-            <CardDescription>为知识库相关操作选择默认的 LLM 与 Embedding 模型（已在设置中验证的提供商）</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-2">
-            <ProviderModelSelector
-              type="llm"
-              providerValue={llmProvider}
-              modelValue={llmModel}
-              onProviderChange={(v) => handleProviderChange("llm", v)}
-              onModelChange={(v) => handleModelChange("llm", v)}
-            />
-            <ProviderModelSelector
-              type="embedding"
-              providerValue={embedProvider}
-              modelValue={embedModel}
-              onProviderChange={(v) => handleProviderChange("embedding", v)}
-              onModelChange={(v) => handleModelChange("embedding", v)}
-            />
-          </CardContent>
-        </Card>
+      {/* 批量操作栏 */}
+      {isConnected && knowledgeBases.length > 0 && (
+        <div className="flex items-center justify-between mb-4 p-3 rounded-lg bg-muted/50">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggleSelectAll}
+              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {selectedKbs.length === knowledgeBases.length ? (
+                <CheckSquare className="h-4 w-4 text-primary" />
+              ) : (
+                <Square className="h-4 w-4" />
+              )}
+              {selectedKbs.length === knowledgeBases.length ? "取消全选" : "全选"}
+            </button>
+            {selectedKbs.length > 0 && (
+              <span className="text-sm text-muted-foreground">
+                已选择 {selectedKbs.length} 个知识库
+              </span>
+            )}
+          </div>
+          {selectedKbs.length > 0 && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setBatchDeleteDialogOpen(true)}
+            >
+              <Trash2 className="h-4 w-4 mr-1" />
+              批量删除 ({selectedKbs.length})
+            </Button>
+          )}
+        </div>
       )}
 
       {/* 知识库卡片网格 */}
@@ -321,11 +344,15 @@ export default function KnowledgeBasesPage() {
             const cover = getCoverIcon(coverMap[kb.id] || "database");
             const IconComponent = cover.icon;
             const customIcon = customIconMap[kb.id];
+            const isSelected = selectedKbs.includes(kb.id);
             
             return (
               <div
                 key={kb.id}
-                className="group relative flex flex-col h-[200px] rounded-xl border bg-card hover:shadow-lg hover:border-primary/30 transition-all cursor-pointer overflow-hidden"
+                className={cn(
+                  "group relative flex flex-col h-[200px] rounded-xl border bg-card hover:shadow-lg transition-all cursor-pointer overflow-hidden",
+                  isSelected ? "border-primary ring-2 ring-primary/20" : "hover:border-primary/30"
+                )}
                 onClick={() => router.push(`/knowledge-bases/${kb.id}`)}
               >
                 {/* 封面区域 */}
@@ -335,6 +362,22 @@ export default function KnowledgeBasesPage() {
                   ) : (
                     <IconComponent className="h-10 w-10 text-white/90" />
                   )}
+                  {/* 选择框 */}
+                  <button
+                    className={cn(
+                      "absolute top-2 left-2 p-1 rounded transition-all",
+                      isSelected 
+                        ? "opacity-100 bg-white" 
+                        : "opacity-0 group-hover:opacity-100 bg-white/80 hover:bg-white"
+                    )}
+                    onClick={(e) => toggleKbSelection(e, kb.id)}
+                  >
+                    {isSelected ? (
+                      <CheckSquare className="h-5 w-5 text-primary" />
+                    ) : (
+                      <Square className="h-5 w-5 text-muted-foreground" />
+                    )}
+                  </button>
                   {/* 操作菜单 */}
                   <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
                     <DropdownMenu>
@@ -498,6 +541,36 @@ export default function KnowledgeBasesPage() {
             <AlertDialogCancel>取消</AlertDialogCancel>
             <AlertDialogAction onClick={confirmDelete} className="bg-destructive hover:bg-destructive/90">
               删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* 批量删除确认对话框 */}
+      <AlertDialog open={batchDeleteDialogOpen} onOpenChange={setBatchDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>批量删除确认</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要删除选中的 <span className="font-medium text-foreground">{selectedKbs.length}</span> 个知识库吗？
+              此操作不可恢复，所有选中知识库中的文档也将被删除。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isBatchDeleting}>取消</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={confirmBatchDelete} 
+              className="bg-destructive hover:bg-destructive/90"
+              disabled={isBatchDeleting}
+            >
+              {isBatchDeleting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  删除中...
+                </>
+              ) : (
+                `删除 ${selectedKbs.length} 个`
+              )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

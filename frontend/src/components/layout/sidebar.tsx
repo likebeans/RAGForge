@@ -16,6 +16,7 @@ import {
   ChevronRight,
   GitCompare,
   Trash2,
+  Search,
 } from "lucide-react";
 
 interface SidebarProps {
@@ -38,6 +39,11 @@ const navItems = [
     title: "Playground",
     href: "/compare",
     icon: GitCompare,
+  },
+  {
+    title: "检索对比",
+    href: "/retrieval-compare",
+    icon: Search,
   },
   {
     title: "设置",

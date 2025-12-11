@@ -1001,7 +1001,7 @@ export default function KnowledgeBaseDetailPage() {
 
       {/* 上传文件对话框 */}
       <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl overflow-hidden">
           <DialogHeader>
             <DialogTitle>上传文件</DialogTitle>
           </DialogHeader>

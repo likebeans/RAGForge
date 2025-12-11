@@ -35,6 +35,7 @@ from app.schemas.document import (
 from app.schemas.internal import IngestionParams
 from app.services.ingestion import ensure_kb_belongs_to_tenant, ingest_document
 from app.pipeline import operator_registry
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -554,6 +555,22 @@ async def advanced_batch_ingest_endpoint(
     # 临时更新 KB 配置用于入库
     original_config = kb.config
     kb.config = temp_kb_config
+    
+    # 构建 embedding 配置（优先使用 API 传入的配置）
+    embedding_config: dict | None = None
+    if payload.embedding_provider and payload.embedding_model:
+        settings = get_settings()
+        try:
+            embedding_config = settings._get_provider_config(
+                payload.embedding_provider,
+                payload.embedding_model
+            )
+            logger.info(f"Advanced batch 使用 API 传入的 embedding 配置: {payload.embedding_provider}/{payload.embedding_model}")
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "INVALID_EMBEDDING_CONFIG", "detail": str(e)}
+            )
 
     results: list[BatchIngestResult] = []
     succeeded = 0
@@ -575,6 +592,7 @@ async def advanced_batch_ingest_endpoint(
                     tenant_id=tenant.id,
                     kb=kb,
                     params=params,
+                    embedding_config=embedding_config,
                 )
                 await db.commit()
                 

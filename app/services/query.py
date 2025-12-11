@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.pipeline import operator_registry
 from app.pipeline.retrievers.dense import DenseRetriever
+from app.config import get_settings
 from app.pipeline.postprocessors.context_window import (
     ContextWindowPostprocessor,
     ContextWindowConfig,
@@ -182,6 +183,11 @@ def _resolve_retriever(kbs: list[KnowledgeBase], override: dict | None = None) -
     name = "dense"
     params: dict = {}
     allow_mixed = False
+    embedding_config: dict | None = None
+    
+    # 从知识库配置中提取 embedding 配置
+    if kbs:
+        embedding_config = _extract_embedding_config(kbs)
     
     # 优先使用 override
     if override:
@@ -189,13 +195,60 @@ def _resolve_retriever(kbs: list[KnowledgeBase], override: dict | None = None) -
         params = override.get("params", {}) or {}
     elif kbs:
         name, params, allow_mixed = _validate_retriever_config(kbs)
+    
+    # 将 embedding_config 传递给检索器
+    if embedding_config:
+        if name in ("dense", "hybrid", "fusion", "llama_dense"):
+            # 这些检索器直接接受 embedding_config 参数
+            params["embedding_config"] = embedding_config
+        elif name in ("hyde", "multi_query"):
+            # 这些检索器通过 base_retriever_params 传递给底层检索器
+            base_params = params.get("base_retriever_params", {}) or {}
+            base_params["embedding_config"] = embedding_config
+            params["base_retriever_params"] = base_params
 
     factory = operator_registry.get("retriever", name)
     if not factory:
-        return DenseRetriever(**params), "dense"
+        return DenseRetriever(embedding_config=embedding_config), "dense"
     retriever = factory(**params)
     retriever.allow_mixed = allow_mixed if hasattr(retriever, "allow_mixed") else allow_mixed
     return retriever, name
+
+
+def _extract_embedding_config(kbs: list[KnowledgeBase]) -> dict | None:
+    """
+    从知识库配置中提取 embedding 配置。
+    
+    知识库配置中的 embedding 配置格式：
+    {
+        "embedding": {
+            "provider": "ollama",
+            "model": "bge-m3:latest"
+        }
+    }
+    """
+    if not kbs:
+        return None
+    
+    # 使用第一个知识库的配置
+    first_config = kbs[0].config or {}
+    embedding_cfg = first_config.get("embedding", {})
+    
+    if not embedding_cfg:
+        return None
+    
+    provider = embedding_cfg.get("provider")
+    model = embedding_cfg.get("model")
+    
+    if not provider or not model:
+        return None
+    
+    try:
+        settings = get_settings()
+        return settings._get_provider_config(provider, model)
+    except ValueError:
+        # 配置不存在，回退到默认配置
+        return None
 
 
 def _validate_retriever_config(kbs: list[KnowledgeBase]) -> tuple[str, dict, bool]:
