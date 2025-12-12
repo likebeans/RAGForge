@@ -115,6 +115,7 @@ class FusionRetriever(BaseRetrieverOperator):
         rerank_top_n: int = 10,
         top_k: int = 20,
         embedding_config: dict | None = None,
+        **kwargs,  # 忽略前端传来的未知参数（如 method）
     ):
         """
         Args:

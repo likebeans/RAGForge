@@ -63,14 +63,30 @@ class LlamaBM25Retriever(BaseRetrieverOperator):
         # 构建 BM25 检索器并执行检索
         retriever = LlamaIndexBM25Retriever.from_defaults(nodes=nodes, similarity_top_k=top_k or self.default_top_k)
         
+        raw_results = list(retriever.retrieve(query))
+        
+        # Min-Max 归一化到 0-1 范围，确保与向量检索分数尺度一致
+        if raw_results:
+            raw_scores = [n.score or 0.0 for n in raw_results]
+            min_score = min(raw_scores)
+            max_score = max(raw_scores)
+            score_range = max_score - min_score
+            
+            def normalize(s: float) -> float:
+                if score_range == 0:
+                    return 1.0 if max_score > 0 else 0.0
+                return (s - min_score) / score_range
+        else:
+            normalize = lambda s: s
+        
         results = []
-        for node in retriever.retrieve(query):
+        for node in raw_results:
             meta = node.metadata or {}
             results.append(
                 {
                     "chunk_id": node.node_id,
                     "text": node.text,
-                    "score": node.score or 0.0,
+                    "score": normalize(node.score or 0.0),
                     "metadata": meta,
                     "knowledge_base_id": meta.get("knowledge_base_id") or meta.get("kb_id"),
                     "document_id": meta.get("document_id"),

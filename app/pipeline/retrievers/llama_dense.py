@@ -5,6 +5,8 @@ LlamaIndex 稠密检索器
 支持 Qdrant/Milvus/Elasticsearch 等多种后端。
 """
 
+import logging
+
 from llama_index.core import VectorStoreIndex
 from llama_index.core.retrievers import BaseRetriever as LlamaBaseRetriever
 from llama_index.core.vector_stores.types import (
@@ -12,6 +14,7 @@ from llama_index.core.vector_stores.types import (
     MetadataFilter,
     FilterOperator,
 )
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 from app.infra.llamaindex import HashEmbedding, build_qdrant_index
 from app.pipeline.base import BaseRetrieverOperator
@@ -19,6 +22,7 @@ from app.pipeline.registry import register_operator
 from app.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def _qdrant_index(tenant_id: str, embedding_config: dict | None = None) -> VectorStoreIndex:
@@ -96,7 +100,15 @@ class LlamaDenseRetriever(BaseRetrieverOperator):
             similarity_top_k=top_k or self.default_top_k,
             filters=filters,
         )
-        nodes = retriever.retrieve(query)
+        
+        try:
+            nodes = retriever.retrieve(query)
+        except UnexpectedResponse as e:
+            # Collection 不存在或 Qdrant 返回错误，返回空结果
+            if "doesn't exist" in str(e) or e.status_code == 404:
+                logger.warning(f"Collection 不存在，返回空结果: tenant_id={tenant_id}")
+                return []
+            raise
         
         results = []
         for node in nodes:

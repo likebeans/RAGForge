@@ -72,12 +72,27 @@ class BM25Retriever(BaseRetrieverOperator):
             reverse=True
         )[:top_k]
         
+        # Min-Max 归一化到 0-1 范围，确保与向量检索分数尺度一致
+        if scored_chunks:
+            raw_scores = [s for s, _ in scored_chunks]
+            min_score = min(raw_scores)
+            max_score = max(raw_scores)
+            score_range = max_score - min_score
+            
+            # 归一化函数：避免除零，全部相同分数时归一化为 1.0
+            def normalize(s: float) -> float:
+                if score_range == 0:
+                    return 1.0 if max_score > 0 else 0.0
+                return (s - min_score) / score_range
+        else:
+            normalize = lambda s: s
+        
         # 转换为统一的返回格式（不过滤零分，因为 BM25 分数可能很低但有意义）
         return [
             {
                 "chunk_id": chunk["chunk_id"],
                 "text": chunk["text"],
-                "score": float(score),
+                "score": normalize(float(score)),
                 "metadata": chunk.get("metadata", {}),
                 "knowledge_base_id": chunk.get("metadata", {}).get("knowledge_base_id"),
                 "document_id": chunk.get("metadata", {}).get("document_id"),

@@ -175,7 +175,9 @@ bm25_store.upsert_chunk(chunk_id, tenant_id, kb_id, text, metadata)
 results = bm25_store.search(query, tenant_id, kb_ids, top_k=5)
 ```
 
-注意：BM25 存储是内存实现，重启后需从数据库重建。
+**注意**：
+- BM25 存储是内存实现，重启后需从数据库重建
+- BM25 原始分数没有固定范围（可能 > 1），检索器层会自动进行 **Min-Max 归一化**到 0-1 范围，确保与向量检索分数尺度一致
 
 ## 环境配置
 
