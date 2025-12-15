@@ -45,7 +45,7 @@ class HybridRetriever(BaseRetrieverOperator):
         self.sparse_weight = sparse_weight
         self.embedding_config = embedding_config
         self.dense = operator_registry.get("retriever", "dense")(embedding_config=embedding_config)
-        self.bm25 = operator_registry.get("retriever", "bm25")()
+        self.bm25 = operator_registry.get("retriever", "llama_bm25")()
 
     async def retrieve(
         self,

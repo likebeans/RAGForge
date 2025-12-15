@@ -1,27 +1,35 @@
 """
 LlamaIndex BM25 检索器
 
-使用 LlamaIndex 封装的 BM25 检索，从数据库加载 chunks 构建内存索引。
-使用全局缓存避免跨请求重复加载数据库。
+使用 rank_bm25 + jieba 实现中文 BM25 检索。
+从数据库加载 chunks 构建内存索引，使用全局缓存避免重复加载。
+
+注意：LlamaIndex BM25Retriever 的 tokenizer 参数已废弃，
+因此直接使用 rank_bm25 库实现中文分词支持。
 """
 
-from llama_index.retrievers.bm25 import BM25Retriever as LlamaIndexBM25Retriever
+import jieba
+from rank_bm25 import BM25Okapi
 
 from app.infra.bm25_cache import get_bm25_cache
-from app.infra.llamaindex import nodes_from_chunks
 from app.pipeline.base import BaseRetrieverOperator
 from app.pipeline.registry import register_operator
+
+
+def _tokenize(text: str) -> list[str]:
+    """中文分词：使用 jieba 搜索引擎模式"""
+    return list(jieba.cut_for_search(text.lower()))
 
 
 @register_operator("retriever", "llama_bm25")
 class LlamaBM25Retriever(BaseRetrieverOperator):
     """
-    LlamaIndex BM25 检索器
+    BM25 检索器（带全局缓存）
     
     工作流程：
     1. 从全局缓存获取 chunks（命中）或从数据库加载（未命中）
-    2. 转换为 LlamaIndex TextNode
-    3. 构建 BM25 索引并检索
+    2. 使用 jieba 分词构建 BM25 索引
+    3. 执行检索并归一化分数
     
     缓存策略：
     - 全局单例缓存，跨请求共享
@@ -57,17 +65,25 @@ class LlamaBM25Retriever(BaseRetrieverOperator):
         if not chunks:
             return []
         
-        # 转换为 LlamaIndex 节点
-        nodes = nodes_from_chunks(chunks=chunks)
+        # 使用 jieba 分词构建 BM25 索引
+        corpus = [_tokenize(ch["text"]) for ch in chunks]
+        bm25 = BM25Okapi(corpus)
         
-        # 构建 BM25 检索器并执行检索
-        retriever = LlamaIndexBM25Retriever.from_defaults(nodes=nodes, similarity_top_k=top_k or self.default_top_k)
+        # 执行检索
+        query_tokens = _tokenize(query)
+        scores = bm25.get_scores(query_tokens)
         
-        raw_results = list(retriever.retrieve(query))
+        # 按分数排序，取 top_k
+        effective_top_k = top_k or self.default_top_k
+        scored_chunks = sorted(
+            zip(scores, chunks),
+            key=lambda x: x[0],
+            reverse=True
+        )[:effective_top_k]
         
-        # Min-Max 归一化到 0-1 范围，确保与向量检索分数尺度一致
-        if raw_results:
-            raw_scores = [n.score or 0.0 for n in raw_results]
+        # Min-Max 归一化到 0-1 范围
+        if scored_chunks:
+            raw_scores = [s for s, _ in scored_chunks]
             min_score = min(raw_scores)
             max_score = max(raw_scores)
             score_range = max_score - min_score
@@ -80,13 +96,13 @@ class LlamaBM25Retriever(BaseRetrieverOperator):
             normalize = lambda s: s
         
         results = []
-        for node in raw_results:
-            meta = node.metadata or {}
+        for score, chunk in scored_chunks:
+            meta = chunk.get("metadata", {})
             results.append(
                 {
-                    "chunk_id": node.node_id,
-                    "text": node.text,
-                    "score": normalize(node.score or 0.0),
+                    "chunk_id": chunk["chunk_id"],
+                    "text": chunk["text"],
+                    "score": normalize(float(score)),
                     "metadata": meta,
                     "knowledge_base_id": meta.get("knowledge_base_id") or meta.get("kb_id"),
                     "document_id": meta.get("document_id"),

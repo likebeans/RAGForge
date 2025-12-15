@@ -9,6 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -16,6 +19,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -50,32 +58,116 @@ import {
   CheckSquare,
   StopCircle,
   Trash2,
+  Settings2,
+  ChevronRight,
+  Sparkles,
 } from "lucide-react";
 
-// 检索器 UI 配置
-const RETRIEVER_UI_CONFIG: Record<string, { label: string; description: string }> = {
-  dense: { label: "向量检索", description: "基于向量相似度的稠密检索" },
-  bm25: { label: "BM25检索", description: "基于关键词的稀疏检索" },
-  hybrid: { label: "混合检索", description: "结合向量和BM25的混合检索" },
-  fusion: { label: "融合检索", description: "RRF/加权融合 + 可选Rerank" },
-  hyde: { label: "HyDE检索", description: "假设文档嵌入检索" },
-  multi_query: { label: "多查询检索", description: "LLM生成多个查询变体" },
+// 检索器参数配置类型
+type ParamConfig = {
+  key: string;
+  label: string;
+  type: 'number' | 'boolean' | 'select' | 'slider';
+  default: number | boolean | string;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: string[];
+  showWhen?: Record<string, unknown>;
 };
 
-// 获取检索器默认参数
-const getDefaultRetrieverParams = (retriever: string): Record<string, unknown> => {
-  switch (retriever) {
-    case "hybrid":
-      return { dense_weight: 0.7, sparse_weight: 0.3 };
-    case "fusion":
-      return { method: "rrf", rerank: false };
-    case "hyde":
-      return { num_queries: 1 };
-    case "multi_query":
-      return { num_queries: 3 };
-    default:
-      return {};
+type RetrieverConfig = {
+  label: string;
+  description: string;
+  params: ParamConfig[];
+};
+
+// 检索器 UI 配置（参考 rag优化.md 文档）
+const RETRIEVER_UI_CONFIG: Record<string, RetrieverConfig> = {
+  dense: {
+    label: "向量检索",
+    description: "基于语义相似度的稠密向量检索",
+    params: []
+  },
+  hybrid: {
+    label: "混合检索",
+    description: "向量 + BM25 加权融合",
+    params: [
+      { key: 'dense_weight', label: '向量权重', type: 'slider', default: 0.7, min: 0, max: 1, step: 0.1 },
+      { key: 'sparse_weight', label: 'BM25权重', type: 'slider', default: 0.3, min: 0, max: 1, step: 0.1 }
+    ]
+  },
+  fusion: {
+    label: "融合检索",
+    description: "RRF/加权融合（Rerank 请使用右侧选择器）",
+    params: [
+      { key: 'mode', label: '融合模式', type: 'select', default: 'rrf', options: ['rrf', 'weighted'] },
+      { key: 'rrf_k', label: 'RRF常数', type: 'number', default: 60, min: 1, max: 100 },
+      { key: 'dense_weight', label: '向量权重', type: 'slider', default: 0.7, min: 0, max: 1, step: 0.1 },
+      { key: 'bm25_weight', label: 'BM25权重', type: 'slider', default: 0.3, min: 0, max: 1, step: 0.1 }
+    ]
+  },
+  hyde: {
+    label: "HyDE检索",
+    description: "LLM生成假设答案进行检索",
+    params: [
+      { key: 'base_retriever', label: '底层检索器', type: 'select', default: 'dense', options: ['dense', 'hybrid'] },
+      { key: 'num_queries', label: '假设答案数', type: 'number', default: 4, min: 1, max: 10 },
+      { key: 'include_original', label: '保留原始查询', type: 'boolean', default: true }
+    ]
+  },
+  multi_query: {
+    label: "多查询检索",
+    description: "LLM生成查询变体，多路召回",
+    params: [
+      { key: 'base_retriever', label: '底层检索器', type: 'select', default: 'dense', options: ['dense', 'hybrid'] },
+      { key: 'num_queries', label: '查询变体数', type: 'number', default: 3, min: 1, max: 10 },
+      { key: 'include_original', label: '保留原始查询', type: 'boolean', default: true },
+      { key: 'rrf_k', label: 'RRF常数', type: 'number', default: 60, min: 1, max: 100 }
+    ]
+  },
+  parent_document: {
+    label: "父文档检索",
+    description: "子块检索返回父块上下文",
+    params: [
+      { key: 'base_retriever', label: '底层检索器', type: 'select', default: 'dense', options: ['dense', 'hybrid'] },
+      { key: 'return_parent', label: '返回父块', type: 'boolean', default: true },
+      { key: 'include_child', label: '包含子块信息', type: 'boolean', default: false }
+    ]
+  },
+  llama_dense: {
+    label: "LlamaIndex向量检索",
+    description: "支持多向量存储后端",
+    params: [
+      { key: 'store_type', label: '存储类型', type: 'select', default: 'qdrant', options: ['qdrant', 'milvus', 'es'] }
+    ]
+  },
+  llama_bm25: {
+    label: "BM25检索",
+    description: "基于关键词匹配的稀疏检索（中文分词优化）",
+    params: []
+  },
+  llama_hybrid: {
+    label: "LlamaIndex混合检索",
+    description: "LlamaIndex向量 + BM25混合",
+    params: [
+      { key: 'dense_weight', label: '向量权重', type: 'slider', default: 0.7, min: 0, max: 1, step: 0.1 },
+      { key: 'bm25_weight', label: 'BM25权重', type: 'slider', default: 0.3, min: 0, max: 1, step: 0.1 }
+    ]
   }
+};
+
+// 获取检索器默认参数（从 UI 配置中提取）
+const getDefaultRetrieverParams = (retriever: string): Record<string, unknown> => {
+  const config = RETRIEVER_UI_CONFIG[retriever];
+  if (!config || !config.params || config.params.length === 0) {
+    return {};
+  }
+  const params: Record<string, unknown> = {};
+  for (const param of config.params) {
+    params[param.key] = param.default;
+  }
+  return params;
 };
 
 // 对比槽位类型
@@ -88,6 +180,8 @@ type CompareSlot = {
   topK: number;
   rerankModel: { provider: string; model: string } | null;
   results: PlaygroundRunResponse["retrieval"]["results"] | null;
+  hydeQueries: string[] | null; // HyDE 假设答案
+  generatedQueries: string[] | null; // MultiQuery 生成的查询变体
   isLoading: boolean;
   error: string | null;
 };
@@ -110,8 +204,8 @@ function RetrievalCompareContent() {
   // 检索对比状态
   const [compareQuery, setCompareQuery] = useState("");
   const [compareSlots, setCompareSlots] = useState<CompareSlot[]>([
-    { id: "slot-1", kbId: null, kbName: "", retriever: "hybrid", retrieverParams: getDefaultRetrieverParams("hybrid"), topK: 5, rerankModel: null, results: null, isLoading: false, error: null },
-    { id: "slot-2", kbId: null, kbName: "", retriever: "dense", retrieverParams: getDefaultRetrieverParams("dense"), topK: 5, rerankModel: null, results: null, isLoading: false, error: null },
+    { id: "slot-1", kbId: null, kbName: "", retriever: "hybrid", retrieverParams: getDefaultRetrieverParams("hybrid"), topK: 5, rerankModel: null, results: null, hydeQueries: null, generatedQueries: null, isLoading: false, error: null },
+    { id: "slot-2", kbId: null, kbName: "", retriever: "dense", retrieverParams: getDefaultRetrieverParams("dense"), topK: 5, rerankModel: null, results: null, hydeQueries: null, generatedQueries: null, isLoading: false, error: null },
   ]);
   const [compareKbSelectorOpen, setCompareKbSelectorOpen] = useState(false);
   const [compareKbSelectorSlotIndex, setCompareKbSelectorSlotIndex] = useState<number>(0);
@@ -194,6 +288,8 @@ function RetrievalCompareContent() {
             topK: 5,
             rerankModel: null,
             results: null,
+            hydeQueries: null,
+            generatedQueries: null,
             isLoading: false,
             error: null,
           }));
@@ -259,7 +355,7 @@ function RetrievalCompareContent() {
     }
     
     // 创建对比槽位（最多4个）
-    const retrievers = ["hybrid", "dense", "bm25", "fusion"];
+    const retrievers = ["hybrid", "dense", "fusion", "llama_bm25"];
     const newSlots: CompareSlot[] = selectedKbs.slice(0, 4).map((kb, index) => ({
       id: `slot-${index + 1}`,
       kbId: kb.id,
@@ -269,6 +365,8 @@ function RetrievalCompareContent() {
       topK: 5,
       rerankModel: null,
       results: null,
+      hydeQueries: null,
+      generatedQueries: null,
       isLoading: false,
       error: null,
     }));
@@ -344,6 +442,8 @@ function RetrievalCompareContent() {
       topK: 5,
       rerankModel: null,
       results: null,
+      hydeQueries: null,
+      generatedQueries: null,
       isLoading: false,
       error: null,
     }]);
@@ -416,11 +516,18 @@ function RetrievalCompareContent() {
                 base_url: providerConfigs[defaultModels.llm.provider]?.baseUrl,
               }
             : undefined,
+        // 注意：embedding_override 在检索时不传递，因为必须使用知识库入库时的 Embedding 模型
       };
 
       const response = await client.runPlayground(payload);
+      // 提取 HyDE 假设答案或 MultiQuery 生成的查询变体
+      const firstResult = response.retrieval.results?.[0];
+      const hydeQueries = (firstResult as unknown as Record<string, unknown>)?.hyde_queries as string[] | undefined;
+      const generatedQueries = (firstResult as unknown as Record<string, unknown>)?.generated_queries as string[] | undefined;
       updateCompareSlot(index, {
         results: response.retrieval.results,
+        hydeQueries: hydeQueries || null,
+        generatedQueries: generatedQueries || null,
         isLoading: false,
       });
     } catch (error) {
@@ -730,6 +837,82 @@ function RetrievalCompareContent() {
                     </div>
                   </div>
                   
+                  {/* 检索器参数配置 */}
+                  {RETRIEVER_UI_CONFIG[slot.retriever]?.params?.length > 0 && (
+                    <Collapsible defaultOpen={false}>
+                      <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors w-full">
+                        <Settings2 className="h-3 w-3" />
+                        <span>检索器参数</span>
+                        <ChevronRight className="h-3 w-3 ml-auto transition-transform data-[state=open]:rotate-90" />
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="pt-3 space-y-3">
+                        {RETRIEVER_UI_CONFIG[slot.retriever].params.map((param) => (
+                          <div key={param.key} className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-xs text-muted-foreground">{param.label}</Label>
+                              {param.type === 'slider' && (
+                                <span className="text-xs font-medium tabular-nums">
+                                  {(slot.retrieverParams[param.key] as number ?? param.default).toFixed(1)}
+                                </span>
+                              )}
+                            </div>
+                            {param.type === 'number' && (
+                              <Input
+                                type="number"
+                                min={param.min}
+                                max={param.max}
+                                value={slot.retrieverParams[param.key] as number ?? param.default}
+                                onChange={(e) => updateCompareSlot(index, {
+                                  retrieverParams: { ...slot.retrieverParams, [param.key]: Number(e.target.value) }
+                                })}
+                                className="h-8 text-xs"
+                              />
+                            )}
+                            {param.type === 'slider' && (
+                              <Slider
+                                value={[slot.retrieverParams[param.key] as number ?? param.default as number]}
+                                min={param.min ?? 0}
+                                max={param.max ?? 1}
+                                step={param.step ?? 0.1}
+                                onValueChange={([v]) => updateCompareSlot(index, {
+                                  retrieverParams: { ...slot.retrieverParams, [param.key]: v }
+                                })}
+                                className="py-1"
+                              />
+                            )}
+                            {param.type === 'boolean' && (
+                              <div className="flex items-center gap-2">
+                                <Switch
+                                  checked={slot.retrieverParams[param.key] as boolean ?? param.default as boolean}
+                                  onCheckedChange={(v) => updateCompareSlot(index, {
+                                    retrieverParams: { ...slot.retrieverParams, [param.key]: v }
+                                  })}
+                                />
+                              </div>
+                            )}
+                            {param.type === 'select' && param.options && (
+                              <Select
+                                value={slot.retrieverParams[param.key] as string ?? param.default as string}
+                                onValueChange={(v) => updateCompareSlot(index, {
+                                  retrieverParams: { ...slot.retrieverParams, [param.key]: v }
+                                })}
+                              >
+                                <SelectTrigger className="h-8 text-xs">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {param.options.map((opt) => (
+                                    <SelectItem key={opt} value={opt} className="text-xs">{opt}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
+                          </div>
+                        ))}
+                      </CollapsibleContent>
+                    </Collapsible>
+                  )}
+                  
                   {/* Top K */}
                   <div className="space-y-1.5">
                     <div className="text-xs font-medium text-muted-foreground">返回数量 (Top K)</div>
@@ -763,6 +946,45 @@ function RetrievalCompareContent() {
                     <div className="text-xs font-medium text-muted-foreground mb-2">
                       检索结果 {slot.results ? `(${slot.results.length} 条)` : ""}
                     </div>
+                    {/* HyDE 假设答案或 MultiQuery 查询变体显示 */}
+                    {(slot.hydeQueries && slot.hydeQueries.length > 0) && (
+                      <Collapsible className="mb-3">
+                        <CollapsibleTrigger className="flex items-center gap-2 text-xs text-primary hover:underline">
+                          <Sparkles className="h-3 w-3" />
+                          <span>LLM 生成的假设答案 ({slot.hydeQueries.length})</span>
+                          <ChevronRight className="h-3 w-3" />
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="mt-2 space-y-2">
+                          {slot.hydeQueries.map((query, idx) => (
+                            <div key={idx} className="p-2 rounded border bg-primary/5 text-xs">
+                              <div className="flex items-center gap-1 text-primary font-medium mb-1">
+                                <Badge variant="outline" className="text-[10px] h-4">#{idx + 1}</Badge>
+                              </div>
+                              <div className="text-muted-foreground whitespace-pre-wrap line-clamp-4">{query}</div>
+                            </div>
+                          ))}
+                        </CollapsibleContent>
+                      </Collapsible>
+                    )}
+                    {(slot.generatedQueries && slot.generatedQueries.length > 0) && (
+                      <Collapsible className="mb-3">
+                        <CollapsibleTrigger className="flex items-center gap-2 text-xs text-primary hover:underline">
+                          <Sparkles className="h-3 w-3" />
+                          <span>LLM 生成的查询变体 ({slot.generatedQueries.length})</span>
+                          <ChevronRight className="h-3 w-3" />
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="mt-2 space-y-2">
+                          {slot.generatedQueries.map((query, idx) => (
+                            <div key={idx} className="p-2 rounded border bg-primary/5 text-xs">
+                              <div className="flex items-center gap-1 text-primary font-medium mb-1">
+                                <Badge variant="outline" className="text-[10px] h-4">#{idx + 1}</Badge>
+                              </div>
+                              <div className="text-muted-foreground">{query}</div>
+                            </div>
+                          ))}
+                        </CollapsibleContent>
+                      </Collapsible>
+                    )}
                     {slot.error ? (
                       <div className="text-xs text-destructive bg-destructive/10 rounded p-2">{slot.error}</div>
                     ) : slot.results ? (

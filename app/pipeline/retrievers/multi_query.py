@@ -45,6 +45,7 @@ class MultiQueryRetriever(BaseRetrieverOperator):
         num_queries: int = 3,
         include_original: bool = True,
         rrf_k: int = 60,
+        **kwargs,  # 忽略前端传来的未知参数
     ):
         """
         Args:

@@ -26,8 +26,12 @@ logger = logging.getLogger(__name__)
 
 
 def _qdrant_index(tenant_id: str, embedding_config: dict | None = None) -> VectorStoreIndex:
-    """根据租户 ID 获取对应的 Qdrant 索引"""
-    collection_name = f"{settings.qdrant_collection_prefix}{tenant_id}"
+    """根据租户 ID 获取对应的 Qdrant 索引
+    
+    注意：默认使用 partition 模式的共享 collection (kb_shared)，
+    与入库服务保持一致。
+    """
+    collection_name = settings.qdrant_shared_collection
     return build_qdrant_index(collection_name, embedding_config=embedding_config)
 
 

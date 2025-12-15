@@ -391,13 +391,17 @@ export default function KnowledgeBaseDetailPage() {
     if (!client) return;
     setIsSavingConfig(true);
     try {
+      // 如果没有选择 Embedding 模型，使用前端默认设置
+      const embeddingProvider = configEmbeddingModel.provider || defaultModels.embedding?.provider;
+      const embeddingModel = configEmbeddingModel.model || defaultModels.embedding?.model;
+      
       // 调用更新知识库 API
       await client.updateKnowledgeBase(kbId, {
         name: configName,
         description: configDescription,
         config: {
-          embedding_provider: configEmbeddingModel.provider,
-          embedding_model: configEmbeddingModel.model,
+          embedding_provider: embeddingProvider,
+          embedding_model: embeddingModel,
         },
       });
       toast.success("配置保存成功");
@@ -552,6 +556,11 @@ export default function KnowledgeBaseDetailPage() {
                     label=""
                     placeholder="选择嵌入模型"
                   />
+                  {(!configEmbeddingModel.provider || !configEmbeddingModel.model) && defaultModels.embedding && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      未选择时将使用默认设置: {defaultModels.embedding.provider} / {defaultModels.embedding.model}
+                    </p>
+                  )}
                 </div>
               </div>
 

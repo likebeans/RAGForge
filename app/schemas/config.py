@@ -149,6 +149,29 @@ class EmbeddingConfig(BaseModel):
     )
 
 
+class EmbeddingOverrideConfig(BaseModel):
+    """Embedding 覆盖配置
+    
+    用于请求级覆盖 Embedding 配置，优先级最高。
+    """
+    provider: EmbeddingProvider = Field(
+        ...,
+        description="Embedding 提供商",
+    )
+    model: str = Field(
+        ...,
+        description="Embedding 模型名称",
+    )
+    api_key: str | None = Field(
+        default=None,
+        description="API Key（可选，未指定时使用系统配置）",
+    )
+    base_url: str | None = Field(
+        default=None,
+        description="API Base URL（可选，未指定时使用系统配置）",
+    )
+
+
 # ============ LLM 配置 ============
 
 LLMProvider = Literal[

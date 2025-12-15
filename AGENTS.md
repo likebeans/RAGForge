@@ -123,7 +123,6 @@ tests/               # 测试文件
 
 ### 检索器 (Retrievers)
 - `dense`: 稠密向量检索
-- `bm25`: BM25 稀疏检索（从 DB 加载，支持持久化）
 - `hybrid`: 混合检索（Dense + BM25，带 source 标记）
 - `fusion`: 融合检索（RRF/加权 + 可选 Rerank）
 - `hyde`: HyDE 检索器（LLM 生成假设文档嵌入）
@@ -213,9 +212,28 @@ results = await retriever.retrieve(query="问题", tenant_id="xxx", kb_ids=["kb1
 
 - 每个请求通过 API Key 识别租户
 - 所有数据表包含 `tenant_id` 字段
-- 向量库按租户隔离（每租户一个 Collection）
+- 向量库按租户隔离（支持多种隔离策略）
 - 查询时强制过滤 `tenant_id`
 - 租户可被禁用，禁用后所有 API Key 失效
+
+### 向量存储隔离模式
+
+系统支持三种多租户隔离策略，通过环境变量或前端设置页面配置：
+
+| 模式 | Collection 名称 | 隔离方式 | 适用场景 |
+|------|----------------|---------|---------|
+| **Partition** | `kb_shared` | 通过 `kb_id` 字段过滤 | 小规模、资源共享（默认） |
+| **Collection** | `kb_{tenant_id}` | 每租户独立 Collection | 大规模、高性能需求 |
+| **Auto** | 自动选择 | 根据数据量自动切换 | 自动优化、平衡成本 |
+
+**配置方式**：
+- 后端环境变量：`QDRANT_ISOLATION_STRATEGY`（partition/collection/auto）
+- 前端设置页面：**设置 → 向量存储** Tab
+
+**注意事项**：
+1. 切换模式不会自动迁移已有数据
+2. 入库和检索必须使用相同的隔离模式
+3. 默认使用 Partition 模式（共享 Collection `kb_shared`）
 
 ## 租户管理 (Admin API)
 

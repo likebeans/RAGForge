@@ -3,7 +3,7 @@
 from typing import Any
 from pydantic import BaseModel, Field
 
-from app.schemas.config import LLMConfig, RerankConfig, RetrieverConfig
+from app.schemas.config import EmbeddingOverrideConfig, LLMConfig, RerankConfig, RetrieverConfig
 from app.schemas.query import ChunkHit
 from app.schemas.rag import RAGModelInfo
 
@@ -43,6 +43,7 @@ class PlaygroundRunRequest(BaseModel):
     chunker_params: dict | None = Field(default=None, description="切分器参数")
     chunk_preview_text: str | None = Field(default=None, description="可选：输入一段文本用于切分预览")
     llm_override: LLMConfig | None = Field(default=None, description="覆盖默认 LLM 配置")
+    embedding_override: EmbeddingOverrideConfig | None = Field(default=None, description="覆盖默认 Embedding 配置")
 
 
 class ChunkPreview(BaseModel):

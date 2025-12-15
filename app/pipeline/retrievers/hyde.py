@@ -53,6 +53,9 @@ class HyDERetriever(BaseRetrieverOperator):
         base_retriever_params: dict | None = None,
         hyde_config: HyDEConfig | None = None,
         rrf_k: int = 60,
+        num_queries: int | None = None,
+        include_original: bool | None = None,
+        **kwargs,  # 忽略前端传来的未知参数
     ):
         """
         Args:
@@ -60,12 +63,24 @@ class HyDERetriever(BaseRetrieverOperator):
             base_retriever_params: 底层检索器参数
             hyde_config: HyDE 配置
             rrf_k: RRF 融合常数
+            num_queries: 生成假设答案数量（快捷参数，会覆盖 hyde_config）
+            include_original: 是否保留原始查询（快捷参数，会覆盖 hyde_config）
         """
         self.base_retriever_name = base_retriever
         self.base_retriever_params = base_retriever_params or {}
-        self.hyde_config = hyde_config
         self.rrf_k = rrf_k
         self._hyde_transform: HyDEQueryTransform | None = None
+        
+        # 支持直接传递参数，构造 hyde_config
+        if hyde_config is not None:
+            self.hyde_config = hyde_config
+        elif num_queries is not None or include_original is not None:
+            self.hyde_config = HyDEConfig(
+                num_queries=num_queries or 4,
+                include_original=include_original if include_original is not None else True,
+            )
+        else:
+            self.hyde_config = None
     
     def _get_base_retriever(self) -> BaseRetrieverOperator:
         """获取底层检索器"""

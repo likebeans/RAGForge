@@ -3,12 +3,10 @@
 
 提供多种检索策略：
 - DenseRetriever         : 稠密向量检索（基于 Qdrant）
-- BM25Retriever          : 稀疏检索（基于 BM25 算法）
 - HybridRetriever        : 混合检索（Dense + BM25 加权融合）
 - FusionRetriever        : 融合检索（RRF/加权 + 可选 Rerank）
 - HyDERetriever          : HyDE 检索（假设文档嵌入）
 - LlamaDenseRetriever    : 基于 LlamaIndex 的稠密检索
-- LlamaBM25Retriever     : 基于 LlamaIndex 的 BM25 检索
 - LlamaHybridRetriever   : 基于 LlamaIndex 的混合检索
 - MultiQueryRetriever    : 多查询检索（RAG Fusion 多查询扩展）
 - SelfQueryRetriever     : 自查询检索（LLM 解析元数据过滤）
@@ -17,7 +15,6 @@
 - RaptorRetriever        : RAPTOR 检索（多层次摘要树检索）
 """
 
-from app.pipeline.retrievers.bm25 import BM25Retriever  # noqa: F401
 from app.pipeline.retrievers.dense import DenseRetriever  # noqa: F401
 from app.pipeline.retrievers.hybrid import HybridRetriever  # noqa: F401
 from app.pipeline.retrievers.fusion import FusionRetriever  # noqa: F401
@@ -33,7 +30,6 @@ from app.pipeline.retrievers.raptor import RaptorRetriever  # noqa: F401
 
 __all__ = [
     "DenseRetriever",
-    "BM25Retriever",
     "HybridRetriever",
     "FusionRetriever",
     "HyDERetriever",

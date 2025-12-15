@@ -36,7 +36,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
-import { Check, X, RefreshCw, Loader2, Plus, Trash2, Copy, Key, AlertCircle, Eye, EyeOff, Server, Cpu } from "lucide-react";
+import { Check, X, RefreshCw, Loader2, Plus, Trash2, Copy, Key, AlertCircle, Eye, EyeOff, Server, Cpu, Database, Info } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { APIKeyInfo } from "@/lib/api";
 import { ModelProviderConfig, DefaultModelConfig } from "@/components/settings";
@@ -58,6 +58,23 @@ export default function SettingsPage() {
   const [isCreatingKey, setIsCreatingKey] = useState(false);
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
+
+  // 向量存储配置状态
+  const [isolationMode, setIsolationMode] = useState<"partition" | "collection" | "auto">("partition");
+
+  // 从 localStorage 加载隔离模式配置
+  useEffect(() => {
+    const savedMode = localStorage.getItem("vector_isolation_mode");
+    if (savedMode && ["partition", "collection", "auto"].includes(savedMode)) {
+      setIsolationMode(savedMode as "partition" | "collection" | "auto");
+    }
+  }, []);
+
+  const handleIsolationModeChange = (mode: "partition" | "collection" | "auto") => {
+    setIsolationMode(mode);
+    localStorage.setItem("vector_isolation_mode", mode);
+    toast.success(`隔离模式已切换为: ${mode}`);
+  };
 
   useEffect(() => {
     setLocalApiKey(apiKey);
@@ -190,6 +207,10 @@ export default function SettingsPage() {
           <TabsTrigger value="models" className="flex items-center gap-2">
             <Cpu className="h-4 w-4" />
             模型提供商
+          </TabsTrigger>
+          <TabsTrigger value="storage" className="flex items-center gap-2">
+            <Database className="h-4 w-4" />
+            向量存储
           </TabsTrigger>
         </TabsList>
 
@@ -373,6 +394,143 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+
+        <TabsContent value="storage" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Database className="h-5 w-5" />
+                多租户隔离模式
+              </CardTitle>
+              <CardDescription>
+                配置向量存储的多租户隔离策略，影响数据入库和检索行为
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid gap-4">
+                {/* Partition 模式 */}
+                <div
+                  className={`p-4 rounded-lg border-2 cursor-pointer transition-colors ${
+                    isolationMode === "partition"
+                      ? "border-primary bg-primary/5"
+                      : "border-muted hover:border-muted-foreground/50"
+                  }`}
+                  onClick={() => handleIsolationModeChange("partition")}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={`w-4 h-4 rounded-full border-2 mt-0.5 flex items-center justify-center ${
+                      isolationMode === "partition" ? "border-primary" : "border-muted-foreground"
+                    }`}>
+                      {isolationMode === "partition" && (
+                        <div className="w-2 h-2 rounded-full bg-primary" />
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">Partition 模式</span>
+                        <Badge variant="secondary" className="text-xs">推荐</Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        所有租户数据存储在共享 Collection（kb_shared），通过 kb_id 字段过滤
+                      </p>
+                      <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Check className="h-3 w-3 text-green-500" /> 资源共享
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Check className="h-3 w-3 text-green-500" /> 适合小规模
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Collection 模式 */}
+                <div
+                  className={`p-4 rounded-lg border-2 cursor-pointer transition-colors ${
+                    isolationMode === "collection"
+                      ? "border-primary bg-primary/5"
+                      : "border-muted hover:border-muted-foreground/50"
+                  }`}
+                  onClick={() => handleIsolationModeChange("collection")}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={`w-4 h-4 rounded-full border-2 mt-0.5 flex items-center justify-center ${
+                      isolationMode === "collection" ? "border-primary" : "border-muted-foreground"
+                    }`}>
+                      {isolationMode === "collection" && (
+                        <div className="w-2 h-2 rounded-full bg-primary" />
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">Collection 模式</span>
+                        <Badge variant="outline" className="text-xs">高性能</Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        每个租户独立 Collection（kb_租户ID），物理隔离
+                      </p>
+                      <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Check className="h-3 w-3 text-green-500" /> 性能更好
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Check className="h-3 w-3 text-green-500" /> 安全隔离
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Auto 模式 */}
+                <div
+                  className={`p-4 rounded-lg border-2 cursor-pointer transition-colors ${
+                    isolationMode === "auto"
+                      ? "border-primary bg-primary/5"
+                      : "border-muted hover:border-muted-foreground/50"
+                  }`}
+                  onClick={() => handleIsolationModeChange("auto")}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={`w-4 h-4 rounded-full border-2 mt-0.5 flex items-center justify-center ${
+                      isolationMode === "auto" ? "border-primary" : "border-muted-foreground"
+                    }`}>
+                      {isolationMode === "auto" && (
+                        <div className="w-2 h-2 rounded-full bg-primary" />
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">Auto 模式</span>
+                        <Badge variant="outline" className="text-xs">智能</Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        根据数据量自动选择策略，小规模用 Partition，大规模自动迁移到 Collection
+                      </p>
+                      <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Check className="h-3 w-3 text-green-500" /> 自动优化
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Check className="h-3 w-3 text-green-500" /> 平衡成本
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 说明信息 */}
+              <div className="flex items-start gap-2 p-3 rounded-lg bg-muted/50">
+                <Info className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
+                <div className="text-sm text-muted-foreground">
+                  <p><strong>注意：</strong>切换隔离模式不会自动迁移已有数据。</p>
+                  <p className="mt-1">如果已有数据使用 Partition 模式入库，请保持使用该模式，否则检索将无法找到数据。</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
 
