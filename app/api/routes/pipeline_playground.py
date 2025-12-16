@@ -168,6 +168,7 @@ async def run_playground(
         rerank=payload.rerank,
         rerank_top_k=payload.rerank_top_k,
         rerank_override=payload.rerank_override,
+        embedding_override=payload.embedding_override,
     )
 
     user_context = api_key_ctx.get_user_context()
@@ -196,6 +197,7 @@ async def run_playground(
         score_threshold=payload.score_threshold,
         retriever_override=payload.retriever,
         llm_override=payload.llm_override,
+        embedding_override=payload.embedding_override,
     )
 
     start_rag = time.perf_counter()

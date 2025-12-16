@@ -14,12 +14,11 @@ Chunk Enrichment 增强器
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
-from openai import OpenAI
-
 from app.config import get_settings
+from app.infra.llm import chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +29,9 @@ class EnrichmentConfig:
     enabled: bool = False           # 默认关闭
     max_tokens: int = 512           # 增强文本最大 token 数
     context_chunks: int = 1         # 上下文 chunk 数量（前后各 N 个）
+    include_headers: bool = True    # 是否在上下文中包含文档标题/章节信息
     model: str | None = None        # 使用的模型
+    llm_config: dict[str, Any] | None = field(default=None)  # 前端传入的 LLM 配置
 
 
 # 默认增强提示词（参考智谱方案）
@@ -78,27 +79,19 @@ class ChunkEnricher:
         context_chunks: int = 1,
         model: str | None = None,
         prompt_template: str | None = None,
+        llm_config: dict[str, Any] | None = None,
     ):
         self.max_tokens = max_tokens
         self.context_chunks = context_chunks
         self.prompt_template = prompt_template or DEFAULT_ENRICHMENT_PROMPT
+        self.llm_config = llm_config  # 前端传入的 LLM 配置（优先级高于环境变量）
         
-        settings = get_settings()
-        self.model = model or settings.chunk_enrichment_model or settings.openai_model
-        self._client: OpenAI | None = None
-    
-    def _get_client(self) -> OpenAI:
-        """延迟初始化 OpenAI 客户端"""
-        if self._client is None:
+        # 如果有 llm_config，使用其中的 model；否则从环境变量获取
+        if llm_config and llm_config.get("model"):
+            self.model = llm_config["model"]
+        else:
             settings = get_settings()
-            if not settings.openai_api_key:
-                raise ValueError("OPENAI_API_KEY 未配置，无法进行 Chunk Enrichment")
-            
-            self._client = OpenAI(
-                api_key=settings.openai_api_key,
-                base_url=settings.openai_api_base,
-            )
-        return self._client
+            self.model = model or settings.chunk_enrichment_model or settings.llm_model
     
     def _build_context_info(
         self,
@@ -120,7 +113,7 @@ class ChunkEnricher:
         
         return "\n".join(parts) if parts else "（无上下文）"
     
-    def enrich(
+    async def enrich(
         self,
         chunk_text: str,
         doc_title: str = "",
@@ -129,7 +122,7 @@ class ChunkEnricher:
         doc_summary: str | None = None,
     ) -> str | None:
         """
-        增强单个 chunk
+        增强单个 chunk（异步）
         
         Args:
             chunk_text: 原始 chunk 文本
@@ -142,8 +135,6 @@ class ChunkEnricher:
             增强后的文本，失败返回 None
         """
         try:
-            client = self._get_client()
-            
             context_info = self._build_context_info(preceding_chunks, succeeding_chunks)
             if doc_summary:
                 context_info = f"文档摘要：{doc_summary}\n\n{context_info}"
@@ -154,46 +145,24 @@ class ChunkEnricher:
                 chunk_text=chunk_text,
             )
             
-            response = client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=self.max_tokens,
+            # 使用多提供商 chat_completion，支持前端传入的 llm_config
+            enriched = await chat_completion(
+                prompt=prompt,
                 temperature=0.3,
+                max_tokens=self.max_tokens,
+                llm_config=self.llm_config,
             )
             
-            if response.choices:
-                enriched = response.choices[0].message.content
-                if enriched:
-                    enriched = enriched.strip()
-                    logger.debug(f"Chunk 增强成功，长度: {len(enriched)} 字")
-                    return enriched
+            if enriched:
+                enriched = enriched.strip()
+                logger.debug(f"Chunk 增强成功，长度: {len(enriched)} 字")
+                return enriched
             
             return None
             
         except Exception as e:
             logger.warning(f"Chunk 增强失败: {e}")
             return None
-    
-    async def aenrich(
-        self,
-        chunk_text: str,
-        doc_title: str = "",
-        preceding_chunks: list[str] | None = None,
-        succeeding_chunks: list[str] | None = None,
-        doc_summary: str | None = None,
-    ) -> str | None:
-        """异步增强"""
-        import asyncio
-        return await asyncio.to_thread(
-            self.enrich,
-            chunk_text,
-            doc_title,
-            preceding_chunks,
-            succeeding_chunks,
-            doc_summary,
-        )
     
     async def enrich_chunks(
         self,
@@ -226,7 +195,7 @@ class ChunkEnricher:
             succeeding = texts[i+1:end] if i < len(texts) - 1 else None
             
             # 增强
-            enriched = await self.aenrich(
+            enriched = await self.enrich(
                 chunk_text=chunk["text"],
                 doc_title=doc_title,
                 preceding_chunks=preceding,
@@ -248,30 +217,93 @@ class ChunkEnricher:
             max_tokens=config.max_tokens,
             context_chunks=config.context_chunks,
             model=config.model,
+            llm_config=config.llm_config,
         )
 
 
-def get_chunk_enricher(config: EnrichmentConfig | None = None) -> ChunkEnricher | None:
+def get_chunk_enricher(
+    config: EnrichmentConfig | None = None,
+    llm_config: dict[str, Any] | None = None,
+    enricher_config: dict[str, Any] | None = None,
+) -> ChunkEnricher | None:
     """
     获取 Chunk 增强器
     
-    如果未配置 API Key 或未启用，返回 None
+    Args:
+        config: Enrichment 配置（可选）
+        llm_config: 前端传入的 LLM 配置（优先级高于环境变量）
+            - provider: 提供商名称
+            - model: 模型名称
+            - api_key: API 密钥（可选）
+            - base_url: API 地址（可选）
+        enricher_config: 前端传入的增强器配置
+            - name: 增强器名称（如 chunk_context）
+            - params: 增强器参数（如 context_window, include_headers）
+    
+    Returns:
+        ChunkEnricher 实例，如果未启用或未配置则返回 None
     """
     settings = get_settings()
     
+    # 从 enricher_config 中提取参数
+    enricher_params = (enricher_config or {}).get("params", {})
+    context_window = enricher_params.get("context_window", settings.chunk_enrichment_context_chunks)
+    include_headers = enricher_params.get("include_headers", True)
+    
+    # 如果有前端传入的 llm_config，直接启用
+    if llm_config and llm_config.get("provider"):
+        # 如果前端没传 api_key/base_url，从环境变量回退
+        provider = llm_config["provider"]
+        if provider != "ollama" and not llm_config.get("api_key"):
+            try:
+                env_config = settings._get_provider_config(
+                    provider, 
+                    llm_config.get("model", "")
+                )
+                llm_config = {
+                    **llm_config,
+                    "api_key": env_config.get("api_key"),
+                    "base_url": llm_config.get("base_url") or env_config.get("base_url"),
+                }
+            except ValueError:
+                pass  # 未知 provider，继续使用原 config
+        
+        if config is None:
+            config = EnrichmentConfig(
+                enabled=True,
+                max_tokens=settings.chunk_enrichment_max_tokens,
+                context_chunks=context_window,
+                include_headers=include_headers,
+                llm_config=llm_config,
+            )
+        else:
+            config.enabled = True
+            config.llm_config = llm_config
+            config.context_chunks = context_window
+            config.include_headers = include_headers
+        return ChunkEnricher.from_config(config)
+    
+    # 否则使用环境变量配置
     if config is None:
         config = EnrichmentConfig(
             enabled=settings.chunk_enrichment_enabled,
             max_tokens=settings.chunk_enrichment_max_tokens,
-            context_chunks=settings.chunk_enrichment_context_chunks,
+            context_chunks=context_window,
+            include_headers=include_headers,
             model=settings.chunk_enrichment_model,
         )
     
     if not config.enabled:
         return None
     
-    if not settings.openai_api_key:
-        logger.warning("Chunk Enrichment 已启用但 OPENAI_API_KEY 未配置")
+    # 检查是否有可用的 LLM 配置（环境变量）
+    llm_env_config = settings.get_llm_config()
+    provider = llm_env_config.get("provider")
+    if provider == "ollama":
+        # Ollama 不需要 API key
+        pass
+    elif not llm_env_config.get("api_key"):
+        logger.warning(f"Chunk Enrichment 已启用但 {provider.upper()}_API_KEY 未配置")
         return None
     
     return ChunkEnricher.from_config(config)

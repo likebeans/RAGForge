@@ -567,16 +567,16 @@ export default function KnowledgeBaseDetailPage() {
               {/* 分段设置（只读） */}
               <div className="grid grid-cols-[120px_1fr] items-start gap-4">
                 <Label className="text-right text-muted-foreground pt-2">分段设置</Label>
-                {kb?.config?.chunking ? (
+                {kb?.config?.ingestion?.chunker ? (
                   <div className="max-w-md p-3 rounded-lg border bg-muted/30">
                     <div className="flex items-center gap-2 mb-2">
                       <Badge variant="secondary" className="text-xs">
-                        {kb.config.chunking.method || "未设置"}
+                        {kb.config.ingestion.chunker.name || "未设置"}
                       </Badge>
                     </div>
-                    {kb.config.chunking.params && Object.keys(kb.config.chunking.params).length > 0 && (
+                    {kb.config.ingestion.chunker.params && Object.keys(kb.config.ingestion.chunker.params).length > 0 && (
                       <div className="text-xs text-muted-foreground space-y-1">
-                        {Object.entries(kb.config.chunking.params).map(([key, value]) => (
+                        {Object.entries(kb.config.ingestion.chunker.params).map(([key, value]) => (
                           <div key={key} className="flex justify-between">
                             <span>{key}:</span>
                             <span className="font-mono">{String(value)}</span>
@@ -592,51 +592,56 @@ export default function KnowledgeBaseDetailPage() {
                 )}
               </div>
 
-              {/* 索引增强设置（只读） */}
+              {/* 索引方法设置（只读） */}
               <div className="grid grid-cols-[120px_1fr] items-start gap-4">
-                <Label className="text-right text-muted-foreground pt-2">索引增强</Label>
-                {(kb?.config?.indexer || kb?.config?.enricher) ? (
-                  <div className="max-w-md space-y-2">
-                    {kb.config?.indexer && (
-                      <div className="p-3 rounded-lg border bg-muted/30">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xs text-muted-foreground">索引器:</span>
-                          <Badge variant="secondary" className="text-xs">
-                            {kb.config.indexer.method || "默认"}
-                          </Badge>
-                        </div>
-                        {kb.config.indexer.params && Object.keys(kb.config.indexer.params).length > 0 && (
-                          <div className="text-xs text-muted-foreground space-y-1">
-                            {Object.entries(kb.config.indexer.params).map(([key, value]) => (
-                              <div key={key} className="flex justify-between">
-                                <span>{key}:</span>
-                                <span className="font-mono">{String(value)}</span>
-                              </div>
-                            ))}
+                <Label className="text-right text-muted-foreground pt-2">索引方法</Label>
+                {kb?.config?.ingestion?.indexer ? (
+                  <div className="max-w-md p-3 rounded-lg border bg-muted/30">
+                    <div className="font-medium text-sm mb-1">{kb.config.ingestion.indexer.name}</div>
+                    {kb.config.ingestion.indexer.params && Object.keys(kb.config.ingestion.indexer.params).length > 0 && (
+                      <div className="text-xs text-muted-foreground space-y-1">
+                        {Object.entries(kb.config.ingestion.indexer.params).map(([key, value]) => (
+                          <div key={key} className="flex justify-between">
+                            <span>{key}:</span>
+                            <span className="font-mono">{String(value)}</span>
                           </div>
-                        )}
+                        ))}
                       </div>
                     )}
-                    {kb.config?.enricher && (
-                      <div className="p-3 rounded-lg border bg-muted/30">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xs text-muted-foreground">增强器:</span>
-                          <Badge variant="secondary" className="text-xs">
-                            {kb.config.enricher.method || "无"}
-                          </Badge>
-                        </div>
-                        {kb.config.enricher.params && Object.keys(kb.config.enricher.params).length > 0 && (
-                          <div className="text-xs text-muted-foreground space-y-1">
-                            {Object.entries(kb.config.enricher.params).map(([key, value]) => (
-                              <div key={key} className="flex justify-between">
-                                <span>{key}:</span>
-                                <span className="font-mono">{String(value)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                  </div>
+                ) : (
+                  <div className="max-w-md text-sm text-muted-foreground">
+                    standard（默认）
+                  </div>
+                )}
+              </div>
+
+              {/* 文档增强设置（只读） */}
+              <div className="grid grid-cols-[120px_1fr] items-start gap-4">
+                <Label className="text-right text-muted-foreground pt-2">文档增强</Label>
+                {kb?.config?.ingestion?.enricher ? (
+                  <div className="max-w-md p-3 rounded-lg border bg-muted/30">
+                    <div className="font-medium text-sm mb-1">{kb.config.ingestion.enricher.name}</div>
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      <div className="flex justify-between">
+                        <span>文档摘要:</span>
+                        <span className="font-mono">{kb.config.ingestion.enricher.generate_summary ? "已开启" : "未开启"}</span>
                       </div>
-                    )}
+                      <div className="flex justify-between">
+                        <span>分块增强:</span>
+                        <span className="font-mono">{kb.config.ingestion.enricher.enrich_chunks ? "已开启" : "未开启"}</span>
+                      </div>
+                      {kb.config.ingestion.enricher.params && Object.keys(kb.config.ingestion.enricher.params).length > 0 && (
+                        <>
+                          {Object.entries(kb.config.ingestion.enricher.params).map(([key, value]) => (
+                            <div key={key} className="flex justify-between">
+                              <span>{key}:</span>
+                              <span className="font-mono">{String(value)}</span>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <div className="max-w-md text-sm text-muted-foreground">

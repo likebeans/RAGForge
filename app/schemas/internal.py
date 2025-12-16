@@ -13,7 +13,7 @@
 
 from pydantic import BaseModel, Field
 
-from app.schemas.config import LLMConfig, RerankConfig, RetrieverConfig
+from app.schemas.config import EmbeddingOverrideConfig, LLMConfig, RerankConfig, RetrieverConfig
 from app.pipeline.postprocessors.context_window import ContextWindowConfig
 
 
@@ -89,6 +89,10 @@ class RetrieveParams(BaseModel):
         default=None,
         description="临时覆盖 Rerank 配置（provider/model/api_key/base_url）"
     )
+    embedding_override: EmbeddingOverrideConfig | None = Field(
+        default=None,
+        description="临时覆盖 Embedding 配置（provider/model/api_key/base_url），优先级：请求 > 知识库 > 环境变量"
+    )
     
     def to_retriever_override_dict(self) -> dict | None:
         """转换 retriever_override 为 dict 格式"""
@@ -156,6 +160,10 @@ class RAGParams(BaseModel):
         default=None,
         description="临时覆盖默认 LLM 配置"
     )
+    embedding_override: EmbeddingOverrideConfig | None = Field(
+        default=None,
+        description="临时覆盖 Embedding 配置（仅 api_key/base_url 用于检索认证）"
+    )
     
     # 控制选项
     include_sources: bool = Field(
@@ -206,6 +214,18 @@ class IngestionParams(BaseModel):
     enrich_chunks: bool = Field(
         default=False,
         description="是否增强 chunks（添加上下文信息，调用 LLM）"
+    )
+    llm_config: dict | None = Field(
+        default=None,
+        description="LLM 配置（用于文档增强），优先级高于环境变量。包含 provider/model/api_key/base_url"
+    )
+    enricher_config: dict | None = Field(
+        default=None,
+        description="增强器配置，包含 name 和 params（如 context_window, include_headers）"
+    )
+    indexer_config: dict | None = Field(
+        default=None,
+        description="索引器配置，包含 name 和 params（如 max_depth, max_clusters, retrieval_mode）"
     )
     # ACL 相关字段
     sensitivity_level: str = Field(

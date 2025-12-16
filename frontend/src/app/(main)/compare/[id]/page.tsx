@@ -637,6 +637,35 @@ export default function GroundDetailPage() {
     }
   }, [pipelines, groundId, pipelinesLoaded, pipelinesStorageKey]);
   
+  // 实时同步 UI 状态到当前 Pipeline（当用户修改配置时自动保存）
+  useEffect(() => {
+    if (!pipelinesLoaded) return;
+    setPipelines(prev => prev.map((p, i) => 
+      i === currentPipelineIndex ? {
+        ...p,
+        chunker: selectedChunker,
+        chunkerParams: chunkerParams,
+        indexer: selectedIndexer,
+        indexerParams: indexerParams,
+        enricher: selectedEnricher,
+        enricherParams: enricherParams,
+        retriever: selectedRetriever,
+        retrieverParams: retrieverParams,
+        topK: topK,
+        embedProvider: embedProvider,
+        embedModel: embedModel,
+      } : p
+    ));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedChunker, chunkerParams,
+    selectedIndexer, indexerParams,
+    selectedEnricher, enricherParams,
+    selectedRetriever, retrieverParams,
+    topK, embedProvider, embedModel,
+    currentPipelineIndex, pipelinesLoaded
+  ]);
+  
   // 获取当前 Pipeline
   const currentPipeline = pipelines[currentPipelineIndex];
   
@@ -1580,22 +1609,55 @@ export default function GroundDetailPage() {
       toast.error("请输入知识库名称");
       return;
     }
-    if (!embedProvider || !embedModel) {
+    
+    // 使用当前 Pipeline 的配置（而不是全局 UI 状态）
+    const pipelineConfig = currentPipeline;
+    const pipelineEmbedProvider = pipelineConfig.embedProvider;
+    const pipelineEmbedModel = pipelineConfig.embedModel;
+    
+    if (!pipelineEmbedProvider || !pipelineEmbedModel) {
       toast.error("请选择 Embedding 模型");
       return;
     }
 
     setIsIngesting(true);
     try {
-      // 构建 chunker 配置
+      // 使用当前 Pipeline 的 chunker 配置
       const chunkerConfig = {
-        name: selectedChunker,
-        params: chunkerParams,
+        name: pipelineConfig.chunker,
+        params: pipelineConfig.chunkerParams,
       };
       
-      // 判断是否启用增强功能
-      const generateSummary = selectedEnricher === "summary" || selectedEnricher === "both";
-      const enrichChunks = selectedEnricher === "chunk_enricher" || selectedEnricher === "both";
+      // 使用当前 Pipeline 的 indexer 配置
+      const indexerConfig = {
+        name: pipelineConfig.indexer,
+        params: pipelineConfig.indexerParams,
+      };
+      
+      // 使用当前 Pipeline 的 enricher 配置
+      const enricherConfig = {
+        name: pipelineConfig.enricher,
+        params: pipelineConfig.enricherParams,
+      };
+      
+      // 判断是否启用增强功能（使用当前 Pipeline 的配置）
+      // 前端增强器名称: document_summary, chunk_context
+      const pipelineEnricher = pipelineConfig.enricher;
+      const generateSummary = pipelineEnricher === "document_summary";
+      const enrichChunks = pipelineEnricher === "chunk_context";
+      
+      // 获取 Embedding 提供商的 API key 和 base_url
+      const embeddingProviderConfig = providerConfigs[pipelineEmbedProvider];
+      const embeddingApiKey = embeddingProviderConfig?.apiKey;
+      const embeddingBaseUrl = embeddingProviderConfig?.baseUrl;
+      
+      // 获取 LLM 配置（用于文档增强）- 仅在启用增强时传递
+      const needsLLM = generateSummary || enrichChunks;
+      const llmProvider = needsLLM && defaultModels.llm?.provider ? defaultModels.llm.provider : undefined;
+      const llmModel = needsLLM && defaultModels.llm?.model ? defaultModels.llm.model : undefined;
+      const llmProviderConfig = llmProvider ? providerConfigs[llmProvider] : undefined;
+      const llmApiKey = llmProviderConfig?.apiKey;
+      const llmBaseUrl = llmProviderConfig?.baseUrl;
       
       // 调用 Ground 入库 API
       const result = await client.ingestGround(
@@ -1604,10 +1666,18 @@ export default function GroundDetailPage() {
         {
           targetKbDescription: newKbDesc.trim() || undefined,
           chunker: chunkerConfig,
+          indexer: indexerConfig,
+          enricher: enricherConfig,
           generateSummary,
           enrichChunks,
-          embeddingProvider: embedProvider,
-          embeddingModel: embedModel,
+          embeddingProvider: pipelineEmbedProvider,
+          embeddingModel: pipelineEmbedModel,
+          embeddingApiKey,
+          embeddingBaseUrl,
+          llmProvider,
+          llmModel,
+          llmApiKey,
+          llmBaseUrl,
         }
       );
       
@@ -1635,12 +1705,12 @@ export default function GroundDetailPage() {
       setIngestedKbName(result.knowledge_base_name);
       // 保存入库时的配置快照（用于检测配置变更）
       setIngestedConfig({
-        chunker: selectedChunker,
-        chunkerParams,
-        indexer: selectedIndexer,
-        indexerParams,
-        enricher: selectedEnricher,
-        enricherParams,
+        chunker: pipelineConfig.chunker,
+        chunkerParams: pipelineConfig.chunkerParams,
+        indexer: pipelineConfig.indexer,
+        indexerParams: pipelineConfig.indexerParams,
+        enricher: pipelineConfig.enricher,
+        enricherParams: pipelineConfig.enricherParams,
       });
       setIngestDialogOpen(false);
     } catch (error) {

@@ -89,6 +89,11 @@ class ChunkHit(BaseModel):
     generated_queries: list[str] | None = None
     queries_count: int | None = None
     retrieval_details: list[dict] | None = None  # 每个查询的完整检索结果
+    # self_query 相关可选字段
+    semantic_query: str | None = None  # LLM 提取的语义查询
+    parsed_filters: dict | None = None  # LLM 解析的元数据过滤条件
+    # ensemble 相关可选字段
+    ensemble_details: list[dict] | None = None  # 各子检索器的可视化信息汇总
 
 
 class RetrieveResponse(BaseModel):

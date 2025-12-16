@@ -8,6 +8,9 @@ LlamaIndex BM25 检索器
 因此直接使用 rank_bm25 库实现中文分词支持。
 """
 
+import logging
+import math
+
 import jieba
 from rank_bm25 import BM25Okapi
 
@@ -15,10 +18,14 @@ from app.infra.bm25_cache import get_bm25_cache
 from app.pipeline.base import BaseRetrieverOperator
 from app.pipeline.registry import register_operator
 
+logger = logging.getLogger(__name__)
+
 
 def _tokenize(text: str) -> list[str]:
-    """中文分词：使用 jieba 搜索引擎模式"""
-    return list(jieba.cut_for_search(text.lower()))
+    """中文分词：使用 jieba 搜索引擎模式，过滤空白和单字符"""
+    tokens = list(jieba.cut_for_search(text.lower()))
+    # 过滤空白字符和纯标点
+    return [t.strip() for t in tokens if t.strip() and len(t.strip()) > 0]
 
 
 @register_operator("retriever", "llama_bm25")
@@ -63,6 +70,7 @@ class LlamaBM25Retriever(BaseRetrieverOperator):
             await cache.set(tenant_id, kb_ids, chunks, ttl=self.cache_ttl)
         
         if not chunks:
+            logger.warning(f"[BM25] No chunks found for tenant={tenant_id}, kb_ids={kb_ids}")
             return []
         
         # 使用 jieba 分词构建 BM25 索引
@@ -73,6 +81,11 @@ class LlamaBM25Retriever(BaseRetrieverOperator):
         query_tokens = _tokenize(query)
         scores = bm25.get_scores(query_tokens)
         
+        # 调试日志（仅在 DEBUG 级别输出详细信息）
+        max_score = max(scores) if len(scores) > 0 else 0
+        non_zero = sum(1 for s in scores if s > 0)
+        logger.debug(f"[BM25] query_tokens={query_tokens[:10]}, corpus_size={len(corpus)}, max_score={max_score:.2f}, non_zero={non_zero}")
+        
         # 按分数排序，取 top_k
         effective_top_k = top_k or self.default_top_k
         scored_chunks = sorted(
@@ -81,19 +94,17 @@ class LlamaBM25Retriever(BaseRetrieverOperator):
             reverse=True
         )[:effective_top_k]
         
-        # Min-Max 归一化到 0-1 范围
-        if scored_chunks:
-            raw_scores = [s for s, _ in scored_chunks]
-            min_score = min(raw_scores)
-            max_score = max(raw_scores)
-            score_range = max_score - min_score
-            
-            def normalize(s: float) -> float:
-                if score_range == 0:
-                    return 1.0 if max_score > 0 else 0.0
-                return (s - min_score) / score_range
-        else:
-            normalize = lambda s: s
+        # Sigmoid 归一化：基于绝对分数，避免低相关性结果得高分
+        # BM25 分数通常在 0-10 范围，使用 sigmoid(score - threshold) 映射到 0-1
+        # threshold=2.0 表示分数为 2 时归一化为 0.5
+        def normalize(s: float, threshold: float = 2.0, scale: float = 1.0) -> float:
+            """
+            Sigmoid 归一化：score=threshold 时输出 0.5
+            - score >> threshold: 接近 1.0
+            - score << threshold: 接近 0.0
+            - score = 0: 输出约 0.12
+            """
+            return 1 / (1 + math.exp(-scale * (s - threshold)))
         
         results = []
         for score, chunk in scored_chunks:

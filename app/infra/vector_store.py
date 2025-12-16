@@ -37,6 +37,57 @@ logger = logging.getLogger(__name__)
 # 隔离策略类型
 IsolationStrategy = Literal["partition", "collection", "auto"]
 
+# 常见 Embedding 模型维度映射
+EMBEDDING_DIM_MAP: dict[str, int] = {
+    # OpenAI
+    "text-embedding-3-small": 1536,
+    "text-embedding-3-large": 3072,
+    "text-embedding-ada-002": 1536,
+    # BGE 系列
+    "bge-m3": 1024,
+    "bge-large-zh": 1024,
+    "bge-large-zh-v1.5": 1024,
+    "bge-base-zh": 768,
+    "bge-small-zh": 512,
+    # Qwen 系列 (通过 SiliconFlow)
+    "Qwen/Qwen3-Embedding-8B": 4096,
+    "Qwen/Qwen3-Embedding-4B": 2560,
+    "Qwen/Qwen3-Embedding-0.6B": 1024,
+    "text-embedding-v3": 1024,
+    # Gemini
+    "text-embedding-004": 768,
+    "embedding-001": 768,
+    # 智谱
+    "embedding-2": 1024,
+    "embedding-3": 2048,
+    # DeepSeek
+    "deepseek-embedding": 1024,
+    # SiliconFlow 其他模型
+    "BAAI/bge-m3": 1024,
+    "BAAI/bge-large-zh-v1.5": 1024,
+    "netease-youdao/bce-embedding-base_v1": 768,
+    "Pro/BAAI/bge-m3": 1024,
+}
+
+
+def get_embedding_dim(model: str | None, default: int = 1024) -> int:
+    """根据模型名称获取向量维度"""
+    if not model:
+        return default
+    # 直接匹配
+    if model in EMBEDDING_DIM_MAP:
+        return EMBEDDING_DIM_MAP[model]
+    # 尝试不区分大小写匹配
+    model_lower = model.lower()
+    for key, dim in EMBEDDING_DIM_MAP.items():
+        if key.lower() == model_lower:
+            return dim
+    # 尝试部分匹配（模型名可能带前缀）
+    for key, dim in EMBEDDING_DIM_MAP.items():
+        if key.lower() in model_lower or model_lower in key.lower():
+            return dim
+    return default
+
 
 @dataclass
 class VectorRecord:
@@ -118,6 +169,7 @@ class AsyncQdrantVectorStore:
         self,
         tenant_id: str,
         strategy: IsolationStrategy = "auto",
+        embedding_dim: int | None = None,
     ) -> tuple[str, str]:
         """
         确保 Collection 存在（带缓存）
@@ -125,14 +177,20 @@ class AsyncQdrantVectorStore:
         Args:
             tenant_id: 租户 ID
             strategy: 隔离策略
+            embedding_dim: 向量维度（可选，不提供则使用默认值）
         
         Returns:
             (collection_name, effective_strategy)
         """
         effective = self._get_effective_strategy(tenant_id, strategy)
+        dim = embedding_dim or self.dim
         
         if effective == "partition":
-            name = self.shared_collection
+            # Partition 模式：按维度区分 collection，避免不同维度冲突
+            if dim != self.dim:
+                name = f"{self.shared_collection}_{dim}"
+            else:
+                name = self.shared_collection
         else:
             name = self._collection_name_for_tenant(tenant_id)
         
@@ -151,12 +209,12 @@ class AsyncQdrantVectorStore:
             await self.client.create_collection(
                 collection_name=name,
                 vectors_config=models.VectorParams(
-                    size=self.dim,
+                    size=dim,
                     distance=models.Distance.COSINE,
                 ),
             )
             self._collection_cache.add(name)
-            logger.info(f"创建 Collection: {name} (策略: {effective})")
+            logger.info(f"创建 Collection: {name} (策略: {effective}, 维度: {dim})")
         except Exception as e:
             # 可能被并发请求创建
             logger.debug(f"Collection 可能已存在: {e}")
@@ -236,14 +294,22 @@ class AsyncQdrantVectorStore:
         if not chunks:
             return
         
-        collection, effective = await self._ensure_collection(tenant_id, strategy)
-        
         # 批量获取 Embedding（优先使用传入的配置）
         texts = [c["text"] for c in chunks]
         if embedding_config:
             vectors = await get_embeddings_with_config(texts, embedding_config)
         else:
             vectors = await get_embeddings(texts)
+        
+        # 根据 embedding 模型确定维度，确保 collection 使用正确的维度
+        embedding_dim = None
+        if embedding_config and embedding_config.get("model"):
+            embedding_dim = get_embedding_dim(embedding_config["model"])
+        elif vectors:
+            # 从实际 embedding 结果推断维度
+            embedding_dim = len(vectors[0])
+        
+        collection, effective = await self._ensure_collection(tenant_id, strategy, embedding_dim)
         
         # 构建 points（Partition 模式需要添加 tenant_id）
         points = []
@@ -296,14 +362,21 @@ class AsyncQdrantVectorStore:
         Returns:
             list[tuple[score, VectorRecord]]
         """
-        collection, effective = await self._ensure_collection(tenant_id, strategy)
-        
         # 优先使用传入的 embedding 配置，否则使用默认配置
         if embedding_config:
             vector = await get_embeddings_with_config([query], embedding_config)
             vector = vector[0]
         else:
             vector = await get_embedding(query)
+        
+        # 根据 embedding 模型确定维度，确保使用正确的 collection
+        embedding_dim = None
+        if embedding_config and embedding_config.get("model"):
+            embedding_dim = get_embedding_dim(embedding_config["model"])
+        else:
+            embedding_dim = len(vector)
+        
+        collection, effective = await self._ensure_collection(tenant_id, strategy, embedding_dim)
         
         kb_list = list(kb_ids)
         

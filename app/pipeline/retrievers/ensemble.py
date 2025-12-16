@@ -167,7 +167,72 @@ class EnsembleRetriever(BaseRetrieverOperator):
             hit["source"] = "ensemble"
             hit["ensemble_mode"] = self.mode
         
+        # 汇总子检索器的可视化字段到第一个结果
+        if fused:
+            viz_data = self._collect_visualization_data(results_list)
+            if viz_data:
+                fused[0].update(viz_data)
+        
         return fused[:top_k]
+    
+    def _collect_visualization_data(self, results_list: list[list[dict]]) -> dict:
+        """
+        从子检索器结果中收集可视化字段
+        
+        支持的字段:
+        - hyde_queries: HyDE 生成的假设文档
+        - generated_queries: MultiQuery 生成的查询变体
+        - semantic_query / parsed_filters: SelfQuery 解析结果
+        - retrieval_details: 各子检索器的详细检索信息
+        """
+        viz_fields = [
+            "hyde_queries", "generated_queries", 
+            "semantic_query", "parsed_filters",
+            "retrieval_details"
+        ]
+        
+        collected: dict = {}
+        sub_retriever_details: list[dict] = []
+        
+        for i, results in enumerate(results_list):
+            if not results:
+                continue
+            
+            first_hit = results[0]
+            retriever_name = self.retriever_configs[i].get("name", f"retriever_{i}")
+            
+            # 收集可视化字段
+            for field in viz_fields:
+                if field in first_hit and first_hit[field]:
+                    # 如果字段已存在，合并（针对列表类型）
+                    if field in collected and isinstance(collected[field], list):
+                        collected[field].extend(first_hit[field])
+                    else:
+                        # 使用带前缀的 key 避免覆盖
+                        if field in collected:
+                            collected[f"{retriever_name}_{field}"] = first_hit[field]
+                        else:
+                            collected[field] = first_hit[field]
+            
+            # 记录子检索器来源信息
+            sub_detail = {
+                "retriever": retriever_name,
+                "hits_count": len(results),
+            }
+            if "hyde_queries" in first_hit:
+                sub_detail["hyde_queries"] = first_hit["hyde_queries"]
+            if "generated_queries" in first_hit:
+                sub_detail["generated_queries"] = first_hit["generated_queries"]
+            if "semantic_query" in first_hit:
+                sub_detail["semantic_query"] = first_hit["semantic_query"]
+                sub_detail["parsed_filters"] = first_hit.get("parsed_filters")
+            
+            sub_retriever_details.append(sub_detail)
+        
+        if sub_retriever_details:
+            collected["ensemble_details"] = sub_retriever_details
+        
+        return collected
     
     def _rrf_fuse(self, results_list: list[list[dict]]) -> list[dict]:
         """RRF 融合"""

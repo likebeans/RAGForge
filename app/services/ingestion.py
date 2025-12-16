@@ -187,7 +187,11 @@ async def ingest_document(
     
     # Chunk Enrichment（可选，默认关闭）
     if params.enrich_chunks:
-        await _enrich_chunks(chunks, doc)
+        await _enrich_chunks(
+            chunks, doc,
+            llm_config=params.llm_config,
+            enricher_config=params.enricher_config,
+        )
 
     store_cfg = _get_store_config(kb)
     skip_qdrant = store_cfg.get("skip_qdrant", False)
@@ -475,14 +479,25 @@ async def _generate_document_summary(doc: Document, content: str) -> None:
         logger.warning(f"文档 {doc.id} 摘要生成失败: {e}")
 
 
-async def _enrich_chunks(chunks: list[Chunk], doc: Document) -> None:
+async def _enrich_chunks(
+    chunks: list[Chunk],
+    doc: Document,
+    llm_config: dict | None = None,
+    enricher_config: dict | None = None,
+) -> None:
     """
     批量增强 chunks（异步）
     
     遍历 chunks，调用 ChunkEnricher 生成增强文本，
     更新 chunk.enriched_text 和 chunk.enrichment_status
+    
+    Args:
+        chunks: 要增强的 chunk 列表
+        doc: 文档对象
+        llm_config: 前端传入的 LLM 配置（优先级高于环境变量）
+        enricher_config: 前端传入的增强器配置（包含 name 和 params）
     """
-    enricher = get_chunk_enricher()
+    enricher = get_chunk_enricher(llm_config=llm_config, enricher_config=enricher_config)
     if enricher is None:
         logger.info("Chunk Enrichment 未启用或未配置")
         for chunk in chunks:

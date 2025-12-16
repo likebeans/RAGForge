@@ -36,6 +36,7 @@ import {
   PlaygroundRunRequest,
   PlaygroundRunResponse,
   KnowledgeBase,
+  KnowledgeBaseConfig,
   GroundInfo,
 } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
@@ -61,13 +62,15 @@ import {
   Settings2,
   ChevronRight,
   Sparkles,
+  Filter,
+  AlertTriangle,
 } from "lucide-react";
 
 // 检索器参数配置类型
 type ParamConfig = {
   key: string;
   label: string;
-  type: 'number' | 'boolean' | 'select' | 'slider';
+  type: 'number' | 'boolean' | 'select' | 'slider' | 'text';
   default: number | boolean | string;
   min?: number;
   max?: number;
@@ -80,6 +83,11 @@ type RetrieverConfig = {
   label: string;
   description: string;
   params: ParamConfig[];
+  requires?: {
+    chunker?: string[];  // 需要的分段器类型
+    indexer?: string[];  // 需要的索引器类型
+  };
+  warning?: string;  // 不兼容时的警告信息
 };
 
 // 检索器 UI 配置（参考 rag优化.md 文档）
@@ -130,10 +138,11 @@ const RETRIEVER_UI_CONFIG: Record<string, RetrieverConfig> = {
     label: "父文档检索",
     description: "子块检索返回父块上下文",
     params: [
-      { key: 'base_retriever', label: '底层检索器', type: 'select', default: 'dense', options: ['dense', 'hybrid'] },
       { key: 'return_parent', label: '返回父块', type: 'boolean', default: true },
       { key: 'include_child', label: '包含子块信息', type: 'boolean', default: false }
-    ]
+    ],
+    requires: { chunker: ['parent_child'] },
+    warning: '需要 parent_child 分段，当前知识库未使用父子分块'
   },
   llama_dense: {
     label: "LlamaIndex向量检索",
@@ -154,7 +163,63 @@ const RETRIEVER_UI_CONFIG: Record<string, RetrieverConfig> = {
       { key: 'dense_weight', label: '向量权重', type: 'slider', default: 0.7, min: 0, max: 1, step: 0.1 },
       { key: 'bm25_weight', label: 'BM25权重', type: 'slider', default: 0.3, min: 0, max: 1, step: 0.1 }
     ]
+  },
+  ensemble: {
+    label: "集成检索",
+    description: "任意组合多个检索器，RRF/加权融合",
+    params: [
+      { key: 'preset', label: '预设组合', type: 'select', default: 'custom', 
+        options: ['hybrid_hyde', 'dense_multi_query', 'hybrid_multi_query', 'custom'] },
+      { key: 'retrievers', label: '自定义检索器（逗号分隔）', type: 'text', default: 'dense,llama_bm25',
+        showWhen: { preset: 'custom' } },
+      { key: 'mode', label: '融合模式', type: 'select', default: 'rrf', options: ['rrf', 'weighted'] },
+      { key: 'rrf_k', label: 'RRF常数', type: 'number', default: 60, min: 1, max: 100 }
+    ]
+  },
+  self_query: {
+    label: "自查询检索",
+    description: "LLM解析查询中的元数据过滤条件",
+    params: [
+      { key: 'base_retriever', label: '底层检索器', type: 'select', default: 'dense', options: ['dense', 'hybrid'] }
+    ]
+  },
+  raptor: {
+    label: "RAPTOR检索",
+    description: "多层次递归聚类+摘要树索引",
+    params: [
+      { key: 'mode', label: '检索模式', type: 'select', default: 'collapsed', options: ['collapsed', 'tree'] }
+    ],
+    requires: { indexer: ['raptor'] },
+    warning: '需要 RAPTOR 索引，当前知识库未配置 RAPTOR 索引器，将回退为普通向量检索'
   }
+};
+
+// 检查检索器与知识库配置的兼容性
+const checkRetrieverCompatibility = (
+  retriever: string,
+  kbConfig: KnowledgeBaseConfig | undefined
+): { compatible: boolean; warning?: string } => {
+  const config = RETRIEVER_UI_CONFIG[retriever];
+  if (!config?.requires) return { compatible: true };
+
+  const chunkerName = kbConfig?.ingestion?.chunker?.name;
+  const indexerName = kbConfig?.ingestion?.indexer?.name;
+
+  // 检查 chunker 要求
+  if (config.requires.chunker) {
+    if (!chunkerName || !config.requires.chunker.includes(chunkerName)) {
+      return { compatible: false, warning: config.warning };
+    }
+  }
+
+  // 检查 indexer 要求（RAPTOR 需要专门的索引器）
+  if (config.requires.indexer) {
+    if (!indexerName || !config.requires.indexer.includes(indexerName)) {
+      return { compatible: false, warning: config.warning };
+    }
+  }
+
+  return { compatible: true };
 };
 
 // 获取检索器默认参数（从 UI 配置中提取）
@@ -182,6 +247,7 @@ type CompareSlot = {
   results: PlaygroundRunResponse["retrieval"]["results"] | null;
   hydeQueries: string[] | null; // HyDE 假设答案
   generatedQueries: string[] | null; // MultiQuery 生成的查询变体
+  selfQueryParsed: { semanticQuery: string; filters: Record<string, string> } | null; // Self-Query 解析结果
   isLoading: boolean;
   error: string | null;
 };
@@ -204,8 +270,8 @@ function RetrievalCompareContent() {
   // 检索对比状态
   const [compareQuery, setCompareQuery] = useState("");
   const [compareSlots, setCompareSlots] = useState<CompareSlot[]>([
-    { id: "slot-1", kbId: null, kbName: "", retriever: "hybrid", retrieverParams: getDefaultRetrieverParams("hybrid"), topK: 5, rerankModel: null, results: null, hydeQueries: null, generatedQueries: null, isLoading: false, error: null },
-    { id: "slot-2", kbId: null, kbName: "", retriever: "dense", retrieverParams: getDefaultRetrieverParams("dense"), topK: 5, rerankModel: null, results: null, hydeQueries: null, generatedQueries: null, isLoading: false, error: null },
+    { id: "slot-1", kbId: null, kbName: "", retriever: "hybrid", retrieverParams: getDefaultRetrieverParams("hybrid"), topK: 5, rerankModel: null, results: null, hydeQueries: null, generatedQueries: null, selfQueryParsed: null, isLoading: false, error: null },
+    { id: "slot-2", kbId: null, kbName: "", retriever: "dense", retrieverParams: getDefaultRetrieverParams("dense"), topK: 5, rerankModel: null, results: null, hydeQueries: null, generatedQueries: null, selfQueryParsed: null, isLoading: false, error: null },
   ]);
   const [compareKbSelectorOpen, setCompareKbSelectorOpen] = useState(false);
   const [compareKbSelectorSlotIndex, setCompareKbSelectorSlotIndex] = useState<number>(0);
@@ -290,6 +356,7 @@ function RetrievalCompareContent() {
             results: null,
             hydeQueries: null,
             generatedQueries: null,
+            selfQueryParsed: null,
             isLoading: false,
             error: null,
           }));
@@ -367,6 +434,7 @@ function RetrievalCompareContent() {
       results: null,
       hydeQueries: null,
       generatedQueries: null,
+      selfQueryParsed: null,
       isLoading: false,
       error: null,
     }));
@@ -444,6 +512,7 @@ function RetrievalCompareContent() {
       results: null,
       hydeQueries: null,
       generatedQueries: null,
+      selfQueryParsed: null,
       isLoading: false,
       error: null,
     }]);
@@ -516,18 +585,35 @@ function RetrievalCompareContent() {
                 base_url: providerConfigs[defaultModels.llm.provider]?.baseUrl,
               }
             : undefined,
-        // 注意：embedding_override 在检索时不传递，因为必须使用知识库入库时的 Embedding 模型
+        // 传递 embedding_override 仅提供 api_key/base_url
+        // 注意：后端检索时会忽略 provider/model（必须与入库时一致），只使用 api_key 进行认证
+        embedding_override:
+          defaultModels.embedding && defaultModels.embedding.provider
+            ? {
+                provider: defaultModels.embedding.provider,  // 后端会忽略，仅用于前端查找 api_key
+                model: defaultModels.embedding.model || "",  // 后端会忽略
+                api_key: providerConfigs[defaultModels.embedding.provider]?.apiKey,
+                base_url: providerConfigs[defaultModels.embedding.provider]?.baseUrl,
+              }
+            : undefined,
       };
 
       const response = await client.runPlayground(payload);
-      // 提取 HyDE 假设答案或 MultiQuery 生成的查询变体
-      const firstResult = response.retrieval.results?.[0];
-      const hydeQueries = (firstResult as unknown as Record<string, unknown>)?.hyde_queries as string[] | undefined;
-      const generatedQueries = (firstResult as unknown as Record<string, unknown>)?.generated_queries as string[] | undefined;
+      // 提取 HyDE 假设答案、MultiQuery 查询变体、Self-Query 解析结果
+      const firstResult = response.retrieval.results?.[0] as unknown as Record<string, unknown> | undefined;
+      const hydeQueries = firstResult?.hyde_queries as string[] | undefined;
+      const generatedQueries = firstResult?.generated_queries as string[] | undefined;
+      // Self-Query 解析结果
+      const semanticQuery = firstResult?.semantic_query as string | undefined;
+      const parsedFilters = firstResult?.parsed_filters as Record<string, string> | undefined;
+      const selfQueryParsed = semanticQuery || (parsedFilters && Object.keys(parsedFilters).length > 0)
+        ? { semanticQuery: semanticQuery || "", filters: parsedFilters || {} }
+        : null;
       updateCompareSlot(index, {
         results: response.retrieval.results,
         hydeQueries: hydeQueries || null,
         generatedQueries: generatedQueries || null,
+        selfQueryParsed,
         isLoading: false,
       });
     } catch (error) {
@@ -817,13 +903,30 @@ function RetrievalCompareContent() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {retrieverOptions.map((r) => (
-                            <SelectItem key={r.name} value={r.name}>
-                              {RETRIEVER_UI_CONFIG[r.name]?.label || r.name}
-                            </SelectItem>
-                          ))}
+                          {retrieverOptions.map((r) => {
+                            const kb = knowledgeBases.find(k => k.id === slot.kbId);
+                            const compat = checkRetrieverCompatibility(r.name, kb?.config);
+                            return (
+                              <SelectItem key={r.name} value={r.name}>
+                                <span className={!compat.compatible ? "text-yellow-600" : ""}>
+                                  {RETRIEVER_UI_CONFIG[r.name]?.label || r.name}
+                                  {!compat.compatible && " ⚠️"}
+                                </span>
+                              </SelectItem>
+                            );
+                          })}
                         </SelectContent>
                       </Select>
+                      {(() => {
+                        const kb = knowledgeBases.find(k => k.id === slot.kbId);
+                        const compat = checkRetrieverCompatibility(slot.retriever, kb?.config);
+                        return !compat.compatible && compat.warning ? (
+                          <div className="text-xs text-yellow-600 flex items-start gap-1 mt-1">
+                            <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                            <span>{compat.warning}</span>
+                          </div>
+                        ) : null;
+                      })()}
                     </div>
                     <div className="space-y-1.5">
                       <div className="text-xs font-medium text-muted-foreground">Rerank (可选)</div>
@@ -846,7 +949,14 @@ function RetrievalCompareContent() {
                         <ChevronRight className="h-3 w-3 ml-auto transition-transform data-[state=open]:rotate-90" />
                       </CollapsibleTrigger>
                       <CollapsibleContent className="pt-3 space-y-3">
-                        {RETRIEVER_UI_CONFIG[slot.retriever].params.map((param) => (
+                        {RETRIEVER_UI_CONFIG[slot.retriever].params
+                          .filter((param) => {
+                            if (!param.showWhen) return true;
+                            return Object.entries(param.showWhen).every(
+                              ([key, value]) => slot.retrieverParams[key] === value
+                            );
+                          })
+                          .map((param) => (
                           <div key={param.key} className="space-y-1.5">
                             <div className="flex items-center justify-between">
                               <Label className="text-xs text-muted-foreground">{param.label}</Label>
@@ -906,6 +1016,17 @@ function RetrievalCompareContent() {
                                   ))}
                                 </SelectContent>
                               </Select>
+                            )}
+                            {param.type === 'text' && (
+                              <Input
+                                type="text"
+                                value={slot.retrieverParams[param.key] as string ?? param.default as string}
+                                onChange={(e) => updateCompareSlot(index, {
+                                  retrieverParams: { ...slot.retrieverParams, [param.key]: e.target.value }
+                                })}
+                                placeholder="例如: dense,llama_bm25,hyde"
+                                className="h-8 text-xs"
+                              />
                             )}
                           </div>
                         ))}
@@ -985,13 +1106,49 @@ function RetrievalCompareContent() {
                         </CollapsibleContent>
                       </Collapsible>
                     )}
+                    {/* Self-Query 解析结果显示 */}
+                    {slot.selfQueryParsed && (
+                      <Collapsible className="mb-3" defaultOpen>
+                        <CollapsibleTrigger className="flex items-center gap-2 text-xs text-primary hover:underline">
+                          <Filter className="h-3 w-3" />
+                          <span>LLM 查询解析结果</span>
+                          <ChevronRight className="h-3 w-3" />
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="mt-2 space-y-2">
+                          {slot.selfQueryParsed.semanticQuery && (
+                            <div className="p-2 rounded border bg-primary/5 text-xs">
+                              <div className="flex items-center gap-1 text-primary font-medium mb-1">
+                                <Badge variant="outline" className="text-[10px] h-4">语义查询</Badge>
+                              </div>
+                              <div className="text-muted-foreground">{slot.selfQueryParsed.semanticQuery}</div>
+                            </div>
+                          )}
+                          {Object.keys(slot.selfQueryParsed.filters).length > 0 && (
+                            <div className="p-2 rounded border bg-amber-500/10 text-xs">
+                              <div className="flex items-center gap-1 text-amber-600 font-medium mb-1">
+                                <Badge variant="outline" className="text-[10px] h-4 border-amber-500/50">元数据过滤</Badge>
+                              </div>
+                              <div className="space-y-1">
+                                {Object.entries(slot.selfQueryParsed.filters).map(([key, value]) => (
+                                  <div key={key} className="flex items-center gap-2 text-muted-foreground">
+                                    <span className="font-mono bg-muted px-1 rounded">{key}</span>
+                                    <span>=</span>
+                                    <span className="font-medium text-foreground">{value}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </CollapsibleContent>
+                      </Collapsible>
+                    )}
                     {slot.error ? (
                       <div className="text-xs text-destructive bg-destructive/10 rounded p-2">{slot.error}</div>
                     ) : slot.results ? (
                       <ScrollArea className="h-[300px]">
                         <div className="space-y-2 pr-2">
                           {slot.results.map((hit, idx) => {
-                            const filename = String(hit.metadata?.source || hit.metadata?.file_name || "未知文件");
+                            const filename = String(hit.metadata?.title || hit.metadata?.file_name || "未知文件");
                             return (
                               <div 
                                 key={idx} 

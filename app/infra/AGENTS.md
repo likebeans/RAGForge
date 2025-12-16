@@ -233,6 +233,8 @@ RERANK_MODEL=
 RERANK_TOP_K=10
 ```
 
+> 请求级覆盖：前端/接口传入 `rerank_override` 时，只需要指定 `provider` 和 `model`，`api_key`/`base_url` 未显式提供会自动回落到系统/环境配置（如 `SILICONFLOW_API_KEY`、`COHERE_API_KEY` 等），便于直接复用默认密钥。
+
 ### 向量存储
 
 ```bash

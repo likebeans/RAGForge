@@ -20,6 +20,8 @@
 | `fusion` | `FusionRetriever` | 融合检索（RRF/加权 + 可选 Rerank） |
 | `hyde` | `HyDERetriever` | HyDE 检索器（LLM 生成假设文档嵌入） |
 | `multi_query` | `MultiQueryRetriever` | 多查询扩展（LLM 生成查询变体，RRF 融合） |
+| `self_query` | `SelfQueryRetriever` | 自查询检索（LLM 解析元数据过滤条件） |
+| `parent_document` | `ParentDocumentRetriever` | 父文档检索（小块检索返回父块上下文） |
 
 ### LlamaIndex 实现
 | 名称 | 类 | 说明 |
@@ -89,6 +91,18 @@
 - `include_original`: 是否保留原始查询，默认 True
 - `rrf_k`: RRF 融合常数，默认 60
 - `base_retriever_params`: 传递给底层检索器的参数（包括 `embedding_config`）
+
+### SelfQueryRetriever
+- `base_retriever`: 底层检索器名称，默认 "dense"
+- `base_retriever_params`: 传递给底层检索器的参数
+- `llm_provider`: LLM 提供商，默认从配置读取
+- `llm_model`: LLM 模型名称，默认从配置读取
+
+### ParentDocumentRetriever
+- `base_retriever`: 底层检索器名称，默认 "dense"
+- `base_retriever_params`: 底层检索器参数
+- `return_parent`: 是否返回父块（True）还是子块（False），默认 True
+- `include_child`: 返回父块时是否同时包含匹配的子块信息，默认 False
 
 ## 使用示例
 
@@ -186,11 +200,50 @@ results = await retriever.retrieve(
 }
 ```
 
+### SelfQuery 检索器扩展字段
+
+```python
+{
+    "semantic_query": str,           # LLM 提取的语义查询（去除过滤条件）
+    "parsed_filters": dict,          # LLM 解析的元数据过滤条件
+}
+```
+
+**前端可视化**：检索对比页面会显示 Self-Query 的解析结果，包括语义查询和元数据过滤条件。
+
+### ParentDocument 检索器扩展字段
+
+```python
+{
+    "parent_id": str,                # 父块 ID
+    "matched_children": list[dict],  # 匹配的子块信息（当 include_child=True）
+    "parent_not_found": bool,        # 父块未找到时为 True（回退到子块）
+}
+```
+
 ## BM25 分数归一化
 
 BM25 原始分数是基于词频和文档长度计算的相关性分数，**没有固定上限**（可能是 3.0、5.0 甚至更高），而向量检索分数通常在 0-1 范围内。
 
-为了确保混合检索时权重能正确生效，`bm25` 和 `llama_bm25` 检索器会对分数进行 **Min-Max 归一化**：
+为了确保混合检索时权重能正确生效，检索器会对分数进行归一化：
+
+### llama_bm25：Sigmoid 归一化（推荐）
+
+```python
+def normalize(score: float, threshold: float = 2.0) -> float:
+    return 1 / (1 + math.exp(-(score - threshold)))
+```
+
+| 原始分数 | 归一化结果 | 说明 |
+|----------|-----------|------|
+| >> threshold | 接近 1.0 | 高相关性 |
+| = threshold | 0.5 | 中等相关性 |
+| << threshold | 接近 0.0 | 低相关性 |
+| 0 | ~0.12 | 无匹配 |
+
+**优点**：基于绝对分数归一化，避免不相关查询因相对排名而得高分。
+
+### bm25：Min-Max 归一化
 
 ```python
 normalized_score = (score - min_score) / (max_score - min_score)

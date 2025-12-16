@@ -425,10 +425,20 @@ class GroundIngestRequest(BaseModel):
     target_kb_description: str | None = None
     # 配置覆盖
     chunker: dict | None = None  # {"name": "recursive", "params": {...}}
+    indexer: dict | None = None  # {"name": "raptor", "params": {...}}
+    enricher: dict | None = None  # {"name": "summary", "params": {...}}
     generate_summary: bool = False
     enrich_chunks: bool = False
     embedding_provider: str | None = None
     embedding_model: str | None = None
+    # 可选：为 embedding 提供专用的 key/base_url（未提供时使用系统/环境配置）
+    embedding_api_key: str | None = None
+    embedding_base_url: str | None = None
+    # 可选：为文档增强（摘要/Chunk增强）提供 LLM 配置（未提供时使用系统/环境配置）
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    llm_api_key: str | None = None
+    llm_base_url: str | None = None
 
 
 class GroundIngestResult(BaseModel):
@@ -495,6 +505,17 @@ async def ingest_ground_to_kb(
             detail={"code": "NO_DOCUMENTS", "detail": "Ground 中没有文档"}
         )
     
+    # 在开始入库前把文档字段提取成普通字典，避免后续 commit 使 ORM 对象过期后再触发懒加载
+    ground_doc_payloads = [
+        {
+            "title": doc.title,
+            "raw_content": doc.raw_content,
+            "extra_metadata": doc.extra_metadata,
+            "source": doc.source,
+        }
+        for doc in ground_docs
+    ]
+    
     # 验证 chunker 配置
     if payload.chunker:
         chunker_name = payload.chunker.get("name", "recursive")
@@ -507,14 +528,46 @@ async def ingest_ground_to_kb(
                 },
             )
     
+    # 检查知识库名称是否已存在
+    existing_kb = await db.execute(
+        select(KnowledgeBase).where(
+            KnowledgeBase.tenant_id == tenant.id,
+            KnowledgeBase.name == payload.target_kb_name,
+        )
+    )
+    if existing_kb.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "KB_NAME_EXISTS",
+                "detail": f"知识库名称「{payload.target_kb_name}」已存在，请使用其他名称"
+            }
+        )
+    
     # 创建目标知识库
     target_kb_config: dict = {}
     if payload.chunker:
-        target_kb_config["ingestion"] = {
-            "chunker": {
-                "name": payload.chunker.get("name", "recursive"),
-                "params": payload.chunker.get("params", {}),
-            }
+        if "ingestion" not in target_kb_config:
+            target_kb_config["ingestion"] = {}
+        target_kb_config["ingestion"]["chunker"] = {
+            "name": payload.chunker.get("name", "recursive"),
+            "params": payload.chunker.get("params", {}),
+        }
+    if payload.indexer:
+        if "ingestion" not in target_kb_config:
+            target_kb_config["ingestion"] = {}
+        target_kb_config["ingestion"]["indexer"] = {
+            "name": payload.indexer.get("name", "standard"),
+            "params": payload.indexer.get("params", {}),
+        }
+    if payload.enricher or payload.generate_summary or payload.enrich_chunks:
+        if "ingestion" not in target_kb_config:
+            target_kb_config["ingestion"] = {}
+        target_kb_config["ingestion"]["enricher"] = {
+            "name": payload.enricher.get("name", "none") if payload.enricher else "none",
+            "params": payload.enricher.get("params", {}) if payload.enricher else {},
+            "generate_summary": payload.generate_summary,
+            "enrich_chunks": payload.enrich_chunks,
         }
     if payload.embedding_provider and payload.embedding_model:
         target_kb_config["embedding"] = {
@@ -531,6 +584,9 @@ async def ingest_ground_to_kb(
     db.add(target_kb)
     await db.commit()
     await db.refresh(target_kb)
+    # 缓存知识库标识，避免后续 rollback 导致 ORM 对象过期再触发懒加载
+    target_kb_id = target_kb.id
+    target_kb_name = target_kb.name
     
     # 入库所有文档
     results: list[GroundIngestResult] = []
@@ -543,20 +599,54 @@ async def ingest_ground_to_kb(
         settings = get_settings()
         try:
             embedding_config = settings._get_provider_config(
-                payload.embedding_provider, 
+                payload.embedding_provider,
                 payload.embedding_model
             )
-            logger.info(f"Ground 入库使用前端配置: {payload.embedding_provider}/{payload.embedding_model}")
+            # 覆盖用户传入的 key/base_url（前端若未传，则继续使用系统/环境配置）
+            if payload.embedding_api_key is not None:
+                embedding_config["api_key"] = payload.embedding_api_key
+            if payload.embedding_base_url is not None:
+                embedding_config["base_url"] = payload.embedding_base_url
+            # 若仍缺少 api_key，提前报错，提示配置来源
+            needs_key = payload.embedding_provider.lower() in ("openai", "qwen", "zhipu", "siliconflow", "deepseek", "kimi", "gemini")
+            if needs_key and not embedding_config.get("api_key"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "EMBEDDING_API_KEY_MISSING",
+                        "detail": f"{payload.embedding_provider.upper()}_API_KEY 未配置，请在 .env/环境变量中设置，或在请求中提供 embedding_api_key",
+                    },
+                )
+            # 记录详细入库配置
+            chunker_info = f"{payload.chunker.get('name')}" if payload.chunker else "默认"
+            indexer_info = f"{payload.indexer.get('name')}" if payload.indexer else "standard"
+            enricher_info = f"{payload.enricher.get('name')}" if payload.enricher else "none"
+            enrichment_flags = []
+            if payload.generate_summary:
+                enrichment_flags.append("摘要")
+            if payload.enrich_chunks:
+                enrichment_flags.append("Chunk增强")
+            enrichment_str = "+".join(enrichment_flags) if enrichment_flags else "无"
+            logger.info(
+                f"Ground 入库配置: embedding={payload.embedding_provider}/{payload.embedding_model}, "
+                f"chunker={chunker_info}, indexer={indexer_info}, enricher={enricher_info}, "
+                f"enrichment_flags={enrichment_str}"
+            )
         except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"code": "INVALID_EMBEDDING_CONFIG", "detail": str(e)}
             )
     
-    for doc in ground_docs:
-        if not doc.raw_content:
+    for doc_data in ground_doc_payloads:
+        doc_title = doc_data["title"]
+        doc_raw_content = doc_data["raw_content"]
+        doc_extra_metadata = doc_data["extra_metadata"]
+        doc_source = doc_data["source"]
+        
+        if not doc_raw_content:
             results.append(GroundIngestResult(
-                title=doc.title,
+                title=doc_title,
                 success=False,
                 error="文档没有原始内容",
             ))
@@ -564,13 +654,26 @@ async def ingest_ground_to_kb(
             continue
         
         try:
+            # 构建 LLM 配置（用于文档增强）
+            llm_config = None
+            if payload.llm_provider:
+                llm_config = {
+                    "provider": payload.llm_provider,
+                    "model": payload.llm_model,
+                    "api_key": payload.llm_api_key,
+                    "base_url": payload.llm_base_url,
+                }
+            
             params = IngestionParams(
-                title=doc.title,
-                content=doc.raw_content,
-                metadata=doc.extra_metadata,
-                source=doc.source,
+                title=doc_title,
+                content=doc_raw_content,
+                metadata=doc_extra_metadata,
+                source=doc_source,
                 generate_doc_summary=payload.generate_summary,
                 enrich_chunks=payload.enrich_chunks,
+                llm_config=llm_config,
+                enricher_config=payload.enricher,
+                indexer_config=payload.indexer,
             )
             ingest_result = await ingest_document(
                 db,
@@ -589,7 +692,7 @@ async def ingest_ground_to_kb(
                 # 向量库写入失败，回滚并标记失败
                 await db.rollback()
                 results.append(GroundIngestResult(
-                    title=doc.title,
+                    title=doc_title,
                     success=False,
                     error=f"向量索引失败: {qdrant_result.error}",
                 ))
@@ -599,17 +702,22 @@ async def ingest_ground_to_kb(
             await db.commit()
             
             results.append(GroundIngestResult(
-                title=doc.title,
+                title=doc_title,
                 document_id=ingest_result.document.id,
                 chunk_count=len(ingest_result.chunks),
                 success=True,
             ))
             succeeded += 1
         except Exception as e:
-            logger.warning(f"入库文档 '{doc.title}' 失败: {e}")
+            logger.warning(f"入库文档 '{doc_title}' 失败: {e}")
             await db.rollback()
+            # rollback 会使 ORM 对象过期，刷新保持后续迭代可用
+            try:
+                await db.refresh(target_kb)
+            except Exception:
+                pass
             results.append(GroundIngestResult(
-                title=doc.title,
+                title=doc_title,
                 success=False,
                 error=str(e),
             ))
@@ -617,8 +725,8 @@ async def ingest_ground_to_kb(
     
     logger.info(f"Ground {ground_id} 入库完成: {succeeded} 成功, {failed} 失败")
     return GroundIngestResponse(
-        knowledge_base_id=target_kb.id,
-        knowledge_base_name=target_kb.name,
+        knowledge_base_id=target_kb_id,
+        knowledge_base_name=target_kb_name,
         results=results,
         total=len(ground_docs),
         succeeded=succeeded,

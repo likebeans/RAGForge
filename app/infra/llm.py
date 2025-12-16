@@ -49,11 +49,59 @@ def _get_openai_compatible_client(api_key: str | None, base_url: str | None) -> 
     )
 
 
+def _build_llm_config_from_override(
+    override: dict[str, Any],
+    settings: Any,
+) -> dict[str, Any]:
+    """
+    从前端传递的 llm_config 构建完整配置
+    
+    优先使用 override 中的值，未提供的从环境变量回落
+    """
+    provider = override.get("provider", "").lower()
+    model = override.get("model", "")
+    api_key = override.get("api_key")
+    base_url = override.get("base_url")
+    
+    # 从环境变量回落 api_key 和 base_url
+    if provider == "ollama":
+        base_url = base_url or settings.ollama_base_url
+    elif provider == "openai":
+        api_key = api_key or settings.openai_api_key
+        base_url = base_url or settings.openai_api_base
+    elif provider == "siliconflow":
+        api_key = api_key or settings.siliconflow_api_key
+        base_url = base_url or "https://api.siliconflow.cn/v1"
+    elif provider == "zhipu":
+        api_key = api_key or settings.zhipu_api_key
+        base_url = base_url or "https://open.bigmodel.cn/api/paas/v4"
+    elif provider == "qwen":
+        api_key = api_key or settings.qwen_api_key
+        base_url = base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    elif provider == "deepseek":
+        api_key = api_key or settings.deepseek_api_key
+        base_url = base_url or "https://api.deepseek.com/v1"
+    elif provider == "kimi":
+        api_key = api_key or settings.kimi_api_key
+        base_url = base_url or "https://api.moonshot.cn/v1"
+    elif provider == "gemini":
+        api_key = api_key or settings.gemini_api_key
+        base_url = base_url or "https://generativelanguage.googleapis.com/v1beta"
+    
+    return {
+        "provider": provider,
+        "model": model,
+        "api_key": api_key,
+        "base_url": base_url,
+    }
+
+
 async def chat_completion(
     prompt: str,
     system_prompt: str | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    llm_config: dict[str, Any] | None = None,
     **kwargs,
 ) -> str:
     """
@@ -64,14 +112,25 @@ async def chat_completion(
         system_prompt: 系统提示词
         temperature: 温度参数（0-2）
         max_tokens: 最大生成 token 数
+        llm_config: 可选的 LLM 配置，优先级高于环境变量
+            - provider: 提供商名称 (ollama/openai/siliconflow/...)
+            - model: 模型名称
+            - api_key: API 密钥（可选，会从环境变量回落）
+            - base_url: API 地址（可选，会从环境变量回落）
         **kwargs: 其他参数
     
     Returns:
         str: LLM 生成的回复
     """
     settings = get_settings()
-    config = settings.get_llm_config()
-    provider = config["provider"]
+    
+    # 如果提供了 llm_config，使用它；否则使用环境变量配置
+    if llm_config and llm_config.get("provider"):
+        config = _build_llm_config_from_override(llm_config, settings)
+        provider = config["provider"]
+    else:
+        config = settings.get_llm_config()
+        provider = config["provider"]
     
     # 使用配置默认值
     if temperature is None:

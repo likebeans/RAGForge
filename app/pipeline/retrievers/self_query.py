@@ -235,9 +235,12 @@ class SelfQueryRetriever(BaseRetrieverOperator):
         else:
             results = results[:top_k]
         
-        # 标记来源
-        for hit in results:
+        # 标记来源，并在第一个结果中添加解析信息供前端可视化
+        for idx, hit in enumerate(results):
             hit["source"] = "self_query"
-            hit["parsed_filters"] = filters
+            if idx == 0:
+                # 第一个结果包含完整解析信息
+                hit["semantic_query"] = semantic_query
+                hit["parsed_filters"] = filters
         
         return results

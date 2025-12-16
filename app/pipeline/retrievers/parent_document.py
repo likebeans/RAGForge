@@ -18,7 +18,7 @@
 import logging
 from typing import Any
 
-from sqlalchemy import or_, select, cast, String
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import SessionLocal
@@ -101,17 +101,19 @@ class ParentDocumentRetriever(BaseRetrieverOperator):
         if not parent_ids:
             return {}
         
-        # 查询父块：有 parent_id 但没有 child 标记
-        # 使用 cast 将 JSON 值转换为 String 进行比较
-        # 注意：当 key 不存在时，extra_metadata["child"] 返回 SQL NULL
+        # 查询父块：父块的 chunk_id 等于子块的 parent_id
+        # 父块元数据：chunk_id="p_X", child=false
+        # 子块元数据：parent_id="p_X", child=true
+        # 使用 ->> 运算符提取 JSON 字符串值（PostgreSQL JSON 类型）
         stmt = select(Chunk).where(
             Chunk.tenant_id == tenant_id,
             Chunk.knowledge_base_id.in_(kb_ids),
-            cast(Chunk.extra_metadata["parent_id"], String).in_(parent_ids),
-            # 父块没有 child 标记或 child=False（键不存在时返回 NULL）
+            # 父块的 chunk_id 匹配子块的 parent_id
+            Chunk.extra_metadata.op('->>')('chunk_id').in_(parent_ids),
+            # 父块的 child=false（不是子块）
             or_(
-                Chunk.extra_metadata["child"].is_(None),
-                cast(Chunk.extra_metadata["child"], String) == "false",
+                Chunk.extra_metadata.op('->>')('child').is_(None),
+                Chunk.extra_metadata.op('->>')('child') == "false",
             ),
         )
         
@@ -121,10 +123,11 @@ class ParentDocumentRetriever(BaseRetrieverOperator):
         parent_map: dict[str, dict] = {}
         for chunk in chunks:
             meta = chunk.extra_metadata or {}
-            chunk_parent_id = meta.get("parent_id")
+            # 父块使用 chunk_id 作为标识符（对应子块的 parent_id）
+            parent_chunk_id = meta.get("chunk_id")
             
-            if chunk_parent_id and chunk_parent_id in parent_ids:
-                parent_map[chunk_parent_id] = {
+            if parent_chunk_id and parent_chunk_id in parent_ids:
+                parent_map[parent_chunk_id] = {
                     "chunk_id": str(chunk.id),
                     "text": chunk.text,
                     "metadata": meta,

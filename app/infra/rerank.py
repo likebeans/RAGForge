@@ -54,15 +54,35 @@ async def rerank_results(
     
     settings = get_settings()
     
-    # 如果有 override，使用 override 配置
+    # 如果有 override，使用 override 配置；缺失的 key 从系统配置补全，避免仅传 provider/model 时丢失 api_key/base_url
     if rerank_override:
         provider = rerank_override.get("provider", "none")
-        config = {
-            "provider": provider,
-            "model": rerank_override.get("model"),
-            "api_key": rerank_override.get("api_key"),
-            "base_url": rerank_override.get("base_url"),
-        }
+        model = rerank_override.get("model")
+        # 从系统默认构建当前 provider 的基础配置
+        if provider == "cohere":
+            base_config = {
+                "provider": "cohere",
+                "model": model or settings.rerank_model,
+                "api_key": settings.cohere_api_key,
+            }
+        elif provider == "vllm":
+            base_config = {
+                "provider": "vllm",
+                "model": model or settings.rerank_model,
+                "base_url": settings.vllm_rerank_base_url,
+            }
+        else:
+            # openai 兼容/ollama 等使用统一 provider 配置
+            base_config = settings._get_provider_config(provider, model or settings.rerank_model)
+        
+        config = {**base_config}
+        # 覆盖用户显式传入的字段（包括 api_key/base_url）
+        if model is not None:
+            config["model"] = model
+        for key in ("api_key", "base_url"):
+            if rerank_override.get(key) is not None:
+                config[key] = rerank_override[key]
+        
         logger.info(f"使用 rerank_override: {provider}/{config.get('model')}, base_url={config.get('base_url')}")
     else:
         config = settings.get_rerank_config()

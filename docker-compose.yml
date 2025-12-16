@@ -22,6 +22,8 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://kb:kb@db:5432/kb}
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      SILICONFLOW_API_BASE: ${SILICONFLOW_API_BASE:-https://api.siliconflow.cn/v1}
       # 清除代理，避免影响容器间通信
       http_proxy: ""
       https_proxy: ""

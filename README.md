@@ -438,6 +438,7 @@ curl -X POST "http://localhost:8020/v1/rag" \
 | `RERANK_PROVIDER` | `none` | Rerank 提供商（none 禁用） |
 | `RERANK_MODEL` | - | Rerank 模型名称 |
 | `RERANK_TOP_K` | `10` | 重排返回数量 |
+| **Rerank 请求覆盖说明** | - | 前端/接口传入的 `rerank_override` 只需指定 `provider`、`model`；若未传 `api_key`/`base_url`，会自动回落到环境/系统配置（如 `SILICONFLOW_API_KEY`、`COHERE_API_KEY` 等） |
 | **Qdrant** |
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant 服务地址 |
 | `QDRANT_API_KEY` | - | Qdrant API Key（云服务） |

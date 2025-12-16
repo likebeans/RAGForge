@@ -105,6 +105,7 @@ async def generate_rag_response(
         top_k=params.top_k,
         score_threshold=params.score_threshold,
         retriever_override=params.retriever_override,
+        embedding_override=params.embedding_override,
     )
     chunks, retriever_name, acl_blocked = await retrieve_chunks(
         tenant_id=tenant_id,

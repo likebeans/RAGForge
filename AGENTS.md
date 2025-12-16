@@ -128,12 +128,23 @@ tests/               # 测试文件
 - `hyde`: HyDE 检索器（LLM 生成假设文档嵌入）
 - `multi_query`: 多查询扩展检索（LLM 生成查询变体，RRF 融合）
 - `self_query`: 自查询检索（LLM 解析元数据过滤条件）
-- `parent_document`: 父文档检索（小块检索返回父块上下文）
+- `parent_document`: 父文档检索（小块检索返回父块上下文）**需要 `parent_child` 切分器**
 - `ensemble`: 集成检索（任意组合多检索器）
 - `llama_dense`: LlamaIndex 稠密检索（真实 Embedding）
 - `llama_bm25`: LlamaIndex BM25 检索（从 DB 加载）
 - `llama_hybrid`: LlamaIndex 混合检索
-- `raptor`: RAPTOR 多层次索引检索（递归聚类+摘要树）
+- `raptor`: RAPTOR 多层次索引检索（递归聚类+摘要树）**需要 RAPTOR 索引**
+
+#### 检索器兼容性要求
+
+部分检索器对知识库配置有特殊要求：
+
+| 检索器 | 要求 | 说明 |
+|--------|------|------|
+| `raptor` | RAPTOR 索引 | 需要在入库时启用 RAPTOR 索引增强 |
+| `parent_document` | `parent_child` 切分器 | 需要使用父子分块切分器入库 |
+
+前端检索对比页面会自动检测知识库配置，对不兼容的检索器显示警告。
 
 ### 查询增强 (Query Transforms)
 - `HyDEQueryTransform`: 假设文档嵌入查询变换
@@ -365,6 +376,11 @@ RERANK_PROVIDER=none
 - `model.llm_*`: 仅 hyde/multi_query/self_query 检索器返回
 - `model.rerank_*`: 仅 fusion 检索器且启用 rerank 时返回
 - `hyde_queries`: HyDE 检索器返回 LLM 生成的假设文档
+- `semantic_query`: Self-Query 检索器返回 LLM 提取的语义查询
+- `parsed_filters`: Self-Query 检索器返回 LLM 解析的元数据过滤条件
+- `generated_queries`: Multi-Query 检索器返回 LLM 生成的查询变体
+
+**Rerank 后可视化字段保留**：当启用 Rerank 时，`hyde_queries`、`semantic_query`、`parsed_filters`、`generated_queries` 等可视化字段会自动从原始第一个结果迁移到 Rerank 后的第一个结果，确保前端可视化正常显示
 
 ## RAPTOR 索引器
 

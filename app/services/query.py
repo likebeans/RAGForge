@@ -77,7 +77,16 @@ async def retrieve_chunks(
         (list[ChunkHit], retriever_name, acl_blocked): 检索结果列表、使用的检索器名称、是否因 ACL 过滤导致无结果
     """
     retriever_override = params.to_retriever_override_dict()
-    retriever, retriever_name = _resolve_retriever(kbs, retriever_override)
+    # 构建 embedding_override dict（如果有）
+    embedding_override_dict = None
+    if params.embedding_override:
+        embedding_override_dict = {
+            "provider": params.embedding_override.provider,
+            "model": params.embedding_override.model,
+            "api_key": params.embedding_override.api_key,
+            "base_url": params.embedding_override.base_url,
+        }
+    retriever, retriever_name = _resolve_retriever(kbs, retriever_override, embedding_override_dict)
     
     # 执行检索并记录指标
     start_time = time.perf_counter()
@@ -171,19 +180,27 @@ async def retrieve_chunks(
             generated_queries=hit.get("generated_queries"),
             queries_count=hit.get("queries_count"),
             retrieval_details=hit.get("retrieval_details"),
+            semantic_query=hit.get("semantic_query"),
+            parsed_filters=hit.get("parsed_filters"),
+            ensemble_details=hit.get("ensemble_details"),
         )
         for hit in filtered_hits
     ]
     return results, retriever_name, acl_blocked
 
 
-def _resolve_retriever(kbs: list[KnowledgeBase], override: dict | None = None) -> tuple:
+def _resolve_retriever(
+    kbs: list[KnowledgeBase],
+    override: dict | None = None,
+    embedding_override: dict | None = None,
+) -> tuple:
     """
     选择检索算子：优先使用 override，否则使用 KB 配置，默认 dense。
     
     Args:
         kbs: 知识库列表
         override: 检索器覆盖配置，格式 {"name": "hyde", "params": {...}}
+        embedding_override: Embedding 覆盖配置，优先级最高，格式 {"provider": ..., "model": ..., "api_key": ..., "base_url": ...}
     
     Returns:
         (retriever, retriever_name): 检索器实例和名称
@@ -193,9 +210,22 @@ def _resolve_retriever(kbs: list[KnowledgeBase], override: dict | None = None) -
     allow_mixed = False
     embedding_config: dict | None = None
     
-    # 从知识库配置中提取 embedding 配置
+    # 从知识库配置中提取 embedding 配置（环境变量回退）
     if kbs:
         embedding_config = _extract_embedding_config(kbs)
+    
+    # 如果有 embedding_override，只使用其中的 api_key 和 base_url
+    # 注意：检索时 provider/model 必须与入库时一致，否则向量空间不匹配
+    # 因此这里只接受 api_key/base_url 覆盖，不接受 provider/model 覆盖
+    if embedding_override:
+        if embedding_config is None:
+            embedding_config = {}
+        # 只覆盖 api_key 和 base_url，不覆盖 provider/model（保持与入库一致）
+        if embedding_override.get("api_key"):
+            embedding_config["api_key"] = embedding_override["api_key"]
+            logger.info(f"检索使用请求级 Embedding api_key")
+        if embedding_override.get("base_url"):
+            embedding_config["base_url"] = embedding_override["base_url"]
     
     # 优先使用 override
     if override:
@@ -203,10 +233,55 @@ def _resolve_retriever(kbs: list[KnowledgeBase], override: dict | None = None) -
         params = override.get("params", {}) or {}
     elif kbs:
         name, params, allow_mixed = _validate_retriever_config(kbs)
-    
+
+    # 针对 ensemble 检索器做参数规范化和默认配置
+    # 兼容多种形式：
+    # 1) params={"preset": "dense_bm25"} - 前端预设组合
+    # 2) params={"retrievers": ["dense", "bm25"], "weights": [0.6, 0.4]}
+    # 3) params={"retrievers": [{"name": "dense", "weight": 0.6}, ...]}
+    if name == "ensemble":
+        params = params or {}
+        
+        # 预设组合映射（提供有意义的组合，避免冗余）
+        ENSEMBLE_PRESETS = {
+            "hybrid_hyde": [{"name": "hybrid"}, {"name": "hyde"}],  # 混合 + HyDE 假设文档
+            "dense_multi_query": [{"name": "dense"}, {"name": "multi_query"}],  # 向量 + 多查询扩展
+            "hybrid_multi_query": [{"name": "hybrid"}, {"name": "multi_query"}],  # 混合 + 多查询
+        }
+        
+        preset = params.pop("preset", None)
+        raw_retrievers = params.get("retrievers")
+        weights = params.get("weights")
+
+        normalized_retrievers: list[dict] = []
+
+        if preset and preset in ENSEMBLE_PRESETS:
+            # 使用预设组合
+            normalized_retrievers = ENSEMBLE_PRESETS[preset]
+        elif raw_retrievers and isinstance(raw_retrievers, str):
+            # 支持逗号分隔的检索器名称字符串，如 "dense,llama_bm25,hyde"
+            retriever_names = [name.strip() for name in raw_retrievers.split(",") if name.strip()]
+            normalized_retrievers = [{"name": name} for name in retriever_names]
+        elif preset == "custom" or not raw_retrievers:
+            # custom 或无配置时使用默认组合
+            normalized_retrievers = [{"name": "dense"}, {"name": "llama_bm25"}]
+        elif isinstance(raw_retrievers, list):
+            # 如果是字符串列表，则与 weights 并行组装为 dict 列表
+            if raw_retrievers and isinstance(raw_retrievers[0], str):
+                for idx, r_name in enumerate(raw_retrievers):
+                    cfg: dict = {"name": r_name}
+                    if isinstance(weights, list) and idx < len(weights):
+                        cfg["weight"] = weights[idx]
+                    normalized_retrievers.append(cfg)
+            else:
+                # 认为已经是 [{"name": ..., "weight": ...}] 形式
+                normalized_retrievers = raw_retrievers
+
+        params["retrievers"] = normalized_retrievers
+
     # 将 embedding_config 传递给检索器
     if embedding_config:
-        if name in ("dense", "hybrid", "fusion", "llama_dense"):
+        if name in ("dense", "hybrid", "fusion", "llama_dense", "raptor"):
             # 这些检索器直接接受 embedding_config 参数
             params["embedding_config"] = embedding_config
         elif name in ("hyde", "multi_query"):
@@ -214,6 +289,25 @@ def _resolve_retriever(kbs: list[KnowledgeBase], override: dict | None = None) -
             base_params = params.get("base_retriever_params", {}) or {}
             base_params["embedding_config"] = embedding_config
             params["base_retriever_params"] = base_params
+        elif name == "ensemble":
+            # 将 embedding_config 下传给 ensemble 中的子检索器
+            retr_cfgs = params.get("retrievers") or []
+            if isinstance(retr_cfgs, list):
+                for cfg in retr_cfgs:
+                    if not isinstance(cfg, dict):
+                        continue
+                    sub_name = cfg.get("name")
+                    sub_params = cfg.get("params") or {}
+
+                    if sub_name in ("dense", "hybrid", "fusion", "llama_dense"):
+                        sub_params["embedding_config"] = embedding_config
+                    elif sub_name in ("hyde", "multi_query"):
+                        base_params = sub_params.get("base_retriever_params", {}) or {}
+                        base_params["embedding_config"] = embedding_config
+                        sub_params["base_retriever_params"] = base_params
+
+                    cfg["params"] = sub_params
+                params["retrievers"] = retr_cfgs
 
     # 日志记录使用的 embedding 配置
     if embedding_config:
@@ -360,6 +454,14 @@ async def _apply_rerank(
     
     documents = [hit["text"] for hit in hits]
     
+    # 保留可视化字段（这些字段在原始第一个结果中，rerank 后需要迁移到新的第一个结果）
+    visualization_fields = ["semantic_query", "parsed_filters", "hyde_queries", "generated_queries"]
+    preserved_viz = {}
+    if hits:
+        for field in visualization_fields:
+            if field in hits[0]:
+                preserved_viz[field] = hits[0][field]
+    
     try:
         reranked = await rerank_results(
             query=query,
@@ -377,6 +479,11 @@ async def _apply_rerank(
                 hit["score"] = r["score"]
                 hit["source"] = hit.get("source", "unknown") + "+rerank"
                 result.append(hit)
+        
+        # 将可视化字段添加到新的第一个结果
+        if result and preserved_viz:
+            for field, value in preserved_viz.items():
+                result[0][field] = value
         
         logger.info(f"Rerank 完成: {len(hits)} -> {len(result)} 条结果")
         return result, True

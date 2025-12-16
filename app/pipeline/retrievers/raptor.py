@@ -65,6 +65,7 @@ class RaptorRetriever(BaseRetrieverOperator):
         mode: str = "collapsed",
         base_retriever: str = "dense",
         top_k: int = 5,
+        embedding_config: dict | None = None,
     ):
         """
         初始化 RAPTOR 检索器
@@ -75,10 +76,12 @@ class RaptorRetriever(BaseRetrieverOperator):
                 - "tree_traversal": 树遍历检索（更精确但较慢）
             base_retriever: 回退检索器名称
             top_k: 默认返回数量
+            embedding_config: 动态 embedding 配置（来自知识库配置）
         """
         self.mode = mode
         self.base_retriever_name = base_retriever
         self.top_k = top_k
+        self.embedding_config = embedding_config
         
         # 延迟初始化
         self._indexer: RaptorIndexer | None = None
@@ -89,11 +92,16 @@ class RaptorRetriever(BaseRetrieverOperator):
         if self._base_retriever is None:
             factory = operator_registry.get("retriever", self.base_retriever_name)
             if factory:
-                self._base_retriever = factory()
+                # 传递 embedding_config 给底层检索器
+                try:
+                    self._base_retriever = factory(embedding_config=self.embedding_config)
+                except TypeError:
+                    # 某些检索器可能不接受 embedding_config
+                    self._base_retriever = factory()
             else:
                 # 使用 dense 检索器作为默认
                 from app.pipeline.retrievers.dense import DenseRetriever
-                self._base_retriever = DenseRetriever()
+                self._base_retriever = DenseRetriever(embedding_config=self.embedding_config)
         return self._base_retriever
     
     async def retrieve(
