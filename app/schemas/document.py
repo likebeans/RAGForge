@@ -45,6 +45,7 @@ class DocumentResponse(BaseModel):
     metadata: dict | None = None
     source: str | None = None
     chunk_count: int = 0
+    processing_status: str = "pending"  # pending/processing/completed/failed/interrupted
     created_at: datetime
 
     class Config:
@@ -64,6 +65,7 @@ class DocumentDetailResponse(DocumentResponse):
     """文档详情响应"""
     summary: str | None = None
     summary_status: str | None = None
+    processing_log: str | None = None
 
 
 class ChunkResponse(BaseModel):

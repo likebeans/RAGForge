@@ -15,12 +15,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from sqlalchemy import update
+
 from app.api.routes import api_router
 from app.config import get_settings
-from app.db.session import init_models
+from app.db.session import init_models, SessionLocal
 from app.infra.logging import setup_logging, get_logger
 from app.middleware import RequestTraceMiddleware
 from app.middleware.audit import AuditLogMiddleware
+from app.models.document import Document
 
 # 配置结构化日志
 setup_logging()
@@ -28,6 +31,30 @@ logger = get_logger(__name__)
 
 # 获取全局配置（单例模式，整个应用共享同一个配置实例）
 settings = get_settings()
+
+
+async def _mark_interrupted_documents():
+    """
+    检测并标记卡住的文档
+    
+    服务重启时，状态为 processing 或 pending 的文档可能是被中断的任务。
+    将它们标记为 interrupted，避免前端一直显示"处理中"。
+    """
+    try:
+        async with SessionLocal() as session:
+            # 将所有 processing 状态的文档标记为 interrupted
+            result = await session.execute(
+                update(Document)
+                .where(Document.processing_status.in_(["processing", "pending"]))
+                .values(processing_status="interrupted")
+            )
+            await session.commit()
+            
+            if result.rowcount > 0:
+                logger.warning(f"检测到 {result.rowcount} 个中断的文档处理任务，已标记为 interrupted")
+    except Exception as e:
+        # 如果表还不存在（第一次启动），忽略错误
+        logger.debug(f"检测中断文档时出错（可能是首次启动）: {e}")
 
 
 @asynccontextmanager
@@ -54,10 +81,8 @@ async def lifespan(app: FastAPI):
         # 生产环境：仅打印警告，不自动建表
         logger.info(f"跳过自动建表，请使用 Alembic 迁移")
     
-    # 这里可以添加其他启动逻辑，例如：
-    # - 初始化向量数据库连接
-    # - 预热 Embedding 模型
-    # - 加载缓存数据
+    # 检测并标记卡住的文档（processing 状态但服务重启了）
+    await _mark_interrupted_documents()
     
     yield  # 应用运行中...
     

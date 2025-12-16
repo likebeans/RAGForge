@@ -243,6 +243,60 @@ class RerankConfig(BaseModel):
     )
 
 
+# ============ RAPTOR 配置 ============
+
+RaptorClusterMethod = Literal["gmm", "kmeans"]
+
+
+class RaptorConfig(BaseModel):
+    """RAPTOR 索引配置
+    
+    RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval)
+    通过递归聚类和摘要构建多层次索引树。
+    
+    示例:
+    ```json
+    {
+        "enabled": true,
+        "max_layers": 3,
+        "cluster_method": "gmm",
+        "min_cluster_size": 3,
+        "summary_num_workers": 4
+    }
+    ```
+    """
+    enabled: bool = Field(
+        default=False,
+        description="是否启用 RAPTOR 索引",
+    )
+    max_layers: int = Field(
+        default=3,
+        ge=1,
+        le=5,
+        description="最大层数（1-5），层数越多索引越深",
+    )
+    cluster_method: RaptorClusterMethod = Field(
+        default="gmm",
+        description="聚类方法：gmm（高斯混合模型）或 kmeans",
+    )
+    min_cluster_size: int = Field(
+        default=3,
+        ge=2,
+        le=20,
+        description="最小聚类大小，小于此值的聚类不会生成摘要",
+    )
+    summary_num_workers: int = Field(
+        default=4,
+        ge=1,
+        le=16,
+        description="摘要生成并发数",
+    )
+    summary_prompt: str | None = Field(
+        default=None,
+        description="自定义摘要提示词（可选）",
+    )
+
+
 # ============ 知识库完整配置 ============
 
 class KBConfig(BaseModel):
@@ -261,6 +315,10 @@ class KBConfig(BaseModel):
         "embedding": {
             "provider": "openai",
             "model": "text-embedding-3-small"
+        },
+        "raptor": {
+            "enabled": true,
+            "max_layers": 3
         }
     }
     ```
@@ -276,6 +334,10 @@ class KBConfig(BaseModel):
     embedding: EmbeddingConfig | None = Field(
         default=None,
         description="Embedding 模型配置（覆盖系统/租户默认值）",
+    )
+    raptor: RaptorConfig | None = Field(
+        default=None,
+        description="RAPTOR 索引配置",
     )
 
     class Config:

@@ -18,8 +18,9 @@ Pydantic 请求/响应模型定义。
 | `document.py` | 文档相关 schema |
 | `query.py` | 检索相关 schema |
 | `rag.py` | RAG 生成相关 schema |
-| `config.py` | 知识库配置 schema（Chunker/Retriever） |
+| `config.py` | 知识库配置 schema（Chunker/Retriever/Embedding/LLM） |
 | `internal.py` | **服务层内部参数模型**（与 API Schema 解耦） |
+| `pipeline.py` | Pipeline Playground API schema |
 
 ## Schema 命名规范
 
@@ -212,3 +213,90 @@ async def retrieve(payload: RetrieveRequest, ...):
     if acl_blocked:
         raise HTTPException(status_code=403, detail="检索结果被 ACL 过滤")
 ```
+
+---
+
+## 模型覆盖配置 (config.py)
+
+`config.py` 定义 LLM/Embedding/Rerank 的覆盖配置，支持请求级动态切换模型。
+
+### EmbeddingOverrideConfig
+
+用于请求级覆盖 Embedding 配置，优先级最高。
+
+```python
+class EmbeddingOverrideConfig(BaseModel):
+    provider: EmbeddingProvider  # 必填：提供商（ollama/openai/siliconflow 等）
+    model: str                   # 必填：模型名称
+    api_key: str | None = None   # 可选：API Key（未指定时使用环境变量）
+    base_url: str | None = None  # 可选：API Base URL
+```
+
+**配置优先级**：`请求参数 > 知识库配置 > 环境变量`
+
+### LLMConfig
+
+用于请求级覆盖 LLM 配置。
+
+```python
+class LLMConfig(BaseModel):
+    provider: LLMProvider        # 必填：提供商
+    model: str                   # 必填：模型名称
+    api_key: str | None = None   # 可选：API Key
+    base_url: str | None = None  # 可选：API Base URL
+```
+
+### 参数传递流程
+
+前端通过 Playground API 传递 Embedding 配置到检索器：
+
+```
+Frontend (embeddingApiKey/embeddingBaseUrl)
+    ↓
+PlaygroundRunRequest.embedding_override
+    ↓
+RAGParams.embedding_override
+    ↓
+RetrieveParams.embedding_override
+    ↓
+Retriever (dense/hybrid/fusion 等)
+```
+
+**使用示例**：
+```python
+# Pipeline Playground API 请求
+{
+    "query": "问题内容",
+    "knowledge_base_ids": ["kb1"],
+    "embedding_override": {
+        "provider": "siliconflow",
+        "model": "BAAI/bge-m3",
+        "api_key": "sk-xxx",
+        "base_url": "https://api.siliconflow.cn/v1"
+    }
+}
+
+# 后端路由传递到 RAGParams
+rag_params = RAGParams(
+    query=payload.query,
+    kb_ids=payload.knowledge_base_ids,
+    embedding_override=payload.embedding_override,  # 传递给检索
+)
+
+# RAG 服务传递到 RetrieveParams
+retrieve_params = RetrieveParams(
+    query=params.query,
+    embedding_override=params.embedding_override,
+)
+
+# 检索服务传递给检索器
+retriever = get_retriever(params.retriever_override)
+results = await retriever.retrieve(
+    ...,
+    embedding_config=params.embedding_override,  # 检索器使用
+)
+```
+
+**注意事项**：
+- 前端未传递 `api_key` 时，后端自动使用环境变量（如 `SILICONFLOW_API_KEY`）
+- 确保检索时使用的 Embedding 模型与入库时一致，否则向量空间不匹配

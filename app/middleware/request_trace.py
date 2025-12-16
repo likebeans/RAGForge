@@ -88,8 +88,15 @@ class RequestTraceMiddleware(BaseHTTPMiddleware):
                 extra=log_extra,
             )
         else:
-            # 跳过健康检查等高频低价值请求的日志
-            if request.url.path not in ("/health", "/metrics", "/favicon.ico"):
+            # 跳过高频低价值请求的日志（健康检查、轮询请求等）
+            skip_paths = ("/health", "/metrics", "/favicon.ico")
+            # 轮询请求模式：GET /v1/documents/{id} 和 GET /v1/knowledge-bases/{id}/documents
+            is_polling = (
+                request.method == "GET" and 
+                (request.url.path.startswith("/v1/documents/") or 
+                 request.url.path.endswith("/documents"))
+            )
+            if request.url.path not in skip_paths and not is_polling:
                 logger.info(
                     f"{request.method} {request.url.path} - {response.status_code} - {metrics['total_ms']:.0f}ms",
                     extra=log_extra,

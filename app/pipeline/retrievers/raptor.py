@@ -13,6 +13,9 @@ RAPTOR Retriever
 import logging
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.pipeline.base import BaseRetrieverOperator
 from app.pipeline.registry import register_operator, operator_registry
 
@@ -27,6 +30,70 @@ try:
     )
 except ImportError:
     RAPTOR_AVAILABLE = False
+
+
+async def _get_raptor_nodes_for_kb(
+    session: AsyncSession,
+    tenant_id: str,
+    kb_id: str,
+) -> list[dict]:
+    """
+    从数据库加载知识库的 RAPTOR 节点
+    
+    Args:
+        session: 数据库会话
+        tenant_id: 租户 ID
+        kb_id: 知识库 ID
+        
+    Returns:
+        RAPTOR 节点列表，每个节点包含 id, text, level, metadata
+    """
+    from app.models.raptor_node import RaptorNode
+    
+    stmt = (
+        select(RaptorNode)
+        .where(RaptorNode.tenant_id == tenant_id)
+        .where(RaptorNode.knowledge_base_id == kb_id)
+        .where(RaptorNode.indexing_status == "indexed")
+        .order_by(RaptorNode.level, RaptorNode.created_at)
+    )
+    
+    result = await session.execute(stmt)
+    db_nodes = result.scalars().all()
+    
+    nodes = []
+    for node in db_nodes:
+        nodes.append({
+            "id": node.id,
+            "text": node.text,
+            "level": node.level,
+            "chunk_id": node.chunk_id,
+            "vector_id": node.vector_id,
+            "metadata": node.extra_metadata or {},
+        })
+    
+    return nodes
+
+
+async def _check_raptor_index_exists(
+    session: AsyncSession,
+    tenant_id: str,
+    kb_id: str,
+) -> bool:
+    """检查知识库是否有 RAPTOR 索引"""
+    from app.models.raptor_node import RaptorNode
+    from sqlalchemy import func
+    
+    stmt = (
+        select(func.count(RaptorNode.id))
+        .where(RaptorNode.tenant_id == tenant_id)
+        .where(RaptorNode.knowledge_base_id == kb_id)
+    )
+    
+    result = await session.execute(stmt)
+    count = result.scalar() or 0
+    
+    return count > 0
 
 
 @register_operator("retriever", "raptor")
@@ -111,24 +178,23 @@ class RaptorRetriever(BaseRetrieverOperator):
         tenant_id: str,
         kb_ids: list[str],
         top_k: int = 5,
+        session: AsyncSession | None = None,
         **kwargs: Any,
     ) -> list[dict]:
         """
-        执行检索
+        执行 RAPTOR 检索
         
-        RAPTOR 检索器目前回退到 base_retriever，
-        因为 RAPTOR 索引需要在摄取阶段构建。
-        
-        完整的 RAPTOR 支持需要：
-        1. 知识库配置 raptor indexer
-        2. 摄取时自动构建 RAPTOR 树
-        3. 检索时加载对应的 RAPTOR 索引
+        检索流程：
+        1. 检查是否有 RAPTOR 索引（需要传入 session）
+        2. 如果有索引，对 RAPTOR 节点进行向量检索
+        3. 如果没有索引，回退到 base_retriever
         
         Args:
             query: 查询文本
             tenant_id: 租户 ID
             kb_ids: 知识库 ID 列表
             top_k: 返回数量
+            session: 数据库会话（用于检查 RAPTOR 索引）
             
         Returns:
             检索结果列表
@@ -143,19 +209,40 @@ class RaptorRetriever(BaseRetrieverOperator):
                 **kwargs,
             )
         
-        # TODO: 从 KB 配置加载 RAPTOR 索引
-        # 当前版本回退到 base_retriever
-        # 未来版本将支持：
-        # 1. 检查 KB 是否启用了 RAPTOR indexer
-        # 2. 加载对应的 RAPTOR 索引
-        # 3. 使用 RAPTOR retriever 进行检索
+        # 检查是否有 RAPTOR 索引
+        has_raptor_index = False
+        if session:
+            for kb_id in kb_ids:
+                if await _check_raptor_index_exists(session, tenant_id, kb_id):
+                    has_raptor_index = True
+                    break
         
+        if not has_raptor_index:
+            logger.info(
+                "知识库没有 RAPTOR 索引，回退到 %s 检索器",
+                self.base_retriever_name,
+            )
+            results = await self._fallback_retrieve(
+                query=query,
+                tenant_id=tenant_id,
+                kb_ids=kb_ids,
+                top_k=top_k,
+                **kwargs,
+            )
+            for r in results:
+                r["raptor_mode"] = self.mode
+                r["raptor_fallback"] = True
+            return results
+        
+        # 有 RAPTOR 索引，执行 RAPTOR 检索
         logger.info(
-            "RAPTOR 检索 (mode=%s) - 当前版本回退到 %s",
+            "RAPTOR 检索 (mode=%s, kb_ids=%s)",
             self.mode,
-            self.base_retriever_name,
+            kb_ids,
         )
         
+        # 使用 base_retriever 进行向量检索（RAPTOR 节点已在向量库中）
+        # TODO: 实现 tree_traversal 模式的分层检索
         results = await self._fallback_retrieve(
             query=query,
             tenant_id=tenant_id,
@@ -164,10 +251,61 @@ class RaptorRetriever(BaseRetrieverOperator):
             **kwargs,
         )
         
+        # 如果有 session，尝试加载 RAPTOR 节点信息增强结果
+        if session:
+            results = await self._enrich_with_raptor_info(
+                session=session,
+                tenant_id=tenant_id,
+                kb_ids=kb_ids,
+                results=results,
+            )
+        
         # 添加 raptor 标记
         for r in results:
             r["raptor_mode"] = self.mode
-            r["raptor_fallback"] = True
+            r["raptor_fallback"] = False
+        
+        return results
+    
+    async def _enrich_with_raptor_info(
+        self,
+        session: AsyncSession,
+        tenant_id: str,
+        kb_ids: list[str],
+        results: list[dict],
+    ) -> list[dict]:
+        """
+        用 RAPTOR 节点信息增强检索结果
+        
+        查找每个结果对应的 RAPTOR 节点，添加层级信息
+        """
+        from app.models.raptor_node import RaptorNode
+        
+        # 收集所有 chunk_id
+        chunk_ids = [r.get("chunk_id") for r in results if r.get("chunk_id")]
+        if not chunk_ids:
+            return results
+        
+        # 查询对应的 RAPTOR 节点
+        stmt = (
+            select(RaptorNode)
+            .where(RaptorNode.tenant_id == tenant_id)
+            .where(RaptorNode.knowledge_base_id.in_(kb_ids))
+            .where(RaptorNode.chunk_id.in_(chunk_ids))
+        )
+        
+        result = await session.execute(stmt)
+        raptor_nodes = {node.chunk_id: node for node in result.scalars().all()}
+        
+        # 增强结果
+        for r in results:
+            chunk_id = r.get("chunk_id")
+            if chunk_id and chunk_id in raptor_nodes:
+                node = raptor_nodes[chunk_id]
+                r["raptor_level"] = node.level
+                r["raptor_node_id"] = node.id
+            else:
+                r["raptor_level"] = 0  # 默认为叶子节点
         
         return results
     

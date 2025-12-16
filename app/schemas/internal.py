@@ -227,6 +227,10 @@ class IngestionParams(BaseModel):
         default=None,
         description="索引器配置，包含 name 和 params（如 max_depth, max_clusters, retrieval_mode）"
     )
+    existing_doc_id: str | None = Field(
+        default=None,
+        description="已存在的文档 ID（用于后台异步入库场景，跳过创建文档记录步骤）"
+    )
     # ACL 相关字段
     sensitivity_level: str = Field(
         default="internal",

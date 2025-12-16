@@ -4,9 +4,10 @@ Ground (Playground 临时知识库) API
 Ground 会创建一个临时知识库，用于实验流程，支持保存为正式知识库或删除。
 """
 
+import asyncio
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import func, select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +16,7 @@ from app.auth.api_key import APIKeyContext
 from app.models import KnowledgeBase, Document, Chunk
 from app.infra.vector_store import vector_store
 from app.infra.bm25_store import bm25_store
+from app.db.session import SessionLocal
 from app.schemas.ground import GroundCreate, GroundInfo, GroundListResponse
 
 router = APIRouter(prefix="/v1/grounds", tags=["grounds"])
@@ -588,12 +590,7 @@ async def ingest_ground_to_kb(
     target_kb_id = target_kb.id
     target_kb_name = target_kb.name
     
-    # 入库所有文档
-    results: list[GroundIngestResult] = []
-    succeeded = 0
-    failed = 0
-    
-    # 构建 embedding 配置（优先使用前端传入的配置）
+    # 验证 embedding 配置（提前检查，避免后台任务失败）
     embedding_config: dict | None = None
     if payload.embedding_provider and payload.embedding_model:
         settings = get_settings()
@@ -602,12 +599,10 @@ async def ingest_ground_to_kb(
                 payload.embedding_provider,
                 payload.embedding_model
             )
-            # 覆盖用户传入的 key/base_url（前端若未传，则继续使用系统/环境配置）
             if payload.embedding_api_key is not None:
                 embedding_config["api_key"] = payload.embedding_api_key
             if payload.embedding_base_url is not None:
                 embedding_config["base_url"] = payload.embedding_base_url
-            # 若仍缺少 api_key，提前报错，提示配置来源
             needs_key = payload.embedding_provider.lower() in ("openai", "qwen", "zhipu", "siliconflow", "deepseek", "kimi", "gemini")
             if needs_key and not embedding_config.get("api_key"):
                 raise HTTPException(
@@ -617,26 +612,15 @@ async def ingest_ground_to_kb(
                         "detail": f"{payload.embedding_provider.upper()}_API_KEY 未配置，请在 .env/环境变量中设置，或在请求中提供 embedding_api_key",
                     },
                 )
-            # 记录详细入库配置
-            chunker_info = f"{payload.chunker.get('name')}" if payload.chunker else "默认"
-            indexer_info = f"{payload.indexer.get('name')}" if payload.indexer else "standard"
-            enricher_info = f"{payload.enricher.get('name')}" if payload.enricher else "none"
-            enrichment_flags = []
-            if payload.generate_summary:
-                enrichment_flags.append("摘要")
-            if payload.enrich_chunks:
-                enrichment_flags.append("Chunk增强")
-            enrichment_str = "+".join(enrichment_flags) if enrichment_flags else "无"
-            logger.info(
-                f"Ground 入库配置: embedding={payload.embedding_provider}/{payload.embedding_model}, "
-                f"chunker={chunker_info}, indexer={indexer_info}, enricher={enricher_info}, "
-                f"enrichment_flags={enrichment_str}"
-            )
         except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"code": "INVALID_EMBEDDING_CONFIG", "detail": str(e)}
             )
+    
+    # 【关键改动】立即为每个 Ground 文档创建 Document 记录（状态为 processing）
+    results: list[GroundIngestResult] = []
+    doc_id_mapping: dict[str, str] = {}  # title -> doc_id 映射，用于后台任务
     
     for doc_data in ground_doc_payloads:
         doc_title = doc_data["title"]
@@ -650,85 +634,185 @@ async def ingest_ground_to_kb(
                 success=False,
                 error="文档没有原始内容",
             ))
-            failed += 1
             continue
         
-        try:
-            # 构建 LLM 配置（用于文档增强）
-            llm_config = None
-            if payload.llm_provider:
-                llm_config = {
-                    "provider": payload.llm_provider,
-                    "model": payload.llm_model,
-                    "api_key": payload.llm_api_key,
-                    "base_url": payload.llm_base_url,
-                }
-            
-            params = IngestionParams(
-                title=doc_title,
-                content=doc_raw_content,
-                metadata=doc_extra_metadata,
-                source=doc_source,
-                generate_doc_summary=payload.generate_summary,
-                enrich_chunks=payload.enrich_chunks,
-                llm_config=llm_config,
-                enricher_config=payload.enricher,
-                indexer_config=payload.indexer,
-            )
-            ingest_result = await ingest_document(
-                db,
-                tenant_id=tenant.id,
-                kb=target_kb,
-                params=params,
-                embedding_config=embedding_config,
-            )
-            
-            # 检查向量库写入是否成功（核心索引）
-            qdrant_result = next(
-                (r for r in ingest_result.indexing_results if r.store_type == "qdrant"),
-                None
-            )
-            if qdrant_result and not qdrant_result.success:
-                # 向量库写入失败，回滚并标记失败
-                await db.rollback()
-                results.append(GroundIngestResult(
-                    title=doc_title,
-                    success=False,
-                    error=f"向量索引失败: {qdrant_result.error}",
-                ))
-                failed += 1
-                continue
-            
-            await db.commit()
-            
-            results.append(GroundIngestResult(
-                title=doc_title,
-                document_id=ingest_result.document.id,
-                chunk_count=len(ingest_result.chunks),
-                success=True,
-            ))
-            succeeded += 1
-        except Exception as e:
-            logger.warning(f"入库文档 '{doc_title}' 失败: {e}")
-            await db.rollback()
-            # rollback 会使 ORM 对象过期，刷新保持后续迭代可用
-            try:
-                await db.refresh(target_kb)
-            except Exception:
-                pass
-            results.append(GroundIngestResult(
-                title=doc_title,
-                success=False,
-                error=str(e),
-            ))
-            failed += 1
+        # 创建 Document 记录（状态为 processing，chunk_count 暂为 0）
+        new_doc = Document(
+            tenant_id=tenant.id,
+            knowledge_base_id=target_kb_id,
+            title=doc_title,
+            source=doc_source,
+            raw_content=doc_raw_content,
+            extra_metadata=doc_extra_metadata,
+            summary_status="pending",
+            processing_log="[等待处理] 文档已创建，正在排队入库...\n",
+        )
+        db.add(new_doc)
+        await db.flush()
+        
+        doc_id_mapping[doc_title] = new_doc.id
+        results.append(GroundIngestResult(
+            title=doc_title,
+            document_id=new_doc.id,
+            chunk_count=0,  # 暂时为 0，后台任务完成后会更新
+            success=True,  # 记录创建成功，入库在后台进行
+        ))
     
-    logger.info(f"Ground {ground_id} 入库完成: {succeeded} 成功, {failed} 失败")
+    await db.commit()
+    
+    # 记录日志
+    logger.info(f"Ground {ground_id} 快速响应: 创建 {len(doc_id_mapping)} 个文档记录，开始后台入库")
+    
+    # 【关键改动】启动后台任务执行实际入库
+    asyncio.create_task(
+        _background_ingest_documents(
+            tenant_id=tenant.id,
+            kb_id=target_kb_id,
+            doc_id_mapping=doc_id_mapping,
+            ground_doc_payloads=ground_doc_payloads,
+            payload=payload,
+            embedding_config=embedding_config,
+        )
+    )
+    
+    # 立即返回响应
     return GroundIngestResponse(
         knowledge_base_id=target_kb_id,
         knowledge_base_name=target_kb_name,
         results=results,
-        total=len(ground_docs),
-        succeeded=succeeded,
-        failed=failed,
+        total=len(ground_doc_payloads),
+        succeeded=len(doc_id_mapping),
+        failed=len(ground_doc_payloads) - len(doc_id_mapping),
     )
+
+
+async def _background_ingest_documents(
+    tenant_id: str,
+    kb_id: str,
+    doc_id_mapping: dict[str, str],
+    ground_doc_payloads: list[dict],
+    payload: GroundIngestRequest,
+    embedding_config: dict | None,
+):
+    """
+    后台任务：执行实际的文档入库（chunking、embedding、写入向量库）
+    
+    此函数在独立的数据库会话中运行，不影响主请求的响应速度。
+    """
+    from datetime import datetime
+    
+    logger.info(f"后台入库任务开始: kb={kb_id}, 文档数={len(doc_id_mapping)}")
+    
+    async with SessionLocal() as db:
+        # 获取知识库
+        kb_result = await db.execute(
+            select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
+        )
+        target_kb = kb_result.scalar_one_or_none()
+        if not target_kb:
+            logger.error(f"后台入库失败: 知识库 {kb_id} 不存在")
+            return
+        
+        succeeded = 0
+        failed = 0
+        
+        for doc_data in ground_doc_payloads:
+            doc_title = doc_data["title"]
+            doc_id = doc_id_mapping.get(doc_title)
+            
+            if not doc_id:
+                # 该文档在创建阶段就失败了，跳过
+                continue
+            
+            doc_raw_content = doc_data["raw_content"]
+            doc_extra_metadata = doc_data["extra_metadata"]
+            doc_source = doc_data["source"]
+            
+            # 获取文档记录
+            doc_result = await db.execute(
+                select(Document).where(Document.id == doc_id)
+            )
+            doc = doc_result.scalar_one_or_none()
+            if not doc:
+                logger.warning(f"后台入库: 文档 {doc_id} 不存在，跳过")
+                failed += 1
+                continue
+            
+            try:
+                # 更新日志：开始处理
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                doc.processing_log = f"[{ts}] [INFO] 开始处理文档: {doc_title}\n"
+                await db.flush()
+                
+                # 构建 LLM 配置
+                llm_config = None
+                if payload.llm_provider:
+                    llm_config = {
+                        "provider": payload.llm_provider,
+                        "model": payload.llm_model,
+                        "api_key": payload.llm_api_key,
+                        "base_url": payload.llm_base_url,
+                    }
+                
+                # 调用入库服务（使用已存在的文档记录）
+                params = IngestionParams(
+                    title=doc_title,
+                    content=doc_raw_content,
+                    metadata=doc_extra_metadata,
+                    source=doc_source,
+                    generate_doc_summary=payload.generate_summary,
+                    enrich_chunks=payload.enrich_chunks,
+                    llm_config=llm_config,
+                    enricher_config=payload.enricher,
+                    indexer_config=payload.indexer,
+                    existing_doc_id=doc_id,  # 传入已存在的文档 ID
+                )
+                ingest_result = await ingest_document(
+                    db,
+                    tenant_id=tenant_id,
+                    kb=target_kb,
+                    params=params,
+                    embedding_config=embedding_config,
+                )
+                
+                # 检查向量库写入是否成功
+                qdrant_result = next(
+                    (r for r in ingest_result.indexing_results if r.store_type == "qdrant"),
+                    None
+                )
+                if qdrant_result and not qdrant_result.success:
+                    await db.rollback()
+                    # 更新文档状态为失败
+                    doc_result2 = await db.execute(select(Document).where(Document.id == doc_id))
+                    doc2 = doc_result2.scalar_one_or_none()
+                    if doc2:
+                        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        doc2.processing_log = (doc2.processing_log or "") + f"[{ts}] [ERROR] 向量索引失败: {qdrant_result.error}\n"
+                        doc2.summary_status = "failed"
+                        await db.commit()
+                    failed += 1
+                    continue
+                
+                await db.commit()
+                succeeded += 1
+                logger.info(f"后台入库成功: {doc_title}, chunks={len(ingest_result.chunks)}")
+                
+            except Exception as e:
+                logger.warning(f"后台入库文档 '{doc_title}' 失败: {e}")
+                await db.rollback()
+                
+                # 更新文档状态为失败
+                try:
+                    doc_result3 = await db.execute(select(Document).where(Document.id == doc_id))
+                    doc3 = doc_result3.scalar_one_or_none()
+                    if doc3:
+                        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        doc3.processing_log = (doc3.processing_log or "") + f"[{ts}] [ERROR] 入库失败: {str(e)}\n"
+                        doc3.summary_status = "failed"
+                        await db.commit()
+                except Exception:
+                    pass
+                
+                failed += 1
+        
+        logger.info(f"后台入库任务完成: kb={kb_id}, 成功={succeeded}, 失败={failed}")

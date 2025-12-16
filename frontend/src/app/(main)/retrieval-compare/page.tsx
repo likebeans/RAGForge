@@ -204,6 +204,9 @@ const checkRetrieverCompatibility = (
 
   const chunkerName = kbConfig?.ingestion?.chunker?.name;
   const indexerName = kbConfig?.ingestion?.indexer?.name;
+  // RAPTOR 索引配置可能在 raptor.enabled 或 ingestion.indexer.name
+  const raptorEnabled = (kbConfig as Record<string, unknown>)?.raptor && 
+    ((kbConfig as Record<string, unknown>).raptor as Record<string, unknown>)?.enabled === true;
 
   // 检查 chunker 要求
   if (config.requires.chunker) {
@@ -214,6 +217,13 @@ const checkRetrieverCompatibility = (
 
   // 检查 indexer 要求（RAPTOR 需要专门的索引器）
   if (config.requires.indexer) {
+    // RAPTOR 索引器可以通过两种方式配置：
+    // 1. ingestion.indexer.name === 'raptor'
+    // 2. raptor.enabled === true
+    const hasRaptorIndexer = indexerName === 'raptor' || raptorEnabled;
+    if (config.requires.indexer.includes('raptor') && hasRaptorIndexer) {
+      return { compatible: true };
+    }
     if (!indexerName || !config.requires.indexer.includes(indexerName)) {
       return { compatible: false, warning: config.warning };
     }

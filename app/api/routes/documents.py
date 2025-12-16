@@ -170,6 +170,7 @@ async def list_documents(
                 metadata=doc.extra_metadata,
                 source=doc.source,
                 chunk_count=chunk_count,
+                processing_status=doc.processing_status,
                 created_at=doc.created_at,
             )
         )
@@ -226,6 +227,7 @@ async def get_document(
         created_at=doc.created_at,
         summary=doc.summary,
         summary_status=doc.summary_status,
+        processing_log=doc.processing_log,
     )
 
 

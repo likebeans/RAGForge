@@ -30,6 +30,7 @@ dependencies = [
     "llama-index-vector-stores-qdrant>=0.2.0",
     "llama-index-retrievers-bm25>=0.1.4",
     "llama-index-llms-openai>=0.1.26",
+    "llama-index-llms-openai-like>=0.2.0", # OpenAI 兼容 API 支持（qwen/deepseek 等）
     "llama-index-llms-ollama>=0.1.0", # Ollama LLM 支持
     "llama-index-embeddings-openai>=0.1.10",
     "llama-index-embeddings-ollama>=0.1.0", # Ollama Embedding 支持
@@ -40,6 +41,7 @@ dependencies = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.23.7",
     "streamlit>=1.52.1",
+    "nest-asyncio>=1.6.0",
 ]
 
 [build-system]

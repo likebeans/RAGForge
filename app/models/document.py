@@ -118,3 +118,22 @@ class Document(TimestampMixin, Base):
     # 存储原始文件内容，供分块预览等功能使用
     # 只有 Ground 上传的文档会保存此字段，正常知识库文档此字段为空
     raw_content: Mapped[str | None] = mapped_column(Text)
+    
+    # ==================== 处理状态 ====================
+    # 文档入库处理状态：
+    # - pending: 等待处理（刚创建，还未开始入库）
+    # - processing: 正在处理中
+    # - completed: 处理完成
+    # - failed: 处理失败
+    # - interrupted: 处理中断（服务重启导致）
+    processing_status: Mapped[str] = mapped_column(
+        String(20), 
+        default="pending",
+        nullable=False,
+        index=True
+    )
+    
+    # ==================== 处理日志 ====================
+    # 记录文档入库过程的详细日志，用于前端展示处理进度和排查问题
+    # 格式：每行一条日志，包含时间戳和日志内容
+    processing_log: Mapped[str | None] = mapped_column(Text)

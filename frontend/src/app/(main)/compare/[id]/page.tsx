@@ -50,6 +50,9 @@ import {
   Eye,
   Plus,
   X,
+  CheckCircle2,
+  XCircle,
+  Circle,
 } from "lucide-react";
 import { AllModelsSelector } from "@/components/settings";
 import { useDropzone } from "react-dropzone";
@@ -494,6 +497,10 @@ export default function GroundDetailPage() {
   const [newKbName, setNewKbName] = useState("");
   const [newKbDesc, setNewKbDesc] = useState("");
   const [isIngesting, setIsIngesting] = useState(false);
+  const [ingestProgress, setIngestProgress] = useState<{
+    step: number;
+    steps: { label: string; status: 'pending' | 'running' | 'done' | 'error' }[];
+  } | null>(null);
   // 入库后的知识库状态（用于检索）
   const [ingestedKbId, setIngestedKbId] = useState<string | null>(null);
   const [ingestedKbName, setIngestedKbName] = useState<string>("");
@@ -1620,46 +1627,44 @@ export default function GroundDetailPage() {
       return;
     }
 
+    // 关闭对话框并显示 loading 状态
+    setIngestDialogOpen(false);
     setIsIngesting(true);
+    toast.info("正在创建知识库并入库文档...");
+    
+    // 使用当前 Pipeline 的 chunker 配置
+    const chunkerConfig = {
+      name: pipelineConfig.chunker,
+      params: pipelineConfig.chunkerParams,
+    };
+    
+    // 使用当前 Pipeline 的 indexer 配置
+    const indexerConfig = {
+      name: pipelineConfig.indexer || 'base',
+      params: pipelineConfig.indexerParams || {},
+    };
+    
+    // 使用当前 Pipeline 的 enricher 配置
+    const enricherConfig = pipelineConfig.enricher ? {
+      name: pipelineConfig.enricher,
+      params: pipelineConfig.enricherParams,
+    } : undefined;
+    
+    // 获取 Embedding 配置（必需）
+    const embeddingProviderConfig = providerConfigs[pipelineEmbedProvider];
+    const embeddingApiKey = embeddingProviderConfig?.apiKey;
+    const embeddingBaseUrl = embeddingProviderConfig?.baseUrl;
+    
+    // 获取 LLM 配置（用于文档增强）- 仅在启用增强时传递
+    const needsLLM = pipelineConfig.enricher === "document_summary" || pipelineConfig.enricher === "chunk_context";
+    const llmProvider = needsLLM && defaultModels.llm?.provider ? defaultModels.llm.provider : undefined;
+    const llmModel = needsLLM && defaultModels.llm?.model ? defaultModels.llm.model : undefined;
+    const llmProviderConfig = llmProvider ? providerConfigs[llmProvider] : undefined;
+    const llmApiKey = llmProviderConfig?.apiKey;
+    const llmBaseUrl = llmProviderConfig?.baseUrl;
+    
     try {
-      // 使用当前 Pipeline 的 chunker 配置
-      const chunkerConfig = {
-        name: pipelineConfig.chunker,
-        params: pipelineConfig.chunkerParams,
-      };
-      
-      // 使用当前 Pipeline 的 indexer 配置
-      const indexerConfig = {
-        name: pipelineConfig.indexer,
-        params: pipelineConfig.indexerParams,
-      };
-      
-      // 使用当前 Pipeline 的 enricher 配置
-      const enricherConfig = {
-        name: pipelineConfig.enricher,
-        params: pipelineConfig.enricherParams,
-      };
-      
-      // 判断是否启用增强功能（使用当前 Pipeline 的配置）
-      // 前端增强器名称: document_summary, chunk_context
-      const pipelineEnricher = pipelineConfig.enricher;
-      const generateSummary = pipelineEnricher === "document_summary";
-      const enrichChunks = pipelineEnricher === "chunk_context";
-      
-      // 获取 Embedding 提供商的 API key 和 base_url
-      const embeddingProviderConfig = providerConfigs[pipelineEmbedProvider];
-      const embeddingApiKey = embeddingProviderConfig?.apiKey;
-      const embeddingBaseUrl = embeddingProviderConfig?.baseUrl;
-      
-      // 获取 LLM 配置（用于文档增强）- 仅在启用增强时传递
-      const needsLLM = generateSummary || enrichChunks;
-      const llmProvider = needsLLM && defaultModels.llm?.provider ? defaultModels.llm.provider : undefined;
-      const llmModel = needsLLM && defaultModels.llm?.model ? defaultModels.llm.model : undefined;
-      const llmProviderConfig = llmProvider ? providerConfigs[llmProvider] : undefined;
-      const llmApiKey = llmProviderConfig?.apiKey;
-      const llmBaseUrl = llmProviderConfig?.baseUrl;
-      
-      // 调用 Ground 入库 API
+      // 调用 ingestGround API（后端会快速返回，实际入库在后台进行）
       const result = await client.ingestGround(
         ground.ground_id,
         newKbName.trim(),
@@ -1668,8 +1673,8 @@ export default function GroundDetailPage() {
           chunker: chunkerConfig,
           indexer: indexerConfig,
           enricher: enricherConfig,
-          generateSummary,
-          enrichChunks,
+          generateSummary: pipelineConfig.enricher === "document_summary",
+          enrichChunks: pipelineConfig.enricher === "chunk_context",
           embeddingProvider: pipelineEmbedProvider,
           embeddingModel: pipelineEmbedModel,
           embeddingApiKey,
@@ -1681,28 +1686,19 @@ export default function GroundDetailPage() {
         }
       );
       
-      if (result.succeeded === 0) {
-        // 全部失败，不允许检索
-        toast.error(`入库失败：所有 ${result.total} 个文档都未能成功入库。请检查 Embedding 配置。`);
-        // 不设置 ingestedKbId，不允许检索
-        setIngestDialogOpen(false);
-        return;
-      } else if (result.failed > 0) {
-        // 部分成功
-        toast.warning(`入库完成: ${result.succeeded}/${result.total} 成功，${result.failed} 失败`);
-      } else {
-        // 全部成功
-        toast.success(`入库成功！${result.succeeded} 个文档已入库到「${result.knowledge_base_name}」，可以开始检索了`);
-      }
-
-      // 至少有部分成功，保存知识库 ID 到当前 Pipeline
-      updateCurrentPipeline({
-        ingestedKbId: result.knowledge_base_id,
-        ingestedKbName: result.knowledge_base_name,
-      });
-      // 同时更新旧的状态（保持兼容）
-      setIngestedKbId(result.knowledge_base_id);
+      setIsIngesting(false);
+      
+      // 保存入库结果
+      const kbId = result.knowledge_base_id;
+      setIngestedKbId(kbId);
       setIngestedKbName(result.knowledge_base_name);
+      
+      // 更新当前 Pipeline 的入库知识库ID
+      const updatedPipeline = { ...currentPipeline, ingestedKbId: kbId };
+      const updatedPipelines = [...pipelines];
+      updatedPipelines[currentPipelineIndex] = updatedPipeline;
+      setPipelines(updatedPipelines);
+      
       // 保存入库时的配置快照（用于检测配置变更）
       setIngestedConfig({
         chunker: pipelineConfig.chunker,
@@ -1712,11 +1708,16 @@ export default function GroundDetailPage() {
         enricher: pipelineConfig.enricher,
         enricherParams: pipelineConfig.enricherParams,
       });
-      setIngestDialogOpen(false);
+      
+      // 显示成功提示并跳转
+      toast.success(`知识库「${result.knowledge_base_name}」创建成功，文档正在后台入库...`);
+      
+      // 跳转到知识库详情页（文档列表会显示"处理中"状态）
+      router.push(`/knowledge-bases/${kbId}`);
+      
     } catch (error) {
-      toast.error(`入库失败: ${(error as Error).message}`);
-    } finally {
       setIsIngesting(false);
+      toast.error(`入库失败: ${(error as Error).message}`);
     }
   };
 
@@ -2725,9 +2726,38 @@ export default function GroundDetailPage() {
                 文档数量: {documents.length} 个
               </div>
             </div>
+            {/* 入库进度指示器 */}
+            {ingestProgress && (
+              <div className="rounded-lg border p-3 space-y-3 bg-muted/30">
+                <div className="font-medium text-sm">入库进度</div>
+                <div className="space-y-2">
+                  {ingestProgress.steps.map((step, idx) => (
+                    <div key={idx} className="flex items-center gap-2 text-sm">
+                      {step.status === 'done' ? (
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                      ) : step.status === 'running' ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                      ) : step.status === 'error' ? (
+                        <XCircle className="h-4 w-4 text-red-500" />
+                      ) : (
+                        <Circle className="h-4 w-4 text-muted-foreground" />
+                      )}
+                      <span className={
+                        step.status === 'done' ? 'text-green-600' :
+                        step.status === 'running' ? 'text-blue-600 font-medium' :
+                        step.status === 'error' ? 'text-red-600' :
+                        'text-muted-foreground'
+                      }>
+                        {step.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIngestDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setIngestDialogOpen(false)} disabled={isIngesting}>
               取消
             </Button>
             <Button onClick={handleIngestToKb} disabled={isIngesting || !newKbName.trim()}>

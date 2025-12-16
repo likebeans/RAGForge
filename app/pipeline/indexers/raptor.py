@@ -19,10 +19,17 @@ RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval)
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
+
+from sqlalchemy import select, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from app.models.raptor_node import RaptorNode as RaptorNodeModel
 
 # 尝试导入 LlamaIndex RAPTOR pack
 try:
@@ -171,16 +178,24 @@ class RaptorIndexer:
     
     def _build_index(self, documents: list) -> RaptorIndexResult:
         """构建 RAPTOR 索引"""
-        logger.info(f"开始构建 RAPTOR 索引，共 {len(documents)} 个文档")
+        import time
+        start_time = time.time()
+        
+        logger.info(f"[RAPTOR] 开始构建索引，共 {len(documents)} 个文档")
+        logger.info(f"[RAPTOR] LLM: {type(self.llm).__name__}, Embedding: {type(self.embed_model).__name__}")
+        logger.info(f"[RAPTOR] 配置: max_layers={self.max_layers}, summary_workers={self.summary_num_workers}")
         
         # 创建 SummaryModule 配置
+        logger.info(f"[RAPTOR] 步骤 1/4: 创建 SummaryModule...")
         summary_module = SummaryModule(
             llm=self.llm,
             summary_prompt=self.summary_prompt,
             num_workers=self.summary_num_workers,
         )
+        logger.info(f"[RAPTOR] SummaryModule 创建完成")
         
         # 构建 RaptorPack
+        logger.info(f"[RAPTOR] 步骤 2/4: 初始化 RaptorPack（这一步会进行向量化和聚类，可能较慢）...")
         pack_kwargs = {
             "documents": documents,
             "llm": self.llm,
@@ -193,18 +208,21 @@ class RaptorIndexer:
         
         self._pack = RaptorPack(**pack_kwargs)
         self._retriever = self._pack.retriever
+        logger.info(f"[RAPTOR] 步骤 3/4: RaptorPack 构建完成，耗时 {time.time() - start_time:.2f}s")
         
         # 统计结果
         # 注意：LlamaIndex RaptorPack 内部会自动处理聚类和摘要
         # 我们只能通过 retriever 获取节点信息
+        logger.info(f"[RAPTOR] 步骤 4/4: 提取节点信息...")
         nodes = self._extract_nodes()
         
         leaf_count = sum(1 for n in nodes if n.level == 0)
         summary_count = len(nodes) - leaf_count
         max_level = max((n.level for n in nodes), default=0)
         
+        total_time = time.time() - start_time
         logger.info(
-            f"RAPTOR 索引构建完成: "
+            f"[RAPTOR] 索引构建完成! 总耗时 {total_time:.2f}s, "
             f"总节点 {len(nodes)}, 层数 {max_level + 1}, "
             f"叶子节点 {leaf_count}, 摘要节点 {summary_count}"
         )
@@ -274,16 +292,192 @@ class RaptorIndexer:
             top_k=top_k,
         )
     
-    def save(self, path: str) -> None:
-        """保存索引到磁盘"""
-        # TODO: 实现持久化
-        raise NotImplementedError("持久化功能待实现")
+    async def save_to_db(
+        self,
+        session: AsyncSession,
+        tenant_id: str,
+        knowledge_base_id: str,
+        chunk_id_mapping: dict[str, str] | None = None,
+    ) -> int:
+        """
+        将 RAPTOR 节点保存到数据库
+        
+        Args:
+            session: 数据库会话
+            tenant_id: 租户 ID
+            knowledge_base_id: 知识库 ID
+            chunk_id_mapping: 原始文档 ID 到 chunk_id 的映射（用于叶子节点关联）
+            
+        Returns:
+            保存的节点数量
+        """
+        from app.models.raptor_node import RaptorNode as RaptorNodeModel
+        
+        nodes = self._extract_nodes()
+        if not nodes:
+            logger.warning("没有节点需要保存")
+            return 0
+        
+        chunk_id_mapping = chunk_id_mapping or {}
+        saved_count = 0
+        
+        # 创建节点 ID 映射（LlamaIndex ID -> 数据库 ID）
+        id_mapping: dict[str, str] = {}
+        
+        for node in nodes:
+            db_id = str(uuid4())
+            id_mapping[node.id] = db_id
+        
+        # 保存节点
+        for node in nodes:
+            db_id = id_mapping[node.id]
+            
+            # 查找关联的原始 chunk ID（仅叶子节点）
+            chunk_id = None
+            if node.level == 0:
+                # 尝试从 metadata 或映射中获取原始 chunk ID
+                original_doc_id = node.metadata.get("doc_id") or node.metadata.get("original_id")
+                if original_doc_id and original_doc_id in chunk_id_mapping:
+                    chunk_id = chunk_id_mapping[original_doc_id]
+            
+            # 映射父节点 ID
+            parent_id = None
+            if node.children_ids:  # 注意：这里 children_ids 实际存储的是 parent_id
+                parent_llama_id = node.children_ids[0]
+                parent_id = id_mapping.get(parent_llama_id)
+            
+            # 映射子节点 ID
+            children_ids = []
+            # 从其他节点的 parent_id 反推子节点
+            for other_node in nodes:
+                if other_node.children_ids and other_node.children_ids[0] == node.id:
+                    children_ids.append(id_mapping[other_node.id])
+            
+            db_node = RaptorNodeModel(
+                id=db_id,
+                tenant_id=tenant_id,
+                knowledge_base_id=knowledge_base_id,
+                chunk_id=chunk_id,
+                text=node.text,
+                level=node.level,
+                parent_id=parent_id,
+                children_ids=children_ids,
+                indexing_status="pending",
+                extra_metadata=node.metadata,
+            )
+            session.add(db_node)
+            saved_count += 1
+        
+        await session.flush()
+        logger.info(f"保存了 {saved_count} 个 RAPTOR 节点到数据库")
+        return saved_count
     
     @classmethod
-    def load(cls, path: str) -> "RaptorIndexer":
-        """从磁盘加载索引"""
-        # TODO: 实现加载
-        raise NotImplementedError("加载功能待实现")
+    async def load_from_db(
+        cls,
+        session: AsyncSession,
+        tenant_id: str,
+        knowledge_base_id: str,
+    ) -> list["RaptorNode"]:
+        """
+        从数据库加载 RAPTOR 节点
+        
+        Args:
+            session: 数据库会话
+            tenant_id: 租户 ID
+            knowledge_base_id: 知识库 ID
+            
+        Returns:
+            RAPTOR 节点列表
+        """
+        from app.models.raptor_node import RaptorNode as RaptorNodeModel
+        
+        stmt = (
+            select(RaptorNodeModel)
+            .where(RaptorNodeModel.tenant_id == tenant_id)
+            .where(RaptorNodeModel.knowledge_base_id == knowledge_base_id)
+            .order_by(RaptorNodeModel.level, RaptorNodeModel.created_at)
+        )
+        
+        result = await session.execute(stmt)
+        db_nodes = result.scalars().all()
+        
+        nodes = []
+        for db_node in db_nodes:
+            nodes.append(RaptorNode(
+                id=db_node.id,
+                text=db_node.text,
+                level=db_node.level,
+                children_ids=db_node.children_ids or [],
+                metadata=db_node.extra_metadata or {},
+            ))
+        
+        logger.info(f"从数据库加载了 {len(nodes)} 个 RAPTOR 节点")
+        return nodes
+    
+    @classmethod
+    async def delete_from_db(
+        cls,
+        session: AsyncSession,
+        tenant_id: str,
+        knowledge_base_id: str,
+    ) -> int:
+        """
+        从数据库删除 RAPTOR 节点
+        
+        Args:
+            session: 数据库会话
+            tenant_id: 租户 ID
+            knowledge_base_id: 知识库 ID
+            
+        Returns:
+            删除的节点数量
+        """
+        from app.models.raptor_node import RaptorNode as RaptorNodeModel
+        
+        stmt = (
+            delete(RaptorNodeModel)
+            .where(RaptorNodeModel.tenant_id == tenant_id)
+            .where(RaptorNodeModel.knowledge_base_id == knowledge_base_id)
+        )
+        
+        result = await session.execute(stmt)
+        deleted_count = result.rowcount
+        
+        logger.info(f"从数据库删除了 {deleted_count} 个 RAPTOR 节点")
+        return deleted_count
+    
+    @classmethod
+    async def has_index(
+        cls,
+        session: AsyncSession,
+        tenant_id: str,
+        knowledge_base_id: str,
+    ) -> bool:
+        """
+        检查知识库是否有 RAPTOR 索引
+        
+        Args:
+            session: 数据库会话
+            tenant_id: 租户 ID
+            knowledge_base_id: 知识库 ID
+            
+        Returns:
+            是否存在 RAPTOR 索引
+        """
+        from app.models.raptor_node import RaptorNode as RaptorNodeModel
+        from sqlalchemy import func
+        
+        stmt = (
+            select(func.count(RaptorNodeModel.id))
+            .where(RaptorNodeModel.tenant_id == tenant_id)
+            .where(RaptorNodeModel.knowledge_base_id == knowledge_base_id)
+        )
+        
+        result = await session.execute(stmt)
+        count = result.scalar() or 0
+        
+        return count > 0
 
 
 class RaptorRetrieverWrapper:
@@ -339,12 +533,18 @@ class RaptorRetrieverWrapper:
         return results
 
 
-def create_raptor_indexer_from_config() -> RaptorIndexer | None:
+def create_raptor_indexer_from_config(
+    embedding_config: dict | None = None,
+) -> RaptorIndexer | None:
     """
     从应用配置创建 RAPTOR 索引器
     
     读取 LLM 和 Embedding 配置，创建索引器实例。
     支持 Ollama 和 OpenAI 提供商。
+    
+    Args:
+        embedding_config: 可选的 Embedding 配置（来自 KB/Ground），格式为 {provider, model, api_key, base_url}
+                         如果提供，优先使用此配置；否则使用全局 settings
     """
     if not RAPTOR_AVAILABLE:
         logger.warning("RAPTOR 不可用，跳过创建索引器")
@@ -354,55 +554,226 @@ def create_raptor_indexer_from_config() -> RaptorIndexer | None:
         from app.config import get_settings
         settings = get_settings()
         
-        # 根据提供商创建 LLM
+        # 根据提供商创建 LLM（使用全局 settings 的 LLM 配置）
         llm = None
-        if settings.llm_provider == "ollama":
+        llm_config = settings.get_llm_config()
+        llm_provider = llm_config.get("provider", "ollama")
+        llm_model_name = llm_config.get("model", settings.llm_model)
+        llm_api_key = llm_config.get("api_key")
+        llm_base_url = llm_config.get("base_url")
+        
+        if llm_provider == "ollama":
             try:
                 from llama_index.llms.ollama import Ollama
                 llm = Ollama(
-                    model=settings.llm_model,
-                    base_url=settings.ollama_base_url,
+                    model=llm_model_name,
+                    base_url=llm_base_url or settings.ollama_base_url,
                     request_timeout=120.0,
                 )
             except ImportError:
                 logger.warning("llama-index-llms-ollama 未安装，尝试使用 OpenAI 兼容模式")
         
         if llm is None:
-            # 使用 OpenAI 兼容模式（适用于 Ollama 或其他 OpenAI 兼容服务）
-            from llama_index.llms.openai import OpenAI
-            if settings.llm_provider == "ollama":
+            # 使用 OpenAI 兼容模式
+            if llm_provider == "ollama":
+                from llama_index.llms.openai import OpenAI
                 llm = OpenAI(
-                    model=settings.llm_model,
-                    api_base=f"{settings.ollama_base_url}/v1",
-                    api_key="ollama",  # Ollama 不需要 API Key
+                    model=llm_model_name,
+                    api_base=f"{llm_base_url or settings.ollama_base_url}/v1",
+                    api_key="ollama",
                 )
+            elif llm_provider in ("siliconflow", "qwen", "zhipu", "deepseek", "kimi", "gemini"):
+                # OpenAI 兼容服务 - 使用 OpenAILike 绕过模型名验证
+                try:
+                    from llama_index.llms.openai_like import OpenAILike
+                    llm = OpenAILike(
+                        model=llm_model_name,
+                        api_base=llm_base_url,
+                        api_key=llm_api_key or "dummy",
+                        is_chat_model=True,
+                        context_window=32000,  # 默认上下文窗口
+                    )
+                    logger.info(f"[RAPTOR] 使用 OpenAILike LLM: {llm_provider}/{llm_model_name}")
+                except ImportError:
+                    # 如果没有 OpenAILike，回退到自定义实现
+                    from openai import OpenAI as OpenAIClient
+                    from llama_index.core.llms import CustomLLM, CompletionResponse, LLMMetadata
+                    from llama_index.core.llms.callbacks import llm_completion_callback
+                    
+                    class OpenAICompatibleLLM(CustomLLM):
+                        """OpenAI 兼容 API 的 LLM 实现"""
+                        _model_name: str
+                        _client: OpenAIClient
+                        _context_window: int = 32000
+                        
+                        def __init__(self, model_name: str, api_key: str, api_base: str):
+                            super().__init__()
+                            object.__setattr__(self, '_model_name', model_name)
+                            object.__setattr__(self, '_client', OpenAIClient(api_key=api_key, base_url=api_base))
+                        
+                        @property
+                        def metadata(self) -> LLMMetadata:
+                            return LLMMetadata(
+                                model_name=self._model_name,
+                                context_window=self._context_window,
+                                is_chat_model=True,
+                            )
+                        
+                        @llm_completion_callback()
+                        def complete(self, prompt: str, **kwargs) -> CompletionResponse:
+                            response = self._client.chat.completions.create(
+                                model=self._model_name,
+                                messages=[{"role": "user", "content": prompt}],
+                                **kwargs,
+                            )
+                            return CompletionResponse(text=response.choices[0].message.content or "")
+                        
+                        @llm_completion_callback()
+                        async def acomplete(self, prompt: str, **kwargs) -> CompletionResponse:
+                            return self.complete(prompt, **kwargs)
+                        
+                        def stream_complete(self, prompt: str, **kwargs):
+                            raise NotImplementedError("Streaming not supported")
+                    
+                    llm = OpenAICompatibleLLM(
+                        model_name=llm_model_name,
+                        api_key=llm_api_key or "dummy",
+                        api_base=llm_base_url,
+                    )
+                    logger.info(f"[RAPTOR] 使用自定义 OpenAI 兼容 LLM: {llm_provider}/{llm_model_name}")
             else:
+                # 原生 OpenAI
+                from llama_index.llms.openai import OpenAI
                 llm = OpenAI(
-                    model=settings.llm_model,
-                    api_key=settings.openai_api_key,
+                    model=llm_model_name,
+                    api_key=llm_api_key or settings.openai_api_key,
                 )
         
         # 根据提供商创建 Embedding
+        # 优先使用传入的 embedding_config（来自 KB/Ground），否则使用全局 settings
         embed_model = None
-        if settings.embedding_provider == "ollama":
+        if embedding_config:
+            embed_provider = embedding_config.get("provider", "ollama")
+            embed_model_name = embedding_config.get("model", settings.embedding_model)
+            embed_api_key = embedding_config.get("api_key")
+            embed_base_url = embedding_config.get("base_url")
+        else:
+            embed_cfg = settings.get_embedding_config()
+            embed_provider = embed_cfg.get("provider", "ollama")
+            embed_model_name = embed_cfg.get("model", settings.embedding_model)
+            embed_api_key = embed_cfg.get("api_key")
+            embed_base_url = embed_cfg.get("base_url")
+        
+        if embed_provider == "ollama":
             try:
                 from llama_index.embeddings.ollama import OllamaEmbedding
                 embed_model = OllamaEmbedding(
-                    model_name=settings.embedding_model,
-                    base_url=settings.ollama_base_url,
+                    model_name=embed_model_name,
+                    base_url=embed_base_url or settings.ollama_base_url,
                 )
             except ImportError:
                 logger.warning("llama-index-embeddings-ollama 未安装，尝试使用 OpenAI 兼容模式")
         
+        # 对于非 Ollama 提供商，使用 OpenAI 兼容模式
         if embed_model is None:
-            from llama_index.embeddings.openai import OpenAIEmbedding
-            embed_model = OpenAIEmbedding(
-                model=settings.embedding_model,
-                api_key=settings.openai_api_key or "dummy",
-            )
+            # 对于 OpenAI 兼容服务（siliconflow, qwen, zhipu 等），需要设置 api_base
+            # 使用 OpenAIEmbedding 时，非标准模型名会导致 enum 校验失败
+            # 所以使用 LlamaIndex 的 OpenAILike 或通用方式
+            if embed_provider in ("siliconflow", "qwen", "zhipu", "deepseek", "kimi", "gemini"):
+                try:
+                    # 尝试使用 OpenAILike 或 HuggingFaceEmbedding 的方式
+                    from openai import OpenAI as OpenAIClient
+                    from llama_index.core.embeddings import BaseEmbedding
+                    from llama_index.embeddings.openai import OpenAIEmbedding
+                    
+                    # 创建一个简单的自定义 Embedding 类来绕过模型名校验
+                    class OpenAICompatibleEmbedding(BaseEmbedding):
+                        """OpenAI 兼容 API 的 Embedding 实现（带速率限制）"""
+                        
+                        # 批量大小和速率限制
+                        BATCH_SIZE: int = 10  # 每批最多 10 个文本
+                        RATE_LIMIT_DELAY: float = 0.5  # 每批之间等待 0.5 秒
+                        
+                        def __init__(self, model_name: str, api_key: str, api_base: str):
+                            super().__init__()
+                            self._model_name = model_name
+                            self._client = OpenAIClient(
+                                api_key=api_key, 
+                                base_url=api_base,
+                                timeout=60.0,  # 60 秒超时
+                                max_retries=3,  # 最多重试 3 次
+                            )
+                        
+                        @property
+                        def model_name(self) -> str:
+                            return self._model_name
+                        
+                        def _get_query_embedding(self, query: str) -> list[float]:
+                            response = self._client.embeddings.create(
+                                input=[query],
+                                model=self._model_name,
+                            )
+                            return response.data[0].embedding
+                        
+                        def _get_text_embedding(self, text: str) -> list[float]:
+                            return self._get_query_embedding(text)
+                        
+                        def _get_text_embeddings(self, texts: list[str]) -> list[list[float]]:
+                            """批量获取 embeddings，带速率限制"""
+                            import time
+                            
+                            all_embeddings = []
+                            total = len(texts)
+                            
+                            # 分批处理
+                            for i in range(0, total, self.BATCH_SIZE):
+                                batch = texts[i:i + self.BATCH_SIZE]
+                                batch_num = i // self.BATCH_SIZE + 1
+                                total_batches = (total + self.BATCH_SIZE - 1) // self.BATCH_SIZE
+                                
+                                logger.info(f"[RAPTOR Embedding] 批次 {batch_num}/{total_batches}，处理 {len(batch)} 个文本")
+                                
+                                try:
+                                    response = self._client.embeddings.create(
+                                        input=batch,
+                                        model=self._model_name,
+                                    )
+                                    all_embeddings.extend([item.embedding for item in response.data])
+                                except Exception as e:
+                                    logger.error(f"[RAPTOR Embedding] 批次 {batch_num} 失败: {e}")
+                                    raise
+                                
+                                # 速率限制：每批之间等待
+                                if i + self.BATCH_SIZE < total:
+                                    time.sleep(self.RATE_LIMIT_DELAY)
+                            
+                            return all_embeddings
+                        
+                        async def _aget_query_embedding(self, query: str) -> list[float]:
+                            return self._get_query_embedding(query)
+                        
+                        async def _aget_text_embedding(self, text: str) -> list[float]:
+                            return self._get_text_embedding(text)
+                    
+                    embed_model = OpenAICompatibleEmbedding(
+                        model_name=embed_model_name,
+                        api_key=embed_api_key or "dummy",
+                        api_base=embed_base_url,
+                    )
+                    logger.info(f"[RAPTOR] 使用 OpenAI 兼容 Embedding: {embed_provider}/{embed_model_name}")
+                except Exception as e:
+                    logger.error(f"[RAPTOR] 创建 OpenAI 兼容 Embedding 失败: {e}")
+                    raise
+            else:
+                # 原生 OpenAI
+                from llama_index.embeddings.openai import OpenAIEmbedding
+                embed_model = OpenAIEmbedding(
+                    model=embed_model_name,
+                    api_key=embed_api_key or settings.openai_api_key or "dummy",
+                )
         
-        logger.info(f"创建 RAPTOR 索引器: LLM={settings.llm_provider}/{settings.llm_model}, "
-                    f"Embedding={settings.embedding_provider}/{settings.embedding_model}")
+        logger.info(f"创建 RAPTOR 索引器: LLM={llm_provider}/{llm_model_name}, "
+                    f"Embedding={embed_provider}/{embed_model_name}")
         
         return RaptorIndexer(
             llm=llm,

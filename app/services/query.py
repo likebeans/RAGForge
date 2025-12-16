@@ -95,6 +95,7 @@ async def retrieve_chunks(
         tenant_id=tenant_id,
         kb_ids=[kb.id for kb in kbs],
         top_k=params.top_k,
+        session=session,  # RAPTOR 检索器需要 session 来检查索引
     )
     latency_ms = (time.perf_counter() - start_time) * 1000
     

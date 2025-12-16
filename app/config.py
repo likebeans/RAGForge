@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     environment: str = "dev"                 # 运行环境：dev/staging/prod
     log_level: str = "INFO"                  # 日志级别：DEBUG/INFO/WARNING/ERROR
     log_json: bool | None = None             # 日志格式：True=JSON，None=自动（prod用JSON）
+    timezone: str = "Asia/Shanghai"          # 时区设置，默认中国时区
     
     # ==================== 数据库配置 ====================
     # PostgreSQL 连接字符串

@@ -62,6 +62,9 @@ import {
   Image,
   Info,
   HelpCircle,
+  CheckCircle2,
+  XCircle,
+  Circle,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -154,6 +157,12 @@ export default function KnowledgeBaseDetailPage() {
   const [isUploadingIcon, setIsUploadingIcon] = useState(false);
   const iconInputRef = useState<HTMLInputElement | null>(null);
 
+  // 文档日志对话框
+  const [logDialogOpen, setLogDialogOpen] = useState(false);
+  const [logTarget, setLogTarget] = useState<{ id: string; title: string } | null>(null);
+  const [logContent, setLogContent] = useState<string>("");
+  const [isLoadingLog, setIsLoadingLog] = useState(false);
+
   const kb = knowledgeBases.find((k) => k.id === kbId);
   
   // 初始化配置
@@ -191,16 +200,23 @@ export default function KnowledgeBaseDetailPage() {
   );
 
   // 加载文档列表
-  const loadDocuments = useCallback(async () => {
+  // silent: 静默刷新（轮询时不显示 loading，避免界面闪烁）
+  const loadDocuments = useCallback(async (silent = false) => {
     if (!client || !kbId) return;
-    setIsLoading(true);
+    if (!silent) setIsLoading(true);
     try {
       const result = await client.listDocuments(kbId);
-      setDocuments(result.items || []);
+      const newDocs = result.items || [];
+      // 只在数据有变化时更新状态，避免不必要的重渲染
+      setDocuments(prev => {
+        const hasChanged = JSON.stringify(prev.map(d => ({ id: d.id, chunk_count: d.chunk_count, processing_status: d.processing_status }))) 
+          !== JSON.stringify(newDocs.map(d => ({ id: d.id, chunk_count: d.chunk_count, processing_status: d.processing_status })));
+        return hasChanged ? newDocs : prev;
+      });
     } catch (error) {
-      toast.error(`加载文档失败: ${(error as Error).message}`);
+      if (!silent) toast.error(`加载文档失败: ${(error as Error).message}`);
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   }, [client, kbId]);
 
@@ -209,6 +225,18 @@ export default function KnowledgeBaseDetailPage() {
       loadDocuments();
     }
   }, [client, isConnected, kbId, loadDocuments]);
+
+  // 自动刷新：当有文档处理中时，每 3 秒静默轮询一次
+  useEffect(() => {
+    const hasProcessingDocs = documents.some((doc) => doc.processing_status === "pending" || doc.processing_status === "processing");
+    if (!hasProcessingDocs || !client || !isConnected) return;
+
+    const interval = setInterval(() => {
+      loadDocuments(true); // 静默刷新，不显示 loading
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [documents, client, isConnected, loadDocuments]);
 
   // 文件上传
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
@@ -385,6 +413,67 @@ export default function KnowledgeBaseDetailPage() {
     delete customIcons[kbId];
     localStorage.setItem("kb_custom_icons", JSON.stringify(customIcons));
   };
+
+  // 查看文档日志（支持轮询刷新）
+  const fetchDocumentLog = useCallback(async (docId: string) => {
+    if (!client) return;
+    try {
+      const docDetail = await client.getDocument(docId);
+      
+      // 优先显示处理日志（如果存在）
+      if (docDetail.processing_log) {
+        setLogContent(docDetail.processing_log);
+      } else {
+        // 如果没有处理日志，显示基本文档信息
+        const logLines: string[] = [];
+        logLines.push(`[INFO] 文档信息`);
+        logLines.push(`[INFO] 文档名称: ${docDetail.title}`);
+        logLines.push(`[INFO] 文档 ID: ${docDetail.id}`);
+        logLines.push(`[INFO] 创建时间: ${formatDate(docDetail.created_at)}`);
+        logLines.push(`[INFO] 分块数量: ${docDetail.chunk_count}`);
+        if (docDetail.source) {
+          logLines.push(`[INFO] 来源类型: ${docDetail.source}`);
+        }
+        logLines.push(``);
+        logLines.push(`[INFO] 暂无详细处理日志`);
+        logLines.push(`[INFO] 通过 Ground 页面入库的文档会记录详细处理日志`);
+        setLogContent(logLines.join("\n"));
+      }
+      return docDetail;
+    } catch (error) {
+      setLogContent(`[ERROR] 加载日志失败: ${(error as Error).message}`);
+      return null;
+    }
+  }, [client]);
+
+  const handleViewLog = async (docId: string, title: string) => {
+    if (!client) return;
+    setLogTarget({ id: docId, title });
+    setLogDialogOpen(true);
+    setIsLoadingLog(true);
+    setLogContent("");
+    
+    await fetchDocumentLog(docId);
+    setIsLoadingLog(false);
+  };
+
+  // 日志对话框打开时自动轮询刷新（当文档处理中时）
+  useEffect(() => {
+    if (!logDialogOpen || !logTarget?.id || !client) return;
+    
+    // 检查当前文档是否正在处理中
+    const doc = documents.find(d => d.id === logTarget.id);
+    const isProcessing = doc && (doc.processing_status === "pending" || doc.processing_status === "processing");
+    
+    if (!isProcessing) return;
+    
+    // 每 2 秒刷新一次日志
+    const interval = setInterval(() => {
+      fetchDocumentLog(logTarget.id);
+    }, 2000);
+    
+    return () => clearInterval(interval);
+  }, [logDialogOpen, logTarget?.id, client, documents, fetchDocumentLog]);
 
   // 保存知识库配置
   const handleSaveConfig = async () => {
@@ -797,7 +886,7 @@ export default function KnowledgeBaseDetailPage() {
                   className="pl-8 h-8 w-48 text-sm"
                 />
               </div>
-              <Button variant="outline" size="sm" onClick={loadDocuments} disabled={isLoading}>
+              <Button variant="outline" size="sm" onClick={() => loadDocuments()} disabled={isLoading}>
                 <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
               </Button>
               {/* 新增文件下拉菜单 */}
@@ -933,10 +1022,25 @@ export default function KnowledgeBaseDetailPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-center">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <Layers className="h-3.5 w-3.5 text-muted-foreground" />
-                          <span className="text-sm font-medium">{doc.chunk_count || "-"}</span>
-                        </div>
+                        {doc.processing_status === "pending" || doc.processing_status === "processing" ? (
+                          <div className="flex items-center justify-center gap-1.5 text-amber-600">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <span className="text-sm">处理中</span>
+                          </div>
+                        ) : doc.processing_status === "failed" ? (
+                          <div className="flex items-center justify-center gap-1.5 text-red-600">
+                            <span className="text-sm">失败</span>
+                          </div>
+                        ) : doc.processing_status === "interrupted" ? (
+                          <div className="flex items-center justify-center gap-1.5 text-orange-600">
+                            <span className="text-sm">已中断</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center gap-1.5">
+                            <Layers className="h-3.5 w-3.5 text-muted-foreground" />
+                            <span className="text-sm font-medium">{doc.chunk_count}</span>
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -950,6 +1054,12 @@ export default function KnowledgeBaseDetailPage() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onClick={() => handleViewLog(doc.id, doc.title)}
+                              >
+                                <ScrollText className="h-4 w-4 mr-2" />
+                                查看日志
+                              </DropdownMenuItem>
                               <DropdownMenuItem
                                 onClick={() => handleDeleteClick(doc.id, doc.title)}
                                 className="text-destructive focus:text-destructive"
@@ -1127,6 +1237,109 @@ export default function KnowledgeBaseDetailPage() {
                 <Plus className="h-4 w-4 mr-2" />
               )}
               创建
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 文档日志对话框 */}
+      <Dialog open={logDialogOpen} onOpenChange={setLogDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ScrollText className="h-5 w-5" />
+              文档处理日志
+            </DialogTitle>
+            {logTarget && (
+              <p className="text-sm text-muted-foreground truncate">
+                {logTarget.title}
+              </p>
+            )}
+          </DialogHeader>
+          <div className="flex-1 min-h-0 overflow-auto">
+            {isLoadingLog ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : (
+              <>
+                {/* 解析并显示入库进度 */}
+                {(() => {
+                  // 使用 Map 来存储步骤，确保每个步骤号只有一个条目
+                  const stepsMap = new Map<number, { step: number; total: number; status: string; label: string; timestamp: string }>();
+                  // 匹配格式: [时间戳] [INFO] [STEP:N/M:status] label
+                  const stepRegex = /\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\]\s*\[\w+\]\s*\[STEP:(\d+)\/(\d+):(\w+)\](?:\s+([^\[\]\n]+))?/g;
+                  let match;
+                  while ((match = stepRegex.exec(logContent)) !== null) {
+                    const timestamp = match[1];
+                    const stepNum = parseInt(match[2]);
+                    const total = parseInt(match[3]);
+                    const status = match[4];
+                    const label = match[5]?.trim() || "";
+                    
+                    const existing = stepsMap.get(stepNum);
+                    if (existing) {
+                      // 更新状态和时间戳
+                      existing.status = status;
+                      existing.timestamp = timestamp;
+                      if (label && !existing.label) {
+                        existing.label = label;
+                      }
+                    } else if (label) {
+                      // 只有有 label 的才添加新步骤
+                      stepsMap.set(stepNum, { step: stepNum, total, status, label, timestamp });
+                    }
+                  }
+                  // 转换为数组并按步骤号排序
+                  const steps = Array.from(stepsMap.values()).sort((a, b) => a.step - b.step);
+                  if (steps.length > 0) {
+                    return (
+                      <div className="mb-4 p-4 bg-muted/30 rounded-lg border">
+                        <h4 className="text-sm font-medium mb-3">入库进度</h4>
+                        <div className="space-y-2">
+                          {steps.map((s) => (
+                            <div key={s.step} className="flex items-center gap-3">
+                              <div className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
+                                {s.status === "done" && (
+                                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                                )}
+                                {s.status === "running" && (
+                                  <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                                )}
+                                {s.status === "error" && (
+                                  <XCircle className="h-4 w-4 text-red-500" />
+                                )}
+                                {s.status === "skipped" && (
+                                  <Circle className="h-4 w-4 text-muted-foreground" />
+                                )}
+                                {!["done", "running", "error", "skipped"].includes(s.status) && (
+                                  <Circle className="h-4 w-4 text-muted-foreground" />
+                                )}
+                              </div>
+                              <span className="text-xs text-muted-foreground font-mono w-20 flex-shrink-0">
+                                {s.timestamp.split(" ")[1]}
+                              </span>
+                              <span className={`text-sm ${s.status === "done" ? "text-green-600" : s.status === "error" ? "text-red-600" : s.status === "skipped" ? "text-muted-foreground" : ""}`}>
+                                {s.label}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+                {/* 详细日志文本 */}
+                <pre className="bg-muted/50 rounded-lg p-4 text-xs font-mono whitespace-pre-wrap break-words overflow-auto max-h-[40vh]">
+                  {logContent || "暂无日志"}
+                </pre>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLogDialogOpen(false)}>
+              关闭
             </Button>
           </DialogFooter>
         </DialogContent>

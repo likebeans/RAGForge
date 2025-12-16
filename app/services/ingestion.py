@@ -26,6 +26,7 @@ from app.pipeline.base import BaseChunkerOperator
 from app.pipeline.chunkers.simple import SimpleChunker
 from app.pipeline.enrichers.summarizer import generate_summary, SummaryConfig
 from app.pipeline.enrichers.chunk_enricher import get_chunk_enricher, EnrichmentConfig
+from app.pipeline.indexers.raptor import RaptorIndexer, create_raptor_indexer_from_config, RAPTOR_AVAILABLE
 from app.services.acl import build_acl_metadata_for_chunk
 
 logger = logging.getLogger(__name__)
@@ -141,28 +142,109 @@ async def ingest_document(
     Returns:
         IngestionResult: 包含文档、chunks 和各后端写入状态的结果对象
     """
+    import time
+    from datetime import datetime
+    ingest_start = time.time()
+    
+    # 处理日志缓冲区
+    log_lines: list[str] = []
+    # 步骤进度信息（用于前端解析）
+    steps_info: list[dict] = []
+    # 用于保存日志的文档引用（在获取到 doc 后设置）
+    doc_ref: list = []  # 使用列表来存储引用，便于在闭包中修改
+    
+    async def save_log_to_db():
+        """将日志实时保存到数据库（使用 commit 确保其他会话可见）"""
+        if doc_ref:
+            doc_ref[0].processing_log = "\n".join(log_lines)
+            await session.commit()
+    
+    def add_log(msg: str, level: str = "INFO"):
+        from zoneinfo import ZoneInfo
+        from app.config import get_settings
+        tz = ZoneInfo(get_settings().timezone)
+        ts = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+        log_lines.append(f"[{ts}] [{level}] {msg}")
+        if level == "ERROR":
+            logger.error(msg)
+        elif level == "WARNING":
+            logger.warning(msg)
+        else:
+            logger.info(msg)
+    
+    async def add_step(step_num: int, total: int, label: str, status: str = "running"):
+        """添加步骤进度信息并保存到数据库"""
+        steps_info.append({"step": step_num, "total": total, "label": label, "status": status})
+        add_log(f"[STEP:{step_num}/{total}:{status}] {label}")
+        await save_log_to_db()
+    
+    async def update_step(step_num: int, status: str):
+        """更新步骤状态并保存到数据库"""
+        total = 6  # 默认总步骤数
+        for s in steps_info:
+            if s["step"] == step_num:
+                s["status"] = status
+                total = s["total"]
+                break
+        add_log(f"[STEP:{step_num}/{total}:{status}]")
+        await save_log_to_db()
+    
+    add_log(f"开始处理文档: {params.title}")
+    
+    # 支持使用已存在的文档记录（用于后台异步入库场景）
+    # 先获取 doc，这样后续步骤的日志才能实时保存
+    if params.existing_doc_id:
+        from sqlalchemy import select
+        doc_result = await session.execute(
+            select(Document).where(Document.id == params.existing_doc_id)
+        )
+        doc = doc_result.scalar_one_or_none()
+        if not doc:
+            raise ValueError(f"文档 {params.existing_doc_id} 不存在")
+        doc_ref.append(doc)  # 设置文档引用，便于实时保存日志
+        # 读取已有的处理日志（在后台任务中可能已经设置了初始日志）
+        if doc.processing_log:
+            log_lines.extend(doc.processing_log.split("\n"))
+        add_log(f"使用已存在的文档记录: doc_id={doc.id}")
+        # 设置状态为处理中
+        doc.processing_status = "processing"
+        await save_log_to_db()
+    
+    await add_step(1, 6, "解析切分器配置", "running")
     chunker = _resolve_chunker(kb)
+    add_log(f"使用切分器: {type(chunker).__name__}")
+    await update_step(1, "done")
 
-    doc = Document(
-        tenant_id=tenant_id,
-        knowledge_base_id=kb.id,
-        title=params.title,
-        extra_metadata=params.metadata or {},
-        source=params.source,
-        summary_status="pending",
-        # ACL 字段（模型中属性名为 acl_allow_*）
-        sensitivity_level=params.sensitivity_level,
-        acl_allow_users=params.acl_users,
-        acl_allow_roles=params.acl_roles,
-        acl_allow_groups=params.acl_groups,
-    )
-    session.add(doc)
-    await session.flush()
+    await add_step(2, 6, "创建文档记录", "running")
+    
+    if not params.existing_doc_id:
+        doc = Document(
+            tenant_id=tenant_id,
+            knowledge_base_id=kb.id,
+            title=params.title,
+            extra_metadata=params.metadata or {},
+            source=params.source,
+            summary_status="pending",
+            # ACL 字段（模型中属性名为 acl_allow_*）
+            sensitivity_level=params.sensitivity_level,
+            acl_allow_users=params.acl_users,
+            acl_allow_roles=params.acl_roles,
+            acl_allow_groups=params.acl_groups,
+        )
+        doc.processing_status = "processing"  # 设置状态为处理中
+        session.add(doc)
+        await session.flush()
+        doc_ref.append(doc)  # 设置文档引用
+        add_log(f"文档记录创建完成: doc_id={doc.id}")
+    
+    await update_step(2, "done")
     
     # 异步生成文档摘要（不阻塞主流程）
     if params.generate_doc_summary:
+        add_log(f"生成文档摘要...")
         await _generate_document_summary(doc, params.content)
 
+    await add_step(3, 6, "切分文档内容", "running")
     chunk_pieces = chunker.chunk(params.content, metadata=params.metadata or {})
     chunks: list[Chunk] = []
     for idx, piece in enumerate(chunk_pieces):
@@ -184,14 +266,21 @@ async def ingest_document(
         chunks.append(chunk)
 
     await session.flush()
+    add_log(f"切分完成: 生成 {len(chunks)} 个 chunks")
+    await update_step(3, "done")
     
     # Chunk Enrichment（可选，默认关闭）
     if params.enrich_chunks:
+        await add_step(4, 6, "Chunk 上下文增强", "running")
         await _enrich_chunks(
             chunks, doc,
             llm_config=params.llm_config,
             enricher_config=params.enricher_config,
         )
+        add_log(f"Chunk 增强完成")
+        await update_step(4, "done")
+    else:
+        await add_step(4, 6, "Chunk 上下文增强", "skipped")
 
     store_cfg = _get_store_config(kb)
     skip_qdrant = store_cfg.get("skip_qdrant", False)
@@ -203,6 +292,7 @@ async def ingest_document(
 
     # 批量写入向量库（异步，带错误处理）
     # 父子分块模式下：只对子块向量化，父块只存 DB 作为上下文
+    await add_step(5, 6, "写入向量库", "running")
     indexing_error = None
     if not skip_qdrant:
         # 构建 ACL metadata（从文档继承）
@@ -230,14 +320,16 @@ async def ingest_document(
             if not _is_parent_chunk(chunk.extra_metadata or {})
         ]
         try:
+            add_log(f"向量化并写入 {len(chunk_data)} 个 chunks 到 Qdrant...")
             await vector_store.upsert_chunks(
                 tenant_id=tenant_id, 
                 chunks=chunk_data,
                 embedding_config=embedding_config,
             )
+            add_log(f"向量库写入成功")
         except Exception as e:
             indexing_error = str(e)
-            logger.error(f"向量库写入失败: {e}")
+            add_log(f"向量库写入失败: {e}", "ERROR")
     
     # 写入 BM25 索引（同步，内存操作）
     # 同样只索引子块，父块不参与 BM25 检索
@@ -298,6 +390,44 @@ async def ingest_document(
     cache = get_bm25_cache()
     await cache.invalidate(tenant_id=tenant_id, kb_id=kb.id)
 
+    # 更新步骤 5 状态
+    if indexing_error:
+        await update_step(5, "error")
+    else:
+        await update_step(5, "done")
+
+    # RAPTOR 索引构建（可选，根据 KB 配置）
+    raptor_config = _get_raptor_config(kb)
+    if raptor_config and raptor_config.get("enabled", False):
+        await add_step(6, 6, "构建 RAPTOR 索引", "running")
+        add_log(f"这一步可能较慢，涉及向量化和 LLM 摘要...")
+        raptor_result = await _build_raptor_index(
+            session=session,
+            tenant_id=tenant_id,
+            kb=kb,
+            chunks=chunks,
+            raptor_config=raptor_config,
+        )
+        if raptor_result:
+            indexing_results.append(raptor_result)
+            if raptor_result.success:
+                add_log(f"RAPTOR 索引构建成功")
+                await update_step(6, "done")
+            else:
+                add_log(f"RAPTOR 索引构建失败: {raptor_result.error}", "WARNING")
+                await update_step(6, "error")
+    else:
+        await add_step(6, 6, "构建 RAPTOR 索引", "skipped")
+
+    total_time = time.time() - ingest_start
+    add_log(f"文档入库完成! 总耗时 {total_time:.2f}s, chunks={len(chunks)}")
+    
+    # 保存处理日志到文档
+    doc.processing_log = "\n".join(log_lines)
+    # 设置处理状态为完成
+    doc.processing_status = "completed"
+    await session.flush()
+    
     return IngestionResult(document=doc, chunks=chunks, indexing_results=indexing_results)
 
 
@@ -477,6 +607,166 @@ async def _generate_document_summary(doc: Document, content: str) -> None:
     except Exception as e:
         doc.summary_status = "failed"
         logger.warning(f"文档 {doc.id} 摘要生成失败: {e}")
+
+
+def _get_raptor_config(kb: KnowledgeBase) -> dict | None:
+    """
+    获取知识库的 RAPTOR 配置
+    
+    支持两种配置方式：
+    1. kb.config.raptor.enabled = true（直接配置）
+    2. kb.config.ingestion.indexer.name = 'raptor'（通过 Ground 前端配置）
+    
+    Args:
+        kb: 知识库对象
+        
+    Returns:
+        RAPTOR 配置字典，如果未配置则返回 None
+    """
+    cfg = kb.config or {}
+    if not isinstance(cfg, dict):
+        return None
+    
+    # 方式1：直接配置 raptor
+    raptor_cfg = cfg.get("raptor")
+    if raptor_cfg and isinstance(raptor_cfg, dict):
+        return raptor_cfg
+    
+    # 方式2：通过 ingestion.indexer 配置
+    ingestion = cfg.get("ingestion")
+    if ingestion and isinstance(ingestion, dict):
+        indexer = ingestion.get("indexer")
+        if indexer and isinstance(indexer, dict):
+            if indexer.get("name") == "raptor":
+                # 将 indexer params 转换为 raptor config 格式
+                params = indexer.get("params", {})
+                return {
+                    "enabled": True,
+                    "max_layers": params.get("max_levels", 3),
+                    "retrieval_mode": params.get("retrieval_mode", "collapsed"),
+                    "max_clusters": params.get("max_clusters", 10),
+                }
+    
+    return None
+
+
+async def _build_raptor_index(
+    session: AsyncSession,
+    tenant_id: str,
+    kb: KnowledgeBase,
+    chunks: list[Chunk],
+    raptor_config: dict,
+) -> IndexingResult | None:
+    """
+    构建 RAPTOR 索引
+    
+    Args:
+        session: 数据库会话
+        tenant_id: 租户 ID
+        kb: 知识库对象
+        chunks: 已切分的 chunk 列表
+        raptor_config: RAPTOR 配置
+        
+    Returns:
+        IndexingResult 或 None（如果 RAPTOR 不可用）
+    """
+    if not RAPTOR_AVAILABLE:
+        logger.warning("RAPTOR 不可用（llama-index-packs-raptor 未安装）")
+        return IndexingResult(
+            store_type="raptor",
+            success=False,
+            error="RAPTOR 不可用，请安装 llama-index-packs-raptor",
+        )
+    
+    try:
+        # 从 KB 配置中获取 embedding 配置
+        kb_cfg = kb.config or {}
+        embedding_config = None
+        if isinstance(kb_cfg, dict):
+            embedding_config = kb_cfg.get("embedding")
+        
+        # 创建索引器（传入 KB 的 embedding 配置）
+        indexer = create_raptor_indexer_from_config(embedding_config=embedding_config)
+        if indexer is None:
+            return IndexingResult(
+                store_type="raptor",
+                success=False,
+                error="无法创建 RAPTOR 索引器（检查 LLM/Embedding 配置）",
+            )
+        
+        # 更新索引器配置
+        if "max_layers" in raptor_config:
+            indexer.max_layers = raptor_config["max_layers"]
+        if "summary_num_workers" in raptor_config:
+            indexer.summary_num_workers = raptor_config["summary_num_workers"]
+        if "summary_prompt" in raptor_config and raptor_config["summary_prompt"]:
+            indexer.summary_prompt = raptor_config["summary_prompt"]
+        
+        # 准备 chunk 数据
+        chunk_data = [
+            {
+                "text": chunk.text,
+                "metadata": {
+                    "chunk_id": chunk.id,
+                    "document_id": chunk.document_id,
+                    **(chunk.extra_metadata or {}),
+                },
+            }
+            for chunk in chunks
+            # 只使用子块（非父块）构建 RAPTOR 索引
+            if not _is_parent_chunk(chunk.extra_metadata or {})
+        ]
+        
+        if not chunk_data:
+            logger.warning("没有可用的 chunks 构建 RAPTOR 索引")
+            return IndexingResult(
+                store_type="raptor",
+                success=False,
+                error="没有可用的 chunks",
+            )
+        
+        logger.info(f"开始构建 RAPTOR 索引: kb={kb.id}, chunks={len(chunk_data)}")
+        
+        # 在线程池中构建索引（避免 uvloop 事件循环冲突）
+        # LlamaIndex RaptorPack 内部使用 asyncio.run()，与 uvloop 不兼容
+        from starlette.concurrency import run_in_threadpool
+        result = await run_in_threadpool(indexer.build_from_chunks, chunk_data)
+        
+        # 创建 chunk_id 映射（用于关联叶子节点到原始 chunk）
+        chunk_id_mapping = {
+            chunk.id: chunk.id for chunk in chunks
+        }
+        
+        # 保存到数据库
+        saved_count = await indexer.save_to_db(
+            session=session,
+            tenant_id=tenant_id,
+            knowledge_base_id=kb.id,
+            chunk_id_mapping=chunk_id_mapping,
+        )
+        
+        logger.info(
+            f"RAPTOR 索引构建完成: kb={kb.id}, "
+            f"总节点={result.total_nodes}, 层数={result.levels}, "
+            f"保存到 DB={saved_count}"
+        )
+        
+        return IndexingResult(
+            store_type="raptor",
+            success=True,
+            chunks_count=result.total_nodes,
+        )
+        
+    except Exception as e:
+        error_msg = f"RAPTOR 索引构建失败: {e}"
+        logger.error(error_msg)
+        import traceback
+        traceback.print_exc()
+        return IndexingResult(
+            store_type="raptor",
+            success=False,
+            error=error_msg,
+        )
 
 
 async def _enrich_chunks(

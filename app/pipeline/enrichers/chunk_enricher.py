@@ -184,8 +184,14 @@ class ChunkEnricher:
         # 按 chunk_index 排序
         sorted_chunks = sorted(chunks, key=lambda x: x.get("chunk_index", 0))
         texts = [c["text"] for c in sorted_chunks]
+        total = len(sorted_chunks)
+        
+        logger.info(f"[Chunk增强] 开始处理 {total} 个 chunk，文档: {doc_title[:50] if doc_title else '未知'}...")
         
         results = []
+        success_count = 0
+        failed_count = 0
+        
         for i, chunk in enumerate(sorted_chunks):
             # 获取前后上下文
             start = max(0, i - self.context_chunks)
@@ -207,7 +213,17 @@ class ChunkEnricher:
             result["enriched_text"] = enriched
             result["enrichment_status"] = "completed" if enriched else "failed"
             results.append(result)
+            
+            if enriched:
+                success_count += 1
+            else:
+                failed_count += 1
+            
+            # 每处理 5 个或处理完最后一个时输出进度
+            if (i + 1) % 5 == 0 or i == total - 1:
+                logger.info(f"[Chunk增强] 进度: {i + 1}/{total} (成功: {success_count}, 失败: {failed_count})")
         
+        logger.info(f"[Chunk增强] 完成，共 {total} 个 chunk，成功: {success_count}，失败: {failed_count}")
         return results
     
     @classmethod

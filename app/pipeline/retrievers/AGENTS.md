@@ -104,6 +104,43 @@
 - `return_parent`: 是否返回父块（True）还是子块（False），默认 True
 - `include_child`: 返回父块时是否同时包含匹配的子块信息，默认 False
 
+### RaptorRetriever
+
+RAPTOR 检索器基于 RAPTOR 索引进行多层次检索，需要在入库时启用 RAPTOR 索引。
+
+**参数**：
+- `mode`: 检索模式，默认 "collapsed"
+  - `collapsed`: 扁平化检索，所有层级节点一起 top-k（速度快）
+  - `tree_traversal`: 树遍历检索，从顶层向下逐层筛选（更精确）
+- `base_retriever`: 当 RAPTOR 索引不可用时的回退检索器，默认 "dense"
+- `top_k`: 默认返回数量，默认 5
+- `embedding_config`: 可选，动态 embedding 配置
+
+**实现状态**：🚧 当前版本回退到 dense 检索器
+
+**扩展字段**：
+```python
+{
+    "raptor_mode": str,        # 检索模式（collapsed/tree_traversal）
+    "raptor_level": int,       # 节点层级（-1=原始chunk, 0+=摘要层级）
+    "raptor_fallback": bool,   # 是否使用了回退检索器
+}
+```
+
+**使用示例**：
+```python
+retriever = operator_registry.get("retriever", "raptor")(
+    mode="collapsed",
+    base_retriever="dense",
+)
+results = await retriever.retrieve(
+    query="什么是知识图谱？",
+    tenant_id="tenant_001",
+    kb_ids=["kb_tech"],  # 需要启用了 RAPTOR 索引的 KB
+    top_k=5
+)
+```
+
 ## 使用示例
 
 ```python
@@ -275,15 +312,26 @@ normalized_score = (score - min_score) / (max_score - min_score)
 
 ## 动态 Embedding 配置
 
-检索器支持从知识库配置中读取 embedding 模型，确保检索时使用与入库时相同的模型：
+检索器支持从知识库配置中读取 embedding 模型，确保检索时使用与入库时相同的模型。
+
+### 配置来源与优先级
+
+```
+请求参数 (embedding_override) > 知识库配置 > 环境变量
+```
+
+### EmbeddingOverrideConfig
 
 ```python
-# 检索服务会自动从知识库配置提取 embedding_config
-embedding_config = {
-    "provider": "ollama",
-    "model": "bge-m3",
-    "base_url": "http://localhost:11434",
-}
+from app.schemas.config import EmbeddingOverrideConfig
+
+# 完整配置（请求级覆盖）
+embedding_config = EmbeddingOverrideConfig(
+    provider="siliconflow",
+    model="BAAI/bge-m3",
+    api_key="sk-xxx",              # 可选，未指定时使用环境变量
+    base_url="https://api.siliconflow.cn/v1",  # 可选
+)
 
 # 支持动态配置的检索器
 retriever = operator_registry.get("retriever", "dense")(
@@ -297,9 +345,41 @@ retriever = operator_registry.get("retriever", "hyde")(
 )
 ```
 
-**支持动态配置的检索器**：
-- `dense` / `hybrid` / `fusion` / `llama_dense`：直接接受 `embedding_config`
-- `hyde` / `multi_query`：通过 `base_retriever_params` 传递给底层检索器
+### 参数传递流程
+
+前端通过 Playground API 传递 Embedding 配置到检索器：
+
+```
+Frontend (embeddingProvider/embeddingModel/embeddingApiKey/embeddingBaseUrl)
+    ↓
+PlaygroundRunRequest.embedding_override
+    ↓
+RAGParams.embedding_override
+    ↓
+RetrieveParams.embedding_override
+    ↓
+retrieve_chunks() → Retriever.retrieve(embedding_config=...)
+```
+
+### 支持动态配置的检索器
+
+| 检索器 | 接受方式 |
+|--------|----------|
+| `dense` / `hybrid` / `fusion` / `llama_dense` | 直接接受 `embedding_config` 参数 |
+| `hyde` / `multi_query` / `raptor` | 通过 `base_retriever_params` 传递给底层检索器 |
+
+### API Key 回退逻辑
+
+当前端未传递 `api_key` 时，后端自动使用对应提供商的环境变量：
+
+| Provider | 环境变量 |
+|----------|----------|
+| `siliconflow` | `SILICONFLOW_API_KEY` |
+| `openai` | `OPENAI_API_KEY` |
+| `zhipu` | `ZHIPU_API_KEY` |
+| `deepseek` | `DEEPSEEK_API_KEY` |
+
+**注意**：确保检索时使用的 Embedding 模型与入库时一致，否则向量空间不匹配会导致检索效果下降。
 
 ## 添加新检索器
 

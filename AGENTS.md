@@ -198,6 +198,55 @@ tests/               # 测试文件
 ### 后处理 (Postprocessors)
 - `ContextWindowExpander`: 上下文窗口扩展
 
+### 索引器 (Indexers)
+
+#### RAPTOR 索引器
+
+RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval) 是一种多层次索引方法，通过递归聚类和摘要构建树状索引结构。
+
+**核心原理**：
+```
+Layer 3 (Root):      [Global Summary]
+                          │
+Layer 2:          [Summary A]  [Summary B]
+                    /    \        /    \
+Layer 1:        [S1]    [S2]   [S3]   [S4]
+                 / \     |      |    /   \
+Layer 0:      [C1][C2] [C3]   [C4] [C5] [C6]  (原始Chunks)
+```
+
+**构建流程**：
+1. 将原始 Chunks 向量化
+2. 使用聚类算法（GMM/K-Means）对相似 Chunks 分组
+3. 对每个聚类生成摘要（LLM）
+4. 将摘要作为新节点，递归处理直到达到最大层数
+
+**检索模式**：
+- `collapsed`: 所有层级节点扁平化，统一 top-k 检索（速度快）
+- `tree_traversal`: 从顶层开始，逐层向下筛选（更精确）
+
+**KB 配置示例**：
+```json
+{
+  "raptor": {
+    "enabled": true,
+    "max_layers": 3,
+    "cluster_method": "gmm",
+    "min_cluster_size": 3
+  }
+}
+```
+
+**实现状态**：🚧 开发中
+- [x] RaptorIndexer 基础框架（封装 LlamaIndex RaptorPack）
+- [x] RaptorRetriever 占位符
+- [ ] 索引持久化（save/load）
+- [ ] 入库集成（ingestion.py）
+- [ ] 检索集成（从 KB 加载索引）
+- [ ] 数据模型（raptor_nodes 表）
+
+**参考论文**：https://arxiv.org/abs/2401.18059
+
 ### 使用示例
 ```python
 from app.pipeline import operator_registry
