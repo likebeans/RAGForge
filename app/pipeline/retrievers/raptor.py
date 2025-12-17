@@ -211,11 +211,19 @@ class RaptorRetriever(BaseRetrieverOperator):
         
         # 检查是否有 RAPTOR 索引
         has_raptor_index = False
+        raptor_node_counts = {}
         if session:
             for kb_id in kb_ids:
-                if await _check_raptor_index_exists(session, tenant_id, kb_id):
+                count = await self._get_raptor_node_count(session, tenant_id, kb_id)
+                if count > 0:
                     has_raptor_index = True
-                    break
+                    raptor_node_counts[kb_id] = count
+        
+        if raptor_node_counts:
+            logger.info(
+                "[RAPTOR] 检测到索引: %s",
+                {kb: f"{cnt}节点" for kb, cnt in raptor_node_counts.items()}
+            )
         
         if not has_raptor_index:
             logger.info(
@@ -236,13 +244,19 @@ class RaptorRetriever(BaseRetrieverOperator):
         
         # 有 RAPTOR 索引，执行 RAPTOR 检索
         logger.info(
-            "RAPTOR 检索 (mode=%s, kb_ids=%s)",
+            "[RAPTOR] 开始检索 (mode=%s, top_k=%d, kb_ids=%s)",
             self.mode,
+            top_k,
             kb_ids,
         )
+        logger.info("[RAPTOR] Step 1: 查询向量化...")
         
         # 使用 base_retriever 进行向量检索（RAPTOR 节点已在向量库中）
         # TODO: 实现 tree_traversal 模式的分层检索
+        import time
+        start_time = time.time()
+        
+        logger.info("[RAPTOR] Step 2: 向量库检索 (使用 %s)...", self.base_retriever_name)
         results = await self._fallback_retrieve(
             query=query,
             tenant_id=tenant_id,
@@ -250,20 +264,44 @@ class RaptorRetriever(BaseRetrieverOperator):
             top_k=top_k,
             **kwargs,
         )
+        vector_time = time.time() - start_time
+        logger.info("[RAPTOR] Step 2 完成: 检索到 %d 条结果 (耗时 %.1fms)", len(results), vector_time * 1000)
         
         # 如果有 session，尝试加载 RAPTOR 节点信息增强结果
         if session:
+            logger.info("[RAPTOR] Step 3: 加载节点层级信息...")
+            enrich_start = time.time()
             results = await self._enrich_with_raptor_info(
                 session=session,
                 tenant_id=tenant_id,
                 kb_ids=kb_ids,
                 results=results,
             )
+            enrich_time = time.time() - enrich_start
+            
+            # 统计各层级节点分布
+            level_stats = {}
+            for r in results:
+                level = r.get("raptor_level", 0)
+                level_stats[level] = level_stats.get(level, 0) + 1
+            
+            logger.info(
+                "[RAPTOR] Step 3 完成: 层级分布 %s (耗时 %.1fms)",
+                {f"L{k}": v for k, v in sorted(level_stats.items())},
+                enrich_time * 1000
+            )
         
         # 添加 raptor 标记
         for r in results:
             r["raptor_mode"] = self.mode
             r["raptor_fallback"] = False
+        
+        total_time = time.time() - start_time
+        logger.info(
+            "[RAPTOR] 检索完成: %d 结果, 总耗时 %.1fms",
+            len(results),
+            total_time * 1000
+        )
         
         return results
     
@@ -308,6 +346,25 @@ class RaptorRetriever(BaseRetrieverOperator):
                 r["raptor_level"] = 0  # 默认为叶子节点
         
         return results
+    
+    async def _get_raptor_node_count(
+        self,
+        session: AsyncSession,
+        tenant_id: str,
+        kb_id: str,
+    ) -> int:
+        """获取知识库的 RAPTOR 节点数量"""
+        from app.models.raptor_node import RaptorNode
+        from sqlalchemy import func
+        
+        stmt = (
+            select(func.count(RaptorNode.id))
+            .where(RaptorNode.tenant_id == tenant_id)
+            .where(RaptorNode.knowledge_base_id == kb_id)
+        )
+        
+        result = await session.execute(stmt)
+        return result.scalar() or 0
     
     async def _fallback_retrieve(
         self,
