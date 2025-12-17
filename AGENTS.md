@@ -237,13 +237,13 @@ Layer 0:      [C1][C2] [C3]   [C4] [C5] [C6]  (原始Chunks)
 }
 ```
 
-**实现状态**：🚧 开发中
+**实现状态**：✅ 可用
 - [x] RaptorIndexer 基础框架（封装 LlamaIndex RaptorPack）
-- [x] RaptorRetriever 占位符
-- [ ] 索引持久化（save/load）
-- [ ] 入库集成（ingestion.py）
-- [ ] 检索集成（从 KB 加载索引）
-- [ ] 数据模型（raptor_nodes 表）
+- [x] 入库集成（ingestion.py Step 6）
+- [x] 数据模型（raptor_nodes 表）
+- [x] 索引持久化（保存到 PostgreSQL）
+- [x] 多提供商 Embedding（qwen/siliconflow/zhipu 等）
+- [ ] RaptorRetriever 检索集成
 
 **参考论文**：https://arxiv.org/abs/2401.18059
 

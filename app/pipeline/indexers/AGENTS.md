@@ -12,7 +12,7 @@
 
 | 名称 | 类 | 说明 | 状态 |
 |------|-----|------|------|
-| `raptor` | `RaptorIndexer` | RAPTOR 多层次摘要树索引 | 🚧 开发中 |
+| `raptor` | `RaptorIndexer` | RAPTOR 多层次摘要树索引 | ✅ 可用 |
 
 ## RAPTOR 索引器
 
@@ -135,17 +135,18 @@ class RaptorIndexResult:
 
 ### 实现状态
 
-**当前版本**：
+**已完成**：
 - [x] RaptorIndexer 基础框架（封装 LlamaIndex RaptorPack）
 - [x] build_from_texts / build_from_chunks
 - [x] get_retriever（collapsed/tree_traversal）
-- [x] RaptorRetriever 占位符
+- [x] 入库集成（ingestion.py 调用，Step 6）
+- [x] 数据模型（raptor_nodes 表）
+- [x] 索引持久化（保存节点到 PostgreSQL）
+- [x] 多提供商 Embedding 支持（qwen/siliconflow/zhipu/deepseek/kimi/gemini）
+- [x] 异步执行（run_in_threadpool 避免 uvloop 冲突）
 
 **待开发**：
-- [ ] 索引持久化（save/load）
-- [ ] 入库集成（ingestion.py 调用）
-- [ ] 检索集成（RaptorRetriever 加载索引）
-- [ ] 数据模型（raptor_nodes 表）
+- [ ] RaptorRetriever 检索集成（从 DB 加载索引）
 - [ ] API 端点（构建/状态查询）
 - [ ] 前端配置界面
 

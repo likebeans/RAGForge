@@ -196,11 +196,13 @@ class RaptorIndexer:
         
         # 构建 RaptorPack
         logger.info(f"[RAPTOR] 步骤 2/4: 初始化 RaptorPack（这一步会进行向量化和聚类，可能较慢）...")
+        
+        # 确保使用我们配置的 Embedding 模型和 LLM
         pack_kwargs = {
             "documents": documents,
-            "llm": self.llm,
-            "embed_model": self.embed_model,
-            "summary_module": summary_module,
+            "embed_model": self.embed_model,  # 显式指定 Embedding 模型
+            "llm": self.llm,                  # 显式指定 LLM
+            "summary_module": summary_module,  # 传递摘要模块
         }
         
         if self.vector_store:
@@ -680,6 +682,36 @@ def create_raptor_indexer_from_config(
             # 使用 OpenAIEmbedding 时，非标准模型名会导致 enum 校验失败
             # 所以使用 LlamaIndex 的 OpenAILike 或通用方式
             if embed_provider in ("siliconflow", "qwen", "zhipu", "deepseek", "kimi", "gemini"):
+                # 为各提供商设置默认 base_url 和 api_key
+                provider_defaults = {
+                    "qwen": {
+                        "base_url": settings.qwen_api_base or "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                        "api_key": settings.qwen_api_key,
+                    },
+                    "siliconflow": {
+                        "base_url": "https://api.siliconflow.cn/v1",
+                        "api_key": settings.siliconflow_api_key,
+                    },
+                    "zhipu": {
+                        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+                        "api_key": settings.zhipu_api_key,
+                    },
+                    "deepseek": {
+                        "base_url": "https://api.deepseek.com/v1",
+                        "api_key": settings.deepseek_api_key,
+                    },
+                    "kimi": {
+                        "base_url": "https://api.moonshot.cn/v1",
+                        "api_key": settings.kimi_api_key,
+                    },
+                    "gemini": {
+                        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+                        "api_key": settings.gemini_api_key,
+                    },
+                }
+                defaults = provider_defaults.get(embed_provider, {})
+                embed_base_url = embed_base_url or defaults.get("base_url")
+                embed_api_key = embed_api_key or defaults.get("api_key")
                 try:
                     # 尝试使用 OpenAILike 或 HuggingFaceEmbedding 的方式
                     from openai import OpenAI as OpenAIClient
@@ -690,19 +722,22 @@ def create_raptor_indexer_from_config(
                     class OpenAICompatibleEmbedding(BaseEmbedding):
                         """OpenAI 兼容 API 的 Embedding 实现（带速率限制）"""
                         
-                        # 批量大小和速率限制
-                        BATCH_SIZE: int = 10  # 每批最多 10 个文本
-                        RATE_LIMIT_DELAY: float = 0.5  # 每批之间等待 0.5 秒
+                        # 参考 RAGFlow 实现，逐个处理文本而不是批量
+                        # SiliconFlow 等 API 对批量请求可能很慢，容易超时
+                        BATCH_SIZE: int = 1  # 逐个处理（参考 RAGFlow）
+                        RATE_LIMIT_DELAY: float = 0.1  # 每个请求之间等待 0.1 秒
                         
                         def __init__(self, model_name: str, api_key: str, api_base: str):
                             super().__init__()
                             self._model_name = model_name
+                            # 参考 RAGFlow: 单个文本 30 秒超时
                             self._client = OpenAIClient(
                                 api_key=api_key, 
                                 base_url=api_base,
-                                timeout=60.0,  # 60 秒超时
+                                timeout=30.0,  # 30 秒超时（单个文本）
                                 max_retries=3,  # 最多重试 3 次
                             )
+                            logger.info(f"[RAPTOR Embedding] 初始化完成: model={model_name}, base_url={api_base}")
                         
                         @property
                         def model_name(self) -> str:
@@ -750,10 +785,61 @@ def create_raptor_indexer_from_config(
                             return all_embeddings
                         
                         async def _aget_query_embedding(self, query: str) -> list[float]:
-                            return self._get_query_embedding(query)
+                            return await self._get_text_embedding(query)
                         
                         async def _aget_text_embedding(self, text: str) -> list[float]:
-                            return self._get_text_embedding(text)
+                            return await self._get_text_embedding(text)
+                            
+                        async def aget_text_embedding_batch(
+                            self, texts: list[str], show_progress: bool = False
+                        ) -> list[list[float]]:
+                            """Async get text embeddings with batching and rate limiting"""
+                            import asyncio
+                            from tqdm import tqdm
+                            
+                            all_embeddings = []
+                            total = len(texts)
+                            
+                            # 创建进度条
+                            pbar = tqdm(total=total, desc="Processing embeddings", disable=not show_progress)
+                            
+                            # 分批处理
+                            for i in range(0, total, self.BATCH_SIZE):
+                                batch = texts[i:i + self.BATCH_SIZE]
+                                batch_num = i // self.BATCH_SIZE + 1
+                                total_batches = (total + self.BATCH_SIZE - 1) // self.BATCH_SIZE
+                                
+                                logger.info(f"[RAPTOR Embedding] 处理 {batch_num}/{total_batches}，文本长度: {len(batch[0])} 字符")
+                                
+                                try:
+                                    import time as _time
+                                    start_ts = _time.time()
+                                    
+                                    # 使用异步客户端
+                                    response = await asyncio.get_event_loop().run_in_executor(
+                                        None,
+                                        lambda b=batch: self._client.embeddings.create(
+                                            input=b,
+                                            model=self._model_name,
+                                        )
+                                    )
+                                    
+                                    elapsed = _time.time() - start_ts
+                                    all_embeddings.extend([item.embedding for item in response.data])
+                                    pbar.update(len(batch))
+                                    
+                                    logger.info(f"[RAPTOR Embedding] 完成 {batch_num}/{total_batches}，耗时: {elapsed:.2f}s")
+                                except Exception as e:
+                                    logger.error(f"[RAPTOR Embedding] 处理 {batch_num} 失败: {e}")
+                                    pbar.close()
+                                    raise
+                                
+                                # 速率限制：每批之间等待
+                                if i + self.BATCH_SIZE < total:
+                                    await asyncio.sleep(self.RATE_LIMIT_DELAY)
+                            
+                            pbar.close()
+                            return all_embeddings
                     
                     embed_model = OpenAICompatibleEmbedding(
                         model_name=embed_model_name,
