@@ -25,9 +25,9 @@ logger = logging.getLogger(__name__)
 # 尝试导入 RAPTOR 依赖
 try:
     from app.pipeline.indexers.raptor import (
-        RaptorIndexer, 
-        create_raptor_indexer_from_config,
-        RAPTOR_AVAILABLE,
+        RaptorNativeIndexer as RaptorIndexer, 
+        create_raptor_native_indexer_from_config as create_raptor_indexer_from_config,
+        RAPTOR_NATIVE_AVAILABLE as RAPTOR_AVAILABLE,
     )
 except ImportError:
     RAPTOR_AVAILABLE = False
