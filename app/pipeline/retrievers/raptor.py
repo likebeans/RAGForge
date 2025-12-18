@@ -660,7 +660,7 @@ class RaptorRetriever(BaseRetrieverOperator):
         """
         from app.models.raptor_node import RaptorNode
         from app.models.chunk import Chunk
-        from app.infra.embeddings import get_embedding
+        from app.infra.embeddings import get_embedding_with_config
         from app.config import get_settings
         import numpy as np
         
@@ -720,17 +720,22 @@ class RaptorRetriever(BaseRetrieverOperator):
         logger.info("[RAPTOR-Tree] Step 2: 查询向量化...")
         embed_start = time.time()
         
-        # 使用 embedding_config 或默认配置
-        embed_provider = settings.embedding_provider
-        embed_model = settings.embedding_model
+        # 构建 provider_config
+        provider_config = {
+            "provider": settings.embedding_provider,
+            "model": settings.embedding_model,
+        }
         if self.embedding_config:
-            embed_provider = self.embedding_config.get("provider", embed_provider)
-            embed_model = self.embedding_config.get("model", embed_model)
+            provider_config["provider"] = self.embedding_config.get("provider", provider_config["provider"])
+            provider_config["model"] = self.embedding_config.get("model", provider_config["model"])
+            if self.embedding_config.get("api_key"):
+                provider_config["api_key"] = self.embedding_config["api_key"]
+            if self.embedding_config.get("base_url"):
+                provider_config["base_url"] = self.embedding_config["base_url"]
         
-        query_embedding = await get_embedding(
+        query_embedding = await get_embedding_with_config(
             text=query,
-            provider=embed_provider,
-            model=embed_model,
+            provider_config=provider_config,
         )
         query_vec = np.array(query_embedding)
         
