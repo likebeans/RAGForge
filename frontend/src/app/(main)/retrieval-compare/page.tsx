@@ -187,7 +187,7 @@ const RETRIEVER_UI_CONFIG: Record<string, RetrieverConfig> = {
     label: "RAPTOR检索",
     description: "多层次递归聚类+摘要树索引",
     params: [
-      { key: 'mode', label: '检索模式', type: 'select', default: 'collapsed', options: ['collapsed', 'tree'] }
+      { key: 'mode', label: '检索模式', type: 'select', default: 'collapsed', options: ['collapsed', 'tree_traversal'] }
     ],
     requires: { indexer: ['raptor'] },
     warning: '需要 RAPTOR 索引，当前知识库未配置 RAPTOR 索引器，将回退为普通向量检索'

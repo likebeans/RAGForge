@@ -26,7 +26,11 @@ from app.pipeline.base import BaseChunkerOperator
 from app.pipeline.chunkers.simple import SimpleChunker
 from app.pipeline.enrichers.summarizer import generate_summary, SummaryConfig
 from app.pipeline.enrichers.chunk_enricher import get_chunk_enricher, EnrichmentConfig
-from app.pipeline.indexers.raptor import RaptorIndexer, create_raptor_indexer_from_config, RAPTOR_AVAILABLE
+from app.pipeline.indexers.raptor import (
+    RaptorNativeIndexer,
+    create_raptor_native_indexer_from_config,
+    RAPTOR_NATIVE_AVAILABLE,
+)
 from app.services.acl import build_acl_metadata_for_chunk
 
 logger = logging.getLogger(__name__)
@@ -189,6 +193,21 @@ async def ingest_document(
         add_log(f"[STEP:{step_num}/{total}:{status}]")
         await save_log_to_db()
     
+    async def check_interrupted() -> bool:
+        """检查文档是否被用户中断，返回 True 表示已中断"""
+        if not doc_ref:
+            return False
+        # 从数据库重新读取文档状态（使用新查询避免缓存）
+        result = await session.execute(
+            select(Document.processing_status).where(Document.id == doc_ref[0].id)
+        )
+        current_status = result.scalar_one_or_none()
+        if current_status == "interrupted":
+            add_log("检测到用户中断请求，停止处理", level="WARNING")
+            await save_log_to_db()
+            return True
+        return False
+    
     add_log(f"开始处理文档: {params.title}")
     
     # 支持使用已存在的文档记录（用于后台异步入库场景）
@@ -269,6 +288,10 @@ async def ingest_document(
     add_log(f"切分完成: 生成 {len(chunks)} 个 chunks")
     await update_step(3, "done")
     
+    # 中断检查点 1：切分完成后
+    if await check_interrupted():
+        return IngestionResult(document=doc, chunks=chunks, indexing_results=[])
+    
     # Chunk Enrichment（可选，默认关闭）
     if params.enrich_chunks:
         await add_step(4, 6, "Chunk 上下文增强", "running")
@@ -284,6 +307,10 @@ async def ingest_document(
 
     store_cfg = _get_store_config(kb)
     skip_qdrant = store_cfg.get("skip_qdrant", False)
+
+    # 中断检查点 2：向量化前
+    if await check_interrupted():
+        return IngestionResult(document=doc, chunks=chunks, indexing_results=[])
 
     # 标记所有 chunks 为 indexing 状态
     for chunk in chunks:
@@ -396,6 +423,10 @@ async def ingest_document(
     else:
         await update_step(5, "done")
 
+    # 中断检查点 3：RAPTOR 索引构建前
+    if await check_interrupted():
+        return IngestionResult(document=doc, chunks=chunks, indexing_results=indexing_results)
+
     # RAPTOR 索引构建（可选，根据 KB 配置）
     raptor_config = _get_raptor_config(kb)
     if raptor_config and raptor_config.get("enabled", False):
@@ -407,6 +438,7 @@ async def ingest_document(
             kb=kb,
             chunks=chunks,
             raptor_config=raptor_config,
+            embedding_config=embedding_config,
         )
         if raptor_result:
             indexing_results.append(raptor_result)
@@ -656,9 +688,12 @@ async def _build_raptor_index(
     kb: KnowledgeBase,
     chunks: list[Chunk],
     raptor_config: dict,
+    embedding_config: dict | None = None,
 ) -> IndexingResult | None:
     """
-    构建 RAPTOR 索引
+    构建 RAPTOR 索引（使用原生实现）
+    
+    原生实现参考 RAGFlow，使用 UMAP 降维 + GMM 聚类 + LLM 摘要。
     
     Args:
         session: 数据库会话
@@ -666,56 +701,51 @@ async def _build_raptor_index(
         kb: 知识库对象
         chunks: 已切分的 chunk 列表
         raptor_config: RAPTOR 配置
+        embedding_config: 可选的 embedding 配置（来自调用方，与向量库写入保持一致）
         
     Returns:
         IndexingResult 或 None（如果 RAPTOR 不可用）
     """
-    if not RAPTOR_AVAILABLE:
-        logger.warning("RAPTOR 不可用（llama-index-packs-raptor 未安装）")
+    if not RAPTOR_NATIVE_AVAILABLE:
+        logger.warning("RAPTOR 不可用（需要安装 umap-learn 和 scikit-learn）")
         return IndexingResult(
             store_type="raptor",
             success=False,
-            error="RAPTOR 不可用，请安装 llama-index-packs-raptor",
+            error="RAPTOR 不可用，请安装 umap-learn 和 scikit-learn",
         )
     
     try:
-        # 从 KB 配置中获取 embedding 配置
+        # 从 KB 配置中获取 llm 配置（embedding_config 优先使用调用方传入的）
         kb_cfg = kb.config or {}
-        embedding_config = None
+        llm_config = None
         if isinstance(kb_cfg, dict):
-            embedding_config = kb_cfg.get("embedding")
+            llm_config = kb_cfg.get("llm")
         
-        # 创建索引器（传入 KB 的 embedding 配置）
-        indexer = create_raptor_indexer_from_config(embedding_config=embedding_config)
-        if indexer is None:
-            return IndexingResult(
-                store_type="raptor",
-                success=False,
-                error="无法创建 RAPTOR 索引器（检查 LLM/Embedding 配置）",
-            )
+        # 创建原生索引器
+        indexer = await create_raptor_native_indexer_from_config(
+            embedding_config=embedding_config,
+            llm_config=llm_config,
+            raptor_config=raptor_config,
+        )
         
-        # 更新索引器配置
-        if "max_layers" in raptor_config:
-            indexer.max_layers = raptor_config["max_layers"]
-        if "summary_num_workers" in raptor_config:
-            indexer.summary_num_workers = raptor_config["summary_num_workers"]
-        if "summary_prompt" in raptor_config and raptor_config["summary_prompt"]:
-            indexer.summary_prompt = raptor_config["summary_prompt"]
-        
-        # 准备 chunk 数据
-        chunk_data = [
-            {
+        # 准备 chunk 数据（添加索引用于映射）
+        chunk_data = []
+        chunk_id_mapping = {}
+        for idx, chunk in enumerate(chunks):
+            # 只使用子块（非父块）构建 RAPTOR 索引
+            if _is_parent_chunk(chunk.extra_metadata or {}):
+                continue
+            
+            chunk_data.append({
                 "text": chunk.text,
                 "metadata": {
+                    "chunk_idx": idx,
                     "chunk_id": chunk.id,
                     "document_id": chunk.document_id,
                     **(chunk.extra_metadata or {}),
                 },
-            }
-            for chunk in chunks
-            # 只使用子块（非父块）构建 RAPTOR 索引
-            if not _is_parent_chunk(chunk.extra_metadata or {})
-        ]
+            })
+            chunk_id_mapping[str(idx)] = chunk.id
         
         if not chunk_data:
             logger.warning("没有可用的 chunks 构建 RAPTOR 索引")
@@ -725,19 +755,26 @@ async def _build_raptor_index(
                 error="没有可用的 chunks",
             )
         
-        logger.info(f"开始构建 RAPTOR 索引: kb={kb.id}, chunks={len(chunk_data)}")
+        logger.info(f"[RAPTOR-Native] 开始构建索引: kb={kb.id}, chunks={len(chunk_data)}")
         
-        # 在线程池中构建索引（避免 uvloop 事件循环冲突）
-        # LlamaIndex RaptorPack 内部使用 asyncio.run()，与 uvloop 不兼容
-        from starlette.concurrency import run_in_threadpool
-        result = await run_in_threadpool(indexer.build_from_chunks, chunk_data)
+        # 构建索引（异步）
+        result = await indexer.build(chunk_data)
         
-        # 创建 chunk_id 映射（用于关联叶子节点到原始 chunk）
-        chunk_id_mapping = {
-            chunk.id: chunk.id for chunk in chunks
-        }
+        if result.total_nodes == 0:
+            logger.warning("[RAPTOR-Native] 构建结果为空")
+            return IndexingResult(
+                store_type="raptor",
+                success=False,
+                error="RAPTOR 索引构建结果为空",
+            )
         
-        # 保存到数据库
+        # 保存向量到向量库
+        vector_count = await indexer.save_to_vector_store(
+            tenant_id=tenant_id,
+            knowledge_base_id=kb.id,
+        )
+        
+        # 保存节点到数据库
         saved_count = await indexer.save_to_db(
             session=session,
             tenant_id=tenant_id,
@@ -746,9 +783,10 @@ async def _build_raptor_index(
         )
         
         logger.info(
-            f"RAPTOR 索引构建完成: kb={kb.id}, "
+            f"[RAPTOR-Native] 索引构建完成: kb={kb.id}, "
             f"总节点={result.total_nodes}, 层数={result.levels}, "
-            f"保存到 DB={saved_count}"
+            f"叶子节点={result.leaf_nodes}, 摘要节点={result.summary_nodes}, "
+            f"保存向量={vector_count}, 保存DB={saved_count}"
         )
         
         return IndexingResult(

@@ -336,6 +336,63 @@ class AsyncQdrantVectorStore:
         )
         logger.debug(f"批量 upsert {len(chunks)} chunks 到 {collection} (策略: {effective})")
 
+    async def upsert_vectors(
+        self,
+        *,
+        tenant_id: str,
+        knowledge_base_id: str,
+        vectors: list[dict],
+        strategy: IsolationStrategy = "auto",
+    ) -> int:
+        """
+        批量插入已有向量（不重新生成 embedding）
+        
+        用于 RAPTOR 等已预先计算好 embedding 的场景。
+        此方法是向量库无关的抽象接口，Milvus/ES/pgvector 实现时需提供相同签名。
+        
+        Args:
+            tenant_id: 租户 ID
+            knowledge_base_id: 知识库 ID
+            vectors: 向量列表，每个包含:
+                - id: str (UUID 格式)
+                - vector: list[float]
+                - payload: dict (包含 text, metadata 等)
+            strategy: 隔离策略
+            
+        Returns:
+            插入的向量数量
+        """
+        if not vectors:
+            return 0
+        
+        # 从向量推断维度
+        embedding_dim = len(vectors[0]["vector"]) if vectors else None
+        
+        collection, effective = await self._ensure_collection(tenant_id, strategy, embedding_dim)
+        
+        # 构建 points
+        points = []
+        for v in vectors:
+            payload = v.get("payload", {})
+            payload["kb_id"] = knowledge_base_id
+            if effective == "partition":
+                payload["tenant_id"] = tenant_id
+            
+            points.append(
+                models.PointStruct(
+                    id=v["id"],
+                    vector=v["vector"],
+                    payload=payload,
+                )
+            )
+        
+        await self.client.upsert(
+            collection_name=collection,
+            points=points,
+        )
+        logger.debug(f"批量 upsert {len(vectors)} vectors 到 {collection} (策略: {effective})")
+        return len(vectors)
+
     async def search(
         self,
         *,

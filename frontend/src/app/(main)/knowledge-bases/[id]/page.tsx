@@ -65,6 +65,7 @@ import {
   CheckCircle2,
   XCircle,
   Circle,
+  StopCircle,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -347,6 +348,19 @@ export default function KnowledgeBaseDetailPage() {
     } finally {
       setDeleteDialogOpen(false);
       setDeleteTarget(null);
+    }
+  };
+
+  // 中断文档处理
+  const handleInterrupt = async (docId: string, title: string) => {
+    if (!client) return;
+    
+    try {
+      await client.interruptDocument(docId);
+      toast.success(`已中断 "${title}" 的处理`);
+      loadDocuments();
+    } catch (error) {
+      toast.error(`中断失败: ${(error as Error).message}`);
     }
   };
 
@@ -1060,6 +1074,15 @@ export default function KnowledgeBaseDetailPage() {
                                 <ScrollText className="h-4 w-4 mr-2" />
                                 查看日志
                               </DropdownMenuItem>
+                              {(doc.processing_status === "pending" || doc.processing_status === "processing") && (
+                                <DropdownMenuItem
+                                  onClick={() => handleInterrupt(doc.id, doc.title)}
+                                  className="text-orange-600 focus:text-orange-600"
+                                >
+                                  <StopCircle className="h-4 w-4 mr-2" />
+                                  中断处理
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuItem
                                 onClick={() => handleDeleteClick(doc.id, doc.title)}
                                 className="text-destructive focus:text-destructive"

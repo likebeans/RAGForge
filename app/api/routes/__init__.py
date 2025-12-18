@@ -30,6 +30,7 @@ from app.api.routes import (
     query,
     rag,
     rag_stream,
+    raptor,
 )
 
 # 主路由器，包含所有 API 端点
@@ -50,3 +51,4 @@ api_router.include_router(model_providers.router)  # 模型提供商管理
 api_router.include_router(ground.router)  # Ground (playground)
 api_router.include_router(pipeline_playground.router)  # Pipeline playground
 api_router.include_router(enrichment.router, tags=["enrichment"])  # 增强预览
+api_router.include_router(raptor.router)  # RAPTOR 索引管理

@@ -12,7 +12,7 @@
 
 | 名称 | 类 | 说明 | 状态 |
 |------|-----|------|------|
-| `raptor` | `RaptorIndexer` | RAPTOR 多层次摘要树索引 | ✅ 可用 |
+| `raptor` | `RaptorNativeIndexer` | RAPTOR 多层次摘要树索引（原生实现） | ✅ 可用 |
 
 ## RAPTOR 索引器
 
@@ -58,26 +58,32 @@ RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval) 是一种
 ### 使用示例
 
 ```python
-from app.pipeline.indexers.raptor import RaptorIndexer, create_raptor_indexer_from_config
+from app.pipeline.indexers.raptor import (
+    RaptorNativeIndexer,
+    create_raptor_native_indexer_from_config,
+)
 
-# 从应用配置创建索引器
-indexer = create_raptor_indexer_from_config()
+# 从应用配置创建索引器（异步）
+indexer = await create_raptor_native_indexer_from_config(
+    embedding_config={"provider": "qwen", "model": "text-embedding-v3"},
+    llm_config={"provider": "qwen", "model": "qwen-plus"},
+)
 
-# 从 chunks 构建索引
+# 从 chunks 构建索引（异步）
 chunks = [
     {"text": "文本内容1...", "metadata": {"doc_id": "doc1"}},
     {"text": "文本内容2...", "metadata": {"doc_id": "doc1"}},
 ]
-result = indexer.build_from_chunks(chunks)
+result = await indexer.build(chunks)
 
 print(f"总节点: {result.total_nodes}")
 print(f"层数: {result.levels}")
 print(f"叶子节点: {result.leaf_nodes}")
 print(f"摘要节点: {result.summary_nodes}")
 
-# 获取检索器
-retriever = indexer.get_retriever(mode="collapsed", top_k=5)
-results = retriever.retrieve("查询问题")
+# 保存到数据库和向量库
+await indexer.save_to_vector_store(tenant_id, kb_id)
+await indexer.save_to_db(session, tenant_id, kb_id, chunk_id_mapping)
 ```
 
 ### 检索模式
@@ -136,26 +142,125 @@ class RaptorIndexResult:
 ### 实现状态
 
 **已完成**：
-- [x] RaptorIndexer 基础框架（封装 LlamaIndex RaptorPack）
-- [x] build_from_texts / build_from_chunks
-- [x] get_retriever（collapsed/tree_traversal）
+- [x] RaptorNativeIndexer 原生实现（参考 RAGFlow）
+- [x] UMAP 降维 + GMM 聚类 + LLM 摘要
+- [x] 异步 build() 方法
 - [x] 入库集成（ingestion.py 调用，Step 6）
 - [x] 数据模型（raptor_nodes 表）
-- [x] 索引持久化（保存节点到 PostgreSQL）
+- [x] 索引持久化（保存节点到 PostgreSQL + Qdrant）
 - [x] 多提供商 Embedding 支持（qwen/siliconflow/zhipu/deepseek/kimi/gemini）
-- [x] 异步执行（run_in_threadpool 避免 uvloop 冲突）
+- [x] 正确设置 level 和 indexing_status
+- [x] tree_traversal 检索模式
+- [x] collapsed 检索模式
 
 **待开发**：
-- [ ] RaptorRetriever 检索集成（从 DB 加载索引）
-- [ ] API 端点（构建/状态查询）
 - [ ] 前端配置界面
+
+### 已实现功能
+
+#### API 端点 ✅
+RAPTOR 索引管理 API，支持手动构建、状态查询和删除：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/v1/knowledge-bases/{kb_id}/raptor/status` | 查询索引状态 |
+| POST | `/v1/knowledge-bases/{kb_id}/raptor/build` | 手动触发构建 |
+| DELETE | `/v1/knowledge-bases/{kb_id}/raptor` | 删除索引 |
+
+**状态响应示例**：
+```json
+{
+  "has_index": true,
+  "total_nodes": 42,
+  "leaf_nodes": 30,
+  "summary_nodes": 12,
+  "max_level": 2,
+  "nodes_by_level": [
+    {"level": 0, "count": 30},
+    {"level": 1, "count": 10},
+    {"level": 2, "count": 2}
+  ],
+  "last_build_time": "2024-12-17T10:30:00Z",
+  "indexing_status": "indexed"
+}
+```
+
+#### tree_traversal 检索模式 ✅
+从最高层摘要开始，逐层向下筛选，最终返回叶子节点：
+
+```
+Query → Layer 2 检索 → 选中 [Summary A, Summary B]
+      → Layer 1 检索（仅子节点）→ 选中 [S1, S3]
+      → Layer 0 检索（仅子节点）→ 返回 [C1, C2, C4]
+```
+
+**实现细节**：
+1. 加载完整的 RAPTOR 树结构
+2. 获取查询向量
+3. 从最高层开始，对候选节点计算余弦相似度
+4. 每层选择 top-k 节点，向下遍历其子节点
+5. 最终返回叶子节点（原始 chunks）
+
+#### 摘要→原文映射 ✅
+当 collapsed 模式检索到摘要节点时，自动回溯返回对应的原始 chunks：
+```
+Query → 匹配到 Summary A (level=2) → 通过 children_ids 找到 [S1, S2] → 继续回溯 → 返回 [C1, C2, C3]
+```
+
+**实现细节**：
+1. 检测检索结果中的摘要节点（level > 0）
+2. 递归查找所有子孙叶子节点
+3. 返回原始 chunks，同时保留摘要上下文
+4. 通过 `expand_to_leaves` 参数控制是否展开（默认 True）
+
+**扩展字段**：
+```python
+{
+    "raptor_expanded_from": str,      # 展开来源的摘要节点 ID
+    "raptor_summary_preview": str,    # 摘要内容预览（前100字符）
+}
+```
 
 ### 技术依赖
 
 ```toml
 # pyproject.toml
-"llama-index-packs-raptor>=0.1.3"
+"umap-learn>=0.5.0"      # UMAP 降维
+"scikit-learn>=1.3.0"    # GMM 聚类
 ```
+
+### 构建日志示例
+
+以下是一个典型的 RAPTOR 索引构建日志：
+
+```
+[RAPTOR-Native] 开始构建索引: kb=278f42d7-xxx, chunks=48
+[RAPTOR-Native] Step 1: 向量化 chunks...
+[RAPTOR-Native] Step 1 完成: 向量化了 48 个 chunks
+[RAPTOR-Native] Step 2.1: 处理 Layer 1...
+[RAPTOR-Native] Layer 1: 最优聚类数 = 10
+[RAPTOR-Native] Layer 1: 生成了 10 个摘要节点
+[RAPTOR-Native] Step 2.2: 处理 Layer 2...
+[RAPTOR-Native] Layer 2: 最优聚类数 = 3
+[RAPTOR-Native] Layer 2: 生成了 3 个摘要节点
+[RAPTOR-Native] Step 2.3: 处理 Layer 3...
+[RAPTOR-Native] Layer 3: UMAP 降维失败: Cannot use scipy.linalg.eigh...
+[RAPTOR-Native] RAPTOR 索引构建完成! 总节点 61, 层数 3, 叶子节点 48, 摘要节点 13
+```
+
+### 常见警告说明
+
+构建过程中可能出现以下警告，均为**预期行为**，不影响最终结果：
+
+| 警告 | 原因 | 影响 |
+|------|------|------|
+| `n_jobs value 1 overridden to 1 by setting random_state` | UMAP 设置了随机种子以保证结果可复现，强制单线程运行 | ⚪ 无影响，可忽略 |
+| `k >= N for N * N square matrix` | 当前层节点数太少，UMAP 需要的特征向量数量 >= 数据点数量 | 🟡 UMAP 自动降级处理 |
+| `Layer X: UMAP 降维失败` | 节点数太少（如只有3个），无法进行有效的降维聚类 | 🟢 预期行为，自动跳过该层 |
+
+**Layer 聚类停止条件**：
+- 当某层节点数少于 `min_cluster_size`（默认3）时，无法继续聚类
+- 这是 RAPTOR 算法的正常收敛行为，表示已达到合理的抽象层级
 
 ### 注意事项
 
@@ -163,6 +268,7 @@ class RaptorIndexResult:
 2. **构建时间**：索引构建可能耗时较长，建议异步后台执行
 3. **增量更新**：当前版本不支持增量更新，新增文档需要重建整个索引
 4. **向量一致性**：检索时必须使用与构建时相同的 Embedding 模型
+5. **numpy 类型转换**：保存到数据库和向量库时，所有 numpy 类型会自动转换为原生 Python 类型
 
 ## 添加新索引器
 

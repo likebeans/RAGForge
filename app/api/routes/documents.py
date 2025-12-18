@@ -286,6 +286,63 @@ async def list_document_chunks(
     return ChunkListResponse(items=items, total=len(items))
 
 
+@router.post("/v1/documents/{doc_id}/interrupt", status_code=status.HTTP_200_OK)
+async def interrupt_document_processing(
+    doc_id: str = Path(..., description="Document ID"),
+    tenant=Depends(get_tenant),
+    context: APIKeyContext = Depends(require_role("admin", "write")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    中断文档入库处理
+    
+    将文档的 processing_status 设置为 interrupted，
+    入库流程会在下一个检查点检测到中断状态并停止处理。
+    """
+    # 查询文档及其知识库
+    result = await db.execute(
+        select(Document, KnowledgeBase)
+        .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
+        .where(
+            Document.id == doc_id,
+            KnowledgeBase.tenant_id == tenant.id,
+        )
+    )
+    row = result.first()
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "DOC_NOT_FOUND", "detail": "Document not found"},
+        )
+
+    doc, _ = row
+    
+    # 只能中断处理中的文档
+    if doc.processing_status not in ("pending", "processing"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "INVALID_STATUS",
+                "detail": f"文档当前状态为 {doc.processing_status}，无法中断",
+            },
+        )
+    
+    # 设置中断状态
+    doc.processing_status = "interrupted"
+    # 追加中断日志
+    import datetime
+    interrupt_log = f"\n[{datetime.datetime.now().strftime('%H:%M:%S')}] [WARN] 用户请求中断处理"
+    if doc.processing_log:
+        doc.processing_log += interrupt_log
+    else:
+        doc.processing_log = interrupt_log.strip()
+    
+    await db.commit()
+    
+    logger.info(f"Document {doc_id} processing interrupted by user")
+    return {"status": "interrupted", "document_id": doc_id}
+
+
 @router.delete("/v1/documents/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
     doc_id: str = Path(..., description="Document ID"),

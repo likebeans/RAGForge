@@ -109,11 +109,46 @@ reranked = await rerank_results(
 ```python
 from app.infra.vector_store import vector_store
 
-# 插入向量
-vector_store.upsert(tenant_id, kb_id, chunks)
+# 插入 chunks（自动生成 embedding）
+await vector_store.upsert_chunks(
+    tenant_id=tenant_id,
+    chunks=[{"chunk_id": "xxx", "knowledge_base_id": kb_id, "text": "...", "metadata": {...}}],
+    embedding_config=embedding_config,  # 可选
+)
+
+# 插入已有向量（不重新生成 embedding，用于 RAPTOR 等场景）
+await vector_store.upsert_vectors(
+    tenant_id=tenant_id,
+    knowledge_base_id=kb_id,
+    vectors=[
+        {"id": "uuid-xxx", "vector": [0.1, 0.2, ...], "payload": {"text": "...", ...}},
+    ],
+)
 
 # 搜索
-results = vector_store.search(query, tenant_id, kb_ids, top_k=5)
+results = await vector_store.search(query, tenant_id, kb_ids, top_k=5)
+```
+
+### 向量存储抽象接口
+
+为支持多种向量库（Qdrant/Milvus/ES/pgvector），定义了统一的抽象接口：
+
+| 方法 | 说明 | 用途 |
+|------|------|------|
+| `upsert_chunks` | 插入 chunks，自动生成 embedding | 普通文档入库 |
+| `upsert_vectors` | 插入已有向量，不重新生成 embedding | RAPTOR 等预计算场景 |
+| `search` | 向量相似度搜索 | 检索 |
+
+**`upsert_vectors` 接口签名**（切换向量库时需实现）：
+```python
+async def upsert_vectors(
+    self,
+    *,
+    tenant_id: str,
+    knowledge_base_id: str,
+    vectors: list[dict],  # [{id: UUID, vector: list[float], payload: dict}]
+    strategy: IsolationStrategy = "auto",
+) -> int
 ```
 
 ### 多后端切换（LlamaIndex）
