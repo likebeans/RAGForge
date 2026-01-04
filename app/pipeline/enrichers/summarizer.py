@@ -24,15 +24,18 @@ class SummaryConfig:
     min_tokens: int = 500        # 触发摘要生成的最小 token 数
     max_tokens: int = 300        # 摘要最大 token 数
     model: str | None = None     # 使用的模型，None 使用默认配置
+    length_hint: str | None = None  # 摘要长度提示（如 "100-200 字"）
 
 
 # 默认摘要提示词
+DEFAULT_LENGTH_HINT = "100-200 字"
+
 DEFAULT_SUMMARY_PROMPT = """请为以下文档内容生成一段简洁的摘要。
 
 要求：
 1. 摘要应概括文档的主要内容和关键信息
 2. 保持客观，不添加原文没有的信息
-3. 长度控制在 100-200 字
+3. 长度控制在 {length_hint}
 4. 使用与原文相同的语言
 
 文档内容：
@@ -59,10 +62,12 @@ class DocumentSummarizer:
         max_tokens: int = 300,
         model: str | None = None,
         prompt_template: str | None = None,
+        length_hint: str | None = None,
     ):
         self.min_tokens = min_tokens
         self.max_tokens = max_tokens
         self.prompt_template = prompt_template or DEFAULT_SUMMARY_PROMPT
+        self.length_hint = length_hint or DEFAULT_LENGTH_HINT
         
         settings = get_settings()
         self.model = model or settings.doc_summary_model
@@ -126,7 +131,10 @@ class DocumentSummarizer:
             if len(content) > max_content_chars:
                 truncated_content += "\n...(内容已截断)"
             
-            prompt = self.prompt_template.format(content=truncated_content)
+            prompt = self.prompt_template.format(
+                content=truncated_content,
+                length_hint=self.length_hint,
+            )
             
             logger.info(f"调用 LLM 生成摘要，prompt 长度: {len(prompt)}, max_tokens: {self.max_tokens}")
             
@@ -158,6 +166,7 @@ class DocumentSummarizer:
             min_tokens=config.min_tokens,
             max_tokens=config.max_tokens,
             model=config.model,
+            length_hint=config.length_hint,
         )
 
 

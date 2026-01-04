@@ -89,6 +89,39 @@ def _resolve_embedding_config_from_kb(kb: KnowledgeBase) -> dict | None:
         return None
 
 
+def _resolve_summary_config(enricher_config: dict | None) -> SummaryConfig | None:
+    """
+    从增强器配置解析摘要长度配置（仅 document_summary 生效）。
+    """
+    if not enricher_config or enricher_config.get("name") != "document_summary":
+        return None
+
+    params = enricher_config.get("params") or {}
+    summary_length = params.get("summary_length")
+    if not summary_length:
+        return None
+
+    length_presets = {
+        "short": {"max_tokens": 150, "length_hint": "50-80 字"},
+        "medium": {"max_tokens": 300, "length_hint": "100-200 字"},
+        "long": {"max_tokens": 600, "length_hint": "200-400 字"},
+    }
+    preset = length_presets.get(summary_length)
+    if not preset:
+        logger.warning("未知摘要长度配置: %s", summary_length)
+        return None
+
+    from app.config import get_settings
+    settings = get_settings()
+    return SummaryConfig(
+        enabled=True,
+        min_tokens=settings.doc_summary_min_tokens,
+        max_tokens=preset["max_tokens"],
+        model=settings.doc_summary_model,
+        length_hint=preset["length_hint"],
+    )
+
+
 @dataclass
 class IndexingResult:
     """
@@ -297,8 +330,9 @@ async def ingest_document(
     
     # 异步生成文档摘要（不阻塞主流程）
     if params.generate_doc_summary:
-        add_log(f"生成文档摘要...")
-        await _generate_document_summary(doc, params.content)
+        add_log("生成文档摘要...")
+        summary_config = _resolve_summary_config(params.enricher_config)
+        await _generate_document_summary(doc, params.content, summary_config=summary_config)
 
     await add_step(3, 6, "切分文档内容", "running")
     chunk_pieces = chunker.chunk(params.content, metadata=params.metadata or {})
@@ -652,7 +686,11 @@ def _maybe_upsert_llamaindex(
         return IndexingResult(store_type=store_type, success=False, chunks_count=0, error=error_msg)
 
 
-async def _generate_document_summary(doc: Document, content: str) -> None:
+async def _generate_document_summary(
+    doc: Document,
+    content: str,
+    summary_config: SummaryConfig | None = None,
+) -> None:
     """
     生成文档摘要（异步）
     
@@ -663,7 +701,7 @@ async def _generate_document_summary(doc: Document, content: str) -> None:
     try:
         doc.summary_status = "generating"
         
-        summary = await generate_summary(content)
+        summary = await generate_summary(content, config=summary_config)
         
         if summary:
             doc.summary = summary
