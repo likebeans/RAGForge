@@ -334,7 +334,9 @@ class DocumentAPI:
         metadata: dict[str, Any] | None = None,
         source: str | None = None,
         sensitivity_level: str = "internal",
-        acl: dict[str, Any] | None = None,
+        acl_users: list[str] | None = None,
+        acl_roles: list[str] | None = None,
+        acl_groups: list[str] | None = None,
     ) -> dict[str, Any]:
         """
         创建文档
@@ -346,7 +348,7 @@ class DocumentAPI:
             metadata: 元数据
             source: 来源
             sensitivity_level: 敏感度（public/internal/restricted）
-            acl: 访问控制列表
+            acl_users/acl_roles/acl_groups: ACL 白名单
         
         Returns:
             包含 document_id 和 chunk_count 的字典
@@ -360,8 +362,12 @@ class DocumentAPI:
             payload["metadata"] = metadata
         if source:
             payload["source"] = source
-        if acl:
-            payload["acl"] = acl
+        if acl_users is not None:
+            payload["acl_users"] = acl_users
+        if acl_roles is not None:
+            payload["acl_roles"] = acl_roles
+        if acl_groups is not None:
+            payload["acl_groups"] = acl_groups
         
         resp = self._client._client.post(
             f"{self._client.base_url}/v1/knowledge-bases/{kb_id}/documents",
