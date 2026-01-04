@@ -104,6 +104,8 @@ class RetrievalMetrics:
     query_length: int
     result_count: int
     latency_ms: float
+    backend: str | None = None
+    error: str | None = None
     
     # 分数分布
     max_score: float | None = None
@@ -127,6 +129,8 @@ class RetrievalMetrics:
             "query_length": self.query_length,
             "result_count": self.result_count,
             "latency_ms": self.latency_ms,
+            "backend": self.backend,
+            "error": self.error,
             "max_score": self.max_score,
             "min_score": self.min_score,
             "avg_score": self.avg_score,
@@ -197,6 +201,10 @@ class MetricsCollector:
         self._call_counts: dict[str, int] = defaultdict(int)
         self._call_latencies: dict[str, list[float]] = defaultdict(list)
         self._retrieval_counts: dict[str, int] = defaultdict(int)
+        self._retrieval_backends: dict[str, dict[str, float]] = defaultdict(
+            lambda: {"count": 0, "errors": 0, "total_latency_ms": 0.0}
+        )
+        self._call_errors: dict[str, int] = defaultdict(int)
     
     def record_call(self, metrics: CallMetrics) -> None:
         """记录调用指标"""
@@ -222,6 +230,7 @@ class MetricsCollector:
                 f"[{metrics.call_type.upper()}] {metrics.provider} 调用失败: {metrics.error}",
                 extra={"metrics": log_data},
             )
+            self._call_errors[key] += 1
     
     def record_retrieval(
         self,
@@ -229,6 +238,8 @@ class MetricsCollector:
         query: str,
         results: list[dict],
         latency_ms: float,
+        backend: str | None = None,
+        error: str | None = None,
     ) -> None:
         """记录检索指标"""
         # 计算分数统计
@@ -257,10 +268,18 @@ class MetricsCollector:
             kb_distribution=dict(kb_dist),
             request_id=get_request_id(),
             tenant_id=get_tenant_id(),
+            backend=backend,
+            error=error,
         )
         
         # 更新内存统计
         self._retrieval_counts[retriever] += 1
+        backend_key = backend or retriever
+        backend_stats = self._retrieval_backends[backend_key]
+        backend_stats["count"] += 1
+        backend_stats["total_latency_ms"] += latency_ms
+        if error:
+            backend_stats["errors"] += 1
         
         # 输出结构化日志
         log_data = metrics.to_dict()
@@ -288,7 +307,18 @@ class MetricsCollector:
         
         for retriever, count in self._retrieval_counts.items():
             stats["retrievals"][retriever] = {"count": count}
+        stats["retrieval_backends"] = {}
+        for backend, data in self._retrieval_backends.items():
+            count = data["count"]
+            avg_latency = data["total_latency_ms"] / count if count else 0
+            stats["retrieval_backends"][backend] = {
+                "count": count,
+                "errors": data["errors"],
+                "avg_latency_ms": round(avg_latency, 2) if count else 0,
+            }
         
+        if self._call_errors:
+            stats["call_errors"] = dict(self._call_errors)
         return stats
 
 

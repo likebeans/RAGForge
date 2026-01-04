@@ -20,16 +20,20 @@
 from __future__ import annotations
 
 import logging
+import time
+import re
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from typing import Iterable, Literal
+from contextvars import ContextVar
 
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
 
 from app.config import get_settings
 from app.infra.embeddings import get_embedding, get_embeddings, get_embeddings_with_config
+from app.infra.metrics import metrics_collector
 
 logger = logging.getLogger(__name__)
 
@@ -43,17 +47,25 @@ EMBEDDING_DIM_MAP: dict[str, int] = {
     "text-embedding-3-small": 1536,
     "text-embedding-3-large": 3072,
     "text-embedding-ada-002": 1536,
+    # OpenAI 兼容/常见别名
+    "text-embedding-3-small-v1": 1536,
+    "text-embedding-3-large-v1": 3072,
     # BGE 系列
     "bge-m3": 1024,
     "bge-large-zh": 1024,
     "bge-large-zh-v1.5": 1024,
     "bge-base-zh": 768,
     "bge-small-zh": 512,
+    # 常见开源 embedding（Ollama 等）
+    "nomic-embed-text": 768,
+    "mxbai-embed-large": 1024,
     # Qwen 系列 (通过 SiliconFlow)
     "Qwen/Qwen3-Embedding-8B": 4096,
     "Qwen/Qwen3-Embedding-4B": 2560,
     "Qwen/Qwen3-Embedding-0.6B": 1024,
     "text-embedding-v3": 1024,
+    "text-embedding-v2": 1536,
+    "qwen3-embedding": 4096,
     # Gemini
     "text-embedding-004": 768,
     "embedding-001": 768,
@@ -62,6 +74,7 @@ EMBEDDING_DIM_MAP: dict[str, int] = {
     "embedding-3": 2048,
     # DeepSeek
     "deepseek-embedding": 1024,
+    "deepseek-embed": 1024,
     # SiliconFlow 其他模型
     "BAAI/bge-m3": 1024,
     "BAAI/bge-large-zh-v1.5": 1024,
@@ -69,24 +82,94 @@ EMBEDDING_DIM_MAP: dict[str, int] = {
     "Pro/BAAI/bge-m3": 1024,
 }
 
+# ACL 过滤上下文（每个请求独立）
+_acl_filter_ctx: ContextVar[dict | None] = ContextVar("acl_filter_ctx", default=None)
 
-def get_embedding_dim(model: str | None, default: int = 1024) -> int:
-    """根据模型名称获取向量维度"""
+
+def _slugify_model(model: str | None) -> str:
+    """将模型名转为向量字段安全字符串"""
     if not model:
-        return default
+        return "default"
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", model).strip("_").lower()
+    return slug or "default"
+
+
+def get_vector_field_name(model: str | None, dim: int | None) -> str:
+    """
+    根据模型名和维度生成向量字段名，保证同一 collection 可容纳不同模型的向量。
+    """
+    base = _slugify_model(model)
+    return f"vec_{base}_{dim}" if dim else f"vec_{base}"
+
+
+def _lookup_embedding_dim(model: str | None) -> int | None:
+    """查找模型维度（不回退默认值）。"""
+    if not model:
+        return None
     # 直接匹配
     if model in EMBEDDING_DIM_MAP:
         return EMBEDDING_DIM_MAP[model]
-    # 尝试不区分大小写匹配
     model_lower = model.lower()
+    # 不区分大小写匹配
     for key, dim in EMBEDDING_DIM_MAP.items():
         if key.lower() == model_lower:
             return dim
-    # 尝试部分匹配（模型名可能带前缀）
+    # 部分匹配（模型名可能带前缀/版本）
     for key, dim in EMBEDDING_DIM_MAP.items():
-        if key.lower() in model_lower or model_lower in key.lower():
+        key_lower = key.lower()
+        if key_lower in model_lower or model_lower in key_lower:
             return dim
-    return default
+    return None
+
+
+def _register_embedding_dim(model: str | None, dim: int | None) -> None:
+    """将实际维度写入映射表（避免后续维度不一致）。"""
+    if not model or not dim:
+        return
+    mapped = _lookup_embedding_dim(model)
+    if mapped is None:
+        EMBEDDING_DIM_MAP[model] = dim
+        return
+    if mapped != dim:
+        logger.warning(
+            f"embedding 维度映射不一致: model={model} mapped={mapped} actual={dim}, 使用实际维度"
+        )
+        EMBEDDING_DIM_MAP[model] = dim
+
+
+def _resolve_embedding_dim(
+    model: str | None,
+    vector_dim: int | None,
+    default_dim: int,
+) -> int:
+    """优先使用实际向量维度，必要时回退到已知映射或默认值。"""
+    mapped = _lookup_embedding_dim(model)
+    if vector_dim:
+        if mapped is None or mapped != vector_dim:
+            _register_embedding_dim(model, vector_dim)
+        return vector_dim
+    return mapped if mapped is not None else default_dim
+
+
+def set_acl_filter_ctx(acl_filter: dict | None):
+    """在当前上下文设置 ACL 过滤条件"""
+    return _acl_filter_ctx.set(acl_filter)
+
+
+def reset_acl_filter_ctx(token) -> None:
+    """重置当前上下文的 ACL 过滤条件"""
+    _acl_filter_ctx.reset(token)
+
+
+def get_acl_filter_ctx() -> dict | None:
+    """获取当前上下文的 ACL 过滤条件"""
+    return _acl_filter_ctx.get()
+
+
+def get_embedding_dim(model: str | None, default: int = 1024) -> int:
+    """根据模型名称获取向量维度"""
+    dim = _lookup_embedding_dim(model)
+    return dim if dim is not None else default
 
 
 @dataclass
@@ -108,6 +191,8 @@ def _get_async_client() -> AsyncQdrantClient:
         api_key=settings.qdrant_api_key,
         timeout=10.0,
         prefer_grpc=False,
+        # 测试/开发环境避免版本检测与 http+api_key 警告
+        check_compatibility=False,
     )
 
 
@@ -170,7 +255,9 @@ class AsyncQdrantVectorStore:
         tenant_id: str,
         strategy: IsolationStrategy = "auto",
         embedding_dim: int | None = None,
-    ) -> tuple[str, str]:
+        vector_name: str | None = None,
+        ensure_vector: bool = True,
+    ) -> tuple[str, str, str]:
         """
         确保 Collection 存在（带缓存）
         
@@ -184,43 +271,116 @@ class AsyncQdrantVectorStore:
         """
         effective = self._get_effective_strategy(tenant_id, strategy)
         dim = embedding_dim or self.dim
+        vector_name = vector_name or get_vector_field_name(None, dim)
         
         if effective == "partition":
-            # Partition 模式：按维度区分 collection，避免不同维度冲突
-            if dim != self.dim:
-                name = f"{self.shared_collection}_{dim}"
-            else:
-                name = self.shared_collection
+            # 保持单 collection，使用多向量字段区分模型
+            name = self.shared_collection
         else:
             name = self._collection_name_for_tenant(tenant_id)
         
         # 检查缓存
         if name in self._collection_cache:
-            return name, effective
+            # 确保向量字段存在
+            if ensure_vector:
+                try:
+                    vector_name = await self._ensure_vector_field(name, vector_name, dim)
+                except Exception as exc:
+                    # 无法追加向量字段时，回退到按维度分 collection
+                    fallback = f"{name}_{dim}"
+                    logger.warning(f"{name} 向量字段不可用，回退到 {fallback}: {exc}")
+                    name = fallback
+                    vector_name = await self._ensure_named_collection(name, dim, vector_name)
+            return name, effective, vector_name
         
+        # 如果 collection 已存在，确保字段存在
         try:
             await self.client.get_collection(name)
             self._collection_cache.add(name)
-            return name, effective
+            if ensure_vector:
+                try:
+                    vector_name = await self._ensure_vector_field(name, vector_name, dim)
+                except Exception as exc:
+                    fallback = f"{name}_{dim}"
+                    logger.warning(f"{name} 向量字段不可用，回退到 {fallback}: {exc}")
+                    name = fallback
+                    vector_name = await self._ensure_named_collection(name, dim, vector_name)
+            return name, effective, vector_name
         except Exception:
             pass
         
+        # 创建 collection，默认包含当前向量字段
         try:
             await self.client.create_collection(
                 collection_name=name,
-                vectors_config=models.VectorParams(
-                    size=dim,
-                    distance=models.Distance.COSINE,
-                ),
+                vectors_config={vector_name: models.VectorParams(size=dim, distance=models.Distance.COSINE)},
             )
             self._collection_cache.add(name)
-            logger.info(f"创建 Collection: {name} (策略: {effective}, 维度: {dim})")
+            logger.info(f"创建 Collection: {name} (策略: {effective}, 维度: {dim}, 向量字段: {vector_name})")
         except Exception as e:
             # 可能被并发请求创建
             logger.debug(f"Collection 可能已存在: {e}")
             self._collection_cache.add(name)
+            if ensure_vector:
+                try:
+                    vector_name = await self._ensure_vector_field(name, vector_name, dim)
+                except Exception as exc:
+                    fallback = f"{name}_{dim}"
+                    logger.warning(f"{name} 向量字段不可用，回退到 {fallback}: {exc}")
+                    name = fallback
+                    vector_name = await self._ensure_named_collection(name, dim, vector_name)
         
-        return name, effective
+        return name, effective, vector_name
+
+    async def _ensure_named_collection(self, name: str, dim: int, vector_name: str) -> str:
+        """确保指定名称的 collection 存在（创建时包含给定向量字段）。"""
+        try:
+            await self.client.get_collection(name)
+            self._collection_cache.add(name)
+            return await self._ensure_vector_field(name, vector_name, dim)
+        except Exception:
+            pass
+        await self.client.create_collection(
+            collection_name=name,
+            vectors_config={vector_name: models.VectorParams(size=dim, distance=models.Distance.COSINE)},
+        )
+        self._collection_cache.add(name)
+        return vector_name
+
+    async def _ensure_vector_field(self, collection: str, vector_name: str, dim: int) -> str:
+        """
+        确保 collection 中存在指定的向量字段；如不存在则追加。
+        """
+        try:
+            info = await self.client.get_collection(collection)
+            existing = {}
+            try:
+                vectors = info.config.params.vectors  # type: ignore[attr-defined]
+                # vectors 可能是 dict[str, VectorParams] 或单一 VectorParams
+                if isinstance(vectors, dict):
+                    existing = {k: getattr(v, "size", None) for k, v in vectors.items()}
+                elif hasattr(vectors, "size"):
+                    existing = {"": getattr(vectors, "size", None)}
+            except Exception:
+                pass
+            if vector_name in existing:
+                return vector_name
+            # 如果已有单 unnamed 向量字段，直接复用
+            if "" in existing:
+                if existing[""] == dim:
+                    return ""
+                raise RuntimeError(
+                    f"collection {collection} default vector dim {existing['']} != requested {dim}"
+                )
+            await self.client.update_collection(
+                collection_name=collection,
+                vectors_config={vector_name: models.VectorParams(size=dim, distance=models.Distance.COSINE)},
+            )
+            logger.info(f"为 {collection} 追加向量字段 {vector_name} (dim={dim})")
+            return vector_name
+        except Exception as exc:
+            logger.warning(f"追加向量字段失败 {collection}:{vector_name} - {exc}")
+            raise
     
     # ==================== 兼容旧接口 ====================
     
@@ -249,16 +409,19 @@ class AsyncQdrantVectorStore:
             metadata: 额外元数据
             strategy: 隔离策略
         """
-        collection, effective = await self._ensure_collection(tenant_id, strategy)
-        
-        # 使用真实 Embedding
         vector = await get_embedding(text)
+        embedding_dim = len(vector) if vector is not None else self.dim
+        vector_name = get_vector_field_name(None, embedding_dim)
+        collection, effective, vector_name = await self._ensure_collection(
+            tenant_id, strategy, embedding_dim=embedding_dim, vector_name=vector_name
+        )
         
         # Partition 模式需要添加 tenant_id 到 payload
         payload = {
             "kb_id": knowledge_base_id,
             "text": text,
             "metadata": metadata or {},
+            "embedding_dim": embedding_dim,
         }
         if effective == "partition":
             payload["tenant_id"] = tenant_id
@@ -268,7 +431,7 @@ class AsyncQdrantVectorStore:
             points=[
                 models.PointStruct(
                     id=chunk_id,
-                    vector=vector,
+                    vector=vector if vector_name == "" else {vector_name: vector},
                     payload=payload,
                 )
             ],
@@ -302,14 +465,20 @@ class AsyncQdrantVectorStore:
             vectors = await get_embeddings(texts)
         
         # 根据 embedding 模型确定维度，确保 collection 使用正确的维度
-        embedding_dim = None
-        if embedding_config and embedding_config.get("model"):
-            embedding_dim = get_embedding_dim(embedding_config["model"])
-        elif vectors:
-            # 从实际 embedding 结果推断维度
-            embedding_dim = len(vectors[0])
+        model_name = (embedding_config or {}).get("model") if embedding_config else None
+        embedding_dim = _resolve_embedding_dim(
+            model_name,
+            len(vectors[0]) if vectors else None,
+            self.dim,
+        )
+        vector_name = get_vector_field_name(
+            model_name,
+            embedding_dim,
+        )
         
-        collection, effective = await self._ensure_collection(tenant_id, strategy, embedding_dim)
+        collection, effective, vector_name = await self._ensure_collection(
+            tenant_id, strategy, embedding_dim, vector_name
+        )
         
         # 构建 points（Partition 模式需要添加 tenant_id）
         points = []
@@ -318,6 +487,8 @@ class AsyncQdrantVectorStore:
                 "kb_id": chunk["knowledge_base_id"],
                 "text": chunk["text"],
                 "metadata": chunk.get("metadata", {}),
+                "embedding_model": (embedding_config or {}).get("model") if embedding_config else None,
+                "embedding_dim": embedding_dim,
             }
             if effective == "partition":
                 payload["tenant_id"] = tenant_id
@@ -325,15 +496,24 @@ class AsyncQdrantVectorStore:
             points.append(
                 models.PointStruct(
                     id=chunk["chunk_id"],
-                    vector=vector,
+                    vector=vector if vector_name == "" else {vector_name: vector},
                     payload=payload,
                 )
             )
         
-        await self.client.upsert(
-            collection_name=collection,
-            points=points,
-        )
+        try:
+            await self.client.upsert(
+                collection_name=collection,
+                points=points,
+            )
+        except Exception as exc:
+            # 如果因为缺少向量字段导致失败，尝试补充字段并重试一次
+            msg = str(exc)
+            if "Not existing vector name" in msg or "vector name error" in msg:
+                await self._ensure_vector_field(collection, vector_name, embedding_dim or self.dim)
+                await self.client.upsert(collection_name=collection, points=points)
+            else:
+                raise
         logger.debug(f"批量 upsert {len(chunks)} chunks 到 {collection} (策略: {effective})")
 
     async def upsert_vectors(
@@ -368,7 +548,10 @@ class AsyncQdrantVectorStore:
         # 从向量推断维度
         embedding_dim = len(vectors[0]["vector"]) if vectors else None
         
-        collection, effective = await self._ensure_collection(tenant_id, strategy, embedding_dim)
+        vector_name = get_vector_field_name(None, embedding_dim)
+        collection, effective, vector_name = await self._ensure_collection(
+            tenant_id, strategy, embedding_dim, vector_name
+        )
         
         # 构建 points
         points = []
@@ -381,7 +564,7 @@ class AsyncQdrantVectorStore:
             points.append(
                 models.PointStruct(
                     id=v["id"],
-                    vector=v["vector"],
+                    vector=v["vector"] if vector_name == "" else {vector_name: v["vector"]},
                     payload=payload,
                 )
             )
@@ -403,6 +586,7 @@ class AsyncQdrantVectorStore:
         strategy: IsolationStrategy = "auto",
         score_threshold: float | None = None,
         embedding_config: dict | None = None,
+        acl_filter: dict | None = None,
     ) -> list[tuple[float, VectorRecord]]:
         """
         语义搜索
@@ -419,6 +603,11 @@ class AsyncQdrantVectorStore:
         Returns:
             list[tuple[score, VectorRecord]]
         """
+        # 读取上下文中的 ACL Filter（可由上层设置）
+        if acl_filter is None:
+            acl_filter = get_acl_filter_ctx()
+        start_time = time.perf_counter()
+
         # 优先使用传入的 embedding 配置，否则使用默认配置
         if embedding_config:
             vector = await get_embeddings_with_config([query], embedding_config)
@@ -427,13 +616,20 @@ class AsyncQdrantVectorStore:
             vector = await get_embedding(query)
         
         # 根据 embedding 模型确定维度，确保使用正确的 collection
-        embedding_dim = None
-        if embedding_config and embedding_config.get("model"):
-            embedding_dim = get_embedding_dim(embedding_config["model"])
-        else:
-            embedding_dim = len(vector)
+        model_name = (embedding_config or {}).get("model") if embedding_config else None
+        embedding_dim = _resolve_embedding_dim(
+            model_name,
+            len(vector),
+            self.dim,
+        )
+        vector_name = get_vector_field_name(
+            model_name,
+            embedding_dim,
+        )
         
-        collection, effective = await self._ensure_collection(tenant_id, strategy, embedding_dim)
+        collection, effective, vector_name = await self._ensure_collection(
+            tenant_id, strategy, embedding_dim, vector_name
+        )
         
         kb_list = list(kb_ids)
         
@@ -454,12 +650,37 @@ class AsyncQdrantVectorStore:
                 )
             )
         
-        filter_ = models.Filter(must=must_conditions)
+        # ACL Filter: (public) OR (用户/角色/组匹配)
+        def _to_field_condition(cond: dict) -> models.FieldCondition:
+            key = cond.get("key")
+            match_cfg = cond.get("match") or {}
+            if "value" in match_cfg:
+                match = models.MatchValue(value=match_cfg["value"])
+            elif "any" in match_cfg:
+                match = models.MatchAny(any=match_cfg["any"])
+            else:
+                # 回退使用原始结构
+                match = match_cfg
+            return models.FieldCondition(key=key, match=match)
+
+        should_conditions: list[models.FieldCondition] = []
+        if acl_filter and isinstance(acl_filter, dict):
+            for cond in acl_filter.get("should", []):
+                try:
+                    should_conditions.append(_to_field_condition(cond))
+                except Exception as exc:  # pragma: no cover - 防御性处理
+                    logger.warning(f"构建 ACL Filter 失败，跳过此条件: {exc}")
+
+        filter_ = models.Filter(
+            must=must_conditions,
+            should=should_conditions or None,
+        )
         
         try:
+            query_vector = vector if vector_name == "" else models.NamedVector(name=vector_name, vector=vector)
             results = await self.client.search(
                 collection_name=collection,
-                query_vector=vector,
+                query_vector=query_vector,
                 query_filter=filter_,
                 limit=top_k,
                 with_payload=True,
@@ -467,23 +688,50 @@ class AsyncQdrantVectorStore:
             )
         except Exception as exc:
             logger.error(f"向量搜索失败: {exc}")
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            metrics_collector.record_retrieval(
+                retriever="vector_search",
+                query=query,
+                results=[],
+                latency_ms=latency_ms,
+                backend="qdrant",
+                error=str(exc),
+            )
             return []
 
         hits: list[tuple[float, VectorRecord]] = []
+        results_for_metrics: list[dict] = []
         for point in results:
             payload = point.payload or {}
+            kb_id = payload.get("kb_id")
+            score = point.score or 0.0
             hits.append(
                 (
-                    point.score or 0.0,
+                    score,
                     VectorRecord(
                         chunk_id=str(point.id),
                         tenant_id=tenant_id,
-                        knowledge_base_id=payload.get("kb_id"),
+                        knowledge_base_id=kb_id,
                         text=payload.get("text", ""),
                         metadata=payload.get("metadata", {}) or {},
                     ),
                 )
             )
+            results_for_metrics.append(
+                {
+                    "score": score,
+                    "knowledge_base_id": kb_id,
+                    "source": "dense",
+                }
+            )
+        latency_ms = (time.perf_counter() - start_time) * 1000
+        metrics_collector.record_retrieval(
+            retriever="vector_search",
+            query=query,
+            results=results_for_metrics,
+            latency_ms=latency_ms,
+            backend="qdrant",
+        )
         return hits
 
     async def delete_by_kb(
@@ -503,7 +751,7 @@ class AsyncQdrantVectorStore:
         Returns:
             删除的数量
         """
-        collection, effective = await self._ensure_collection(tenant_id, strategy)
+        collection, effective, _ = await self._ensure_collection(tenant_id, strategy, ensure_vector=False)
         
         # 构建过滤条件
         must_conditions = [
@@ -555,7 +803,7 @@ class AsyncQdrantVectorStore:
         if not chunk_ids:
             return 0
         
-        collection, effective = await self._ensure_collection(tenant_id, strategy)
+        collection, effective, _ = await self._ensure_collection(tenant_id, strategy, ensure_vector=False)
         try:
             result = await self.client.delete(
                 collection_name=collection,

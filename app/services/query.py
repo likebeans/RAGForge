@@ -30,7 +30,12 @@ from app.schemas.query import ChunkHit
 from app.db.session import SessionLocal
 from app.exceptions import KBConfigError
 from app.infra.metrics import metrics_collector
-from app.services.acl import UserContext, filter_results_by_acl
+from app.services.acl import (
+    UserContext,
+    filter_results_by_acl,
+    build_acl_filter_for_qdrant,
+)
+from app.infra.vector_store import set_acl_filter_ctx, reset_acl_filter_ctx
 
 
 async def get_tenant_kbs(session: AsyncSession, tenant_id: str, kb_ids: list[str]) -> list[KnowledgeBase]:
@@ -90,13 +95,19 @@ async def retrieve_chunks(
     
     # 执行检索并记录指标
     start_time = time.perf_counter()
-    raw_hits = await retriever.retrieve(
-        query=params.query,
-        tenant_id=tenant_id,
-        kb_ids=[kb.id for kb in kbs],
-        top_k=params.top_k,
-        session=session,  # RAPTOR 检索器需要 session 来检查索引
-    )
+    # 将 ACL Filter 下推到向量库查询（ContextVar 控制，不影响其他请求）
+    acl_filter = build_acl_filter_for_qdrant(user_context) if user_context else None
+    token = set_acl_filter_ctx(acl_filter)
+    try:
+        raw_hits = await retriever.retrieve(
+            query=params.query,
+            tenant_id=tenant_id,
+            kb_ids=[kb.id for kb in kbs],
+            top_k=params.top_k,
+            session=session,  # RAPTOR 检索器需要 session 来检查索引
+        )
+    finally:
+        reset_acl_filter_ctx(token)
     latency_ms = (time.perf_counter() - start_time) * 1000
     
     # 记录检索质量指标
