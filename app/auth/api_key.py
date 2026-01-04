@@ -55,7 +55,7 @@ class BaseRateLimiter(ABC):
     """限流器基类"""
     
     @abstractmethod
-    def allow(self, key: str, limit_override: int | None = None) -> bool:
+    async def allow(self, key: str, limit_override: int | None = None) -> bool:
         """检查请求是否允许通过"""
         pass
 
@@ -72,7 +72,7 @@ class MemoryRateLimiter(BaseRateLimiter):
         self.default_limit = max_requests
         self._buckets: dict[str, list[float]] = {}
 
-    def allow(self, key: str, limit_override: int | None = None) -> bool:
+    async def allow(self, key: str, limit_override: int | None = None) -> bool:
         limit = limit_override or self.default_limit
         now = time.time()
         window_start = now - self.window_seconds
@@ -104,35 +104,38 @@ class RedisRateLimiter(BaseRateLimiter):
     @property
     def redis(self):
         if self._redis is None:
-            import redis
-            self._redis = redis.from_url(self._redis_url)
+            from redis import asyncio as aioredis
+
+            # 统一超时：连接/命令
+            self._redis = aioredis.from_url(
+                self._redis_url,
+                encoding="utf-8",
+                decode_responses=True,
+                socket_timeout=2.0,
+                socket_connect_timeout=2.0,
+            )
         return self._redis
 
-    def allow(self, key: str, limit_override: int | None = None) -> bool:
+    async def allow(self, key: str, limit_override: int | None = None) -> bool:
         limit = limit_override or self.default_limit
         now = time.time()
         window_start = now - self.window_seconds
         redis_key = f"ratelimit:{key}"
         
-        pipe = self.redis.pipeline()
         try:
-            # 移除窗口外的时间戳
-            pipe.zremrangebyscore(redis_key, 0, window_start)
-            # 获取当前窗口内的请求数
-            pipe.zcard(redis_key)
-            # 添加当前请求
-            pipe.zadd(redis_key, {str(now): now})
-            # 设置过期时间
-            pipe.expire(redis_key, self.window_seconds + 1)
-            
-            results = pipe.execute()
+            # 使用事务确保窗口操作的原子性
+            async with self.redis.pipeline(transaction=True) as pipe:
+                await pipe.zremrangebyscore(redis_key, 0, window_start)
+                await pipe.zcard(redis_key)
+                await pipe.zadd(redis_key, {str(now): now})
+                await pipe.expire(redis_key, self.window_seconds + 1)
+                results = await pipe.execute()
+
             current_count = results[1]
-            
             if current_count >= limit:
                 # 超限，移除刚添加的
-                self.redis.zrem(redis_key, str(now))
+                await self.redis.zrem(redis_key, str(now))
                 return False
-            
             return True
         except Exception as e:
             logger.warning(f"Redis 限流异常，降级到允许通过: {e}")
@@ -240,7 +243,7 @@ async def get_api_key_context(
             detail={"code": "TENANT_DISABLED", "detail": f"Tenant is {tenant.status}"},
         )
 
-    limit_allowed = rate_limiter.allow(
+    limit_allowed = await rate_limiter.allow(
         key=api_key.id,
         limit_override=api_key.rate_limit_per_minute,
     )
