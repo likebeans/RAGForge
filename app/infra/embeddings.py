@@ -31,6 +31,7 @@ import httpx
 from openai import AsyncOpenAI
 
 from app.config import get_settings
+from app.infra.url_utils import normalize_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ def get_provider_batch_limit(provider: str, user_batch_size: int | None = None) 
 @lru_cache(maxsize=8)
 def _get_openai_compatible_client(api_key: str | None, base_url: str | None) -> AsyncOpenAI:
     """获取 OpenAI 兼容客户端（支持多种提供商）"""
+    base_url = normalize_base_url(base_url)
     return AsyncOpenAI(
         api_key=api_key or "dummy",  # Ollama 不需要 API Key
         base_url=base_url,
@@ -78,7 +80,7 @@ def _get_openai_compatible_client(api_key: str | None, base_url: str | None) -> 
 async def _ollama_embedding(text: str, config: dict[str, Any]) -> list[float]:
     """通过 Ollama API 获取 Embedding"""
     url = f"{config['base_url']}/api/embeddings"
-    
+
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
             url,
@@ -103,11 +105,32 @@ async def _openai_compatible_embedding(
 ) -> list[float]:
     """通过 OpenAI 兼容 API 获取 Embedding"""
     client = _get_openai_compatible_client(config.get("api_key"), config.get("base_url"))
-    response = await client.embeddings.create(
-        model=config["model"],
-        input=text,
-    )
-    return response.data[0].embedding
+    try:
+        response = await client.embeddings.create(
+            model=config["model"],
+            input=text,
+        )
+        return response.data[0].embedding
+    except Exception as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        body = None
+        try:
+            resp = getattr(exc, "response", None)
+            body = resp.text[:2000] if resp and resp.text else None
+        except Exception:
+            body = None
+        logger.error(
+            f"Embedding 请求失败 ({config.get('provider')}): {exc} status={status} body={body}",
+            exc_info=True,
+            extra={
+                "embedding_provider": config.get("provider"),
+                "embedding_model": config.get("model"),
+                "base_url": config.get("base_url"),
+                "status": status,
+                "body": body,
+            },
+        )
+        raise
 
 
 async def _openai_compatible_embeddings_batch(
@@ -121,19 +144,155 @@ async def _openai_compatible_embeddings_batch(
     
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i + batch_size]
-        response = await client.embeddings.create(
-            model=config["model"],
-            input=batch,
-        )
-        sorted_data = sorted(response.data, key=lambda x: x.index)
-        results.extend([d.embedding for d in sorted_data])
+        try:
+            response = await client.embeddings.create(
+                model=config["model"],
+                input=batch,
+            )
+            sorted_data = sorted(response.data, key=lambda x: x.index)
+            results.extend([d.embedding for d in sorted_data])
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            body = None
+            try:
+                resp = getattr(exc, "response", None)
+                body = resp.text[:2000] if resp and resp.text else None
+            except Exception:
+                body = None
+            logger.error(
+                f"批量 Embedding 请求失败 ({config.get('provider')}): {exc} status={status} body={body}",
+                exc_info=True,
+                extra={
+                    "embedding_provider": config.get("provider"),
+                    "embedding_model": config.get("model"),
+                    "base_url": config.get("base_url"),
+                    "status": status,
+                    "body": body,
+                    "batch_size": batch_size,
+                    "text_count": len(batch),
+                },
+            )
+            raise
     
     return results
 
 
+async def _siliconflow_embeddings_batch(
+    texts: list[str],
+    config: dict[str, Any],
+    batch_size: int = 100,
+) -> list[list[float]]:
+    """批量获取 SiliconFlow Embedding（HTTP 方式，便于输出详细错误）"""
+    api_key = config.get("api_key")
+    base_url = normalize_base_url(config.get("base_url")) or "https://api.siliconflow.cn/v1"
+    base_url = base_url.rstrip("/")
+    url = f"{base_url}/embeddings"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    results: list[list[float]] = []
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            payload = {
+                "model": config["model"],
+                "input": batch,
+            }
+            try:
+                response = await client.post(url, headers=headers, json=payload)
+            except httpx.RequestError as exc:
+                logger.error(
+                    "siliconflow embeddings 连接失败",
+                    exc_info=True,
+                    extra={
+                        "embedding_provider": "siliconflow",
+                        "embedding_model": config.get("model"),
+                        "base_url": base_url,
+                        "batch_size": batch_size,
+                        "text_count": len(batch),
+                    },
+                )
+                raise exc
+
+            body_preview = response.text[:2000] if response.text else ""
+            if response.status_code >= 400:
+                logger.error(
+                    f"siliconflow embeddings 请求失败 status={response.status_code} body={body_preview}",
+                    extra={
+                        "embedding_provider": "siliconflow",
+                        "embedding_model": config.get("model"),
+                        "base_url": base_url,
+                        "status": response.status_code,
+                        "body": body_preview,
+                        "batch_size": batch_size,
+                        "text_count": len(batch),
+                    },
+                )
+                response.raise_for_status()
+
+            try:
+                data = response.json()
+            except Exception:
+                logger.error(
+                    f"siliconflow embeddings 响应无法解析 status={response.status_code} body={body_preview}",
+                    extra={
+                        "embedding_provider": "siliconflow",
+                        "embedding_model": config.get("model"),
+                        "base_url": base_url,
+                        "status": response.status_code,
+                        "body": body_preview,
+                        "batch_size": batch_size,
+                        "text_count": len(batch),
+                    },
+                )
+                raise RuntimeError("siliconflow embeddings 响应无法解析")
+
+            if isinstance(data, dict) and data.get("error"):
+                logger.error(
+                    f"siliconflow embeddings 返回错误对象 status={response.status_code} body={data}",
+                    extra={
+                        "embedding_provider": "siliconflow",
+                        "embedding_model": config.get("model"),
+                        "base_url": base_url,
+                        "status": response.status_code,
+                        "body": data,
+                        "batch_size": batch_size,
+                        "text_count": len(batch),
+                    },
+                )
+                raise RuntimeError("siliconflow embeddings 返回错误对象")
+
+            items = data.get("data") if isinstance(data, dict) else None
+            if not items:
+                logger.error(
+                    f"siliconflow embeddings 返回空响应 status={response.status_code} body={data}",
+                    extra={
+                        "embedding_provider": "siliconflow",
+                        "embedding_model": config.get("model"),
+                        "base_url": base_url,
+                        "status": response.status_code,
+                        "body": data,
+                        "batch_size": batch_size,
+                        "text_count": len(batch),
+                    },
+                )
+                raise RuntimeError("siliconflow embeddings 返回空响应")
+
+            sorted_data = sorted(items, key=lambda x: x.get("index", 0))
+            results.extend([d.get("embedding") for d in sorted_data])
+
+    return results
+
+
+async def _siliconflow_embedding(text: str, config: dict[str, Any]) -> list[float]:
+    """单条 SiliconFlow Embedding"""
+    results = await _siliconflow_embeddings_batch([text], config, batch_size=1)
+    return results[0]
+
+
 async def _gemini_embedding(text: str, config: dict[str, Any]) -> list[float]:
     """通过 Gemini API 获取 Embedding"""
-    url = f"{config['base_url']}/models/{config['model']}:embedContent"
+    base_url = normalize_base_url(config["base_url"]) or config["base_url"]
+    url = f"{base_url}/models/{config['model']}:embedContent"
     
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
@@ -186,7 +345,13 @@ async def get_embedding(text: str) -> list[float]:
             logger.debug(f"使用 Gemini Embedding: {config['model']}")
             return await _gemini_embedding(text, config)
         
-        elif provider in ("openai", "qwen", "zhipu", "siliconflow", "deepseek", "kimi"):
+        elif provider == "siliconflow":
+            if not config.get("api_key"):
+                raise RuntimeError("SILICONFLOW_API_KEY 未配置，无法生成真实 Embedding")
+            logger.debug(f"使用 siliconflow Embedding: {config['model']}")
+            return await _siliconflow_embedding(text, config)
+
+        elif provider in ("openai", "qwen", "zhipu", "deepseek", "kimi"):
             # 这些都是 OpenAI 兼容 API
             if not config.get("api_key"):
                 raise RuntimeError(f"{provider.upper()}_API_KEY 未配置，无法生成真实 Embedding")
@@ -197,7 +362,11 @@ async def get_embedding(text: str) -> list[float]:
             raise RuntimeError(f"未知 Embedding 提供者: {provider}")
             
     except Exception as e:
-        logger.error(f"Embedding 生成失败 ({provider}): {e}")
+        logger.error(
+            f"Embedding 生成失败 ({provider}): {e}",
+            exc_info=True,
+            extra={"embedding_provider": provider, "embedding_model": config.get("model")},
+        )
         raise
 
 
@@ -231,7 +400,13 @@ async def get_embeddings(texts: list[str]) -> list[list[float]]:
             logger.debug(f"使用 Gemini 批量 Embedding: {config['model']} (batch_size={batch_size})")
             return await _gemini_embeddings_batch(texts, config)
         
-        elif provider in ("openai", "qwen", "zhipu", "siliconflow", "deepseek", "kimi"):
+        elif provider == "siliconflow":
+            if not config.get("api_key"):
+                raise RuntimeError("SILICONFLOW_API_KEY 未配置，无法生成真实 Embedding")
+            logger.debug(f"使用 siliconflow 批量 Embedding: {config['model']} (batch_size={batch_size})")
+            return await _siliconflow_embeddings_batch(texts, config, batch_size)
+
+        elif provider in ("openai", "qwen", "zhipu", "deepseek", "kimi"):
             if not config.get("api_key"):
                 raise RuntimeError(f"{provider.upper()}_API_KEY 未配置，无法生成真实 Embedding")
             logger.debug(f"使用 {provider} 批量 Embedding: {config['model']} (batch_size={batch_size})")
@@ -241,7 +416,11 @@ async def get_embeddings(texts: list[str]) -> list[list[float]]:
             raise RuntimeError(f"未知 Embedding 提供者: {provider}")
             
     except Exception as e:
-        logger.error(f"批量 Embedding 生成失败 ({provider}): {e}")
+        logger.error(
+            f"批量 Embedding 生成失败 ({provider}): {e}",
+            exc_info=True,
+            extra={"embedding_provider": provider, "embedding_model": config.get("model")},
+        )
         raise
 
 

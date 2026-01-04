@@ -35,6 +35,7 @@ import httpx
 from openai import AsyncOpenAI
 
 from app.config import get_settings
+from app.infra.url_utils import normalize_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ logger = logging.getLogger(__name__)
 @lru_cache(maxsize=8)
 def _get_openai_compatible_client(api_key: str | None, base_url: str | None) -> AsyncOpenAI:
     """获取 OpenAI 兼容客户端"""
+    base_url = normalize_base_url(base_url)
     return AsyncOpenAI(
         api_key=api_key or "dummy",
         base_url=base_url,
@@ -209,13 +211,138 @@ async def _openai_compatible_chat(
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
     
-    response = await client.chat.completions.create(
-        model=config["model"],
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    return response.choices[0].message.content or ""
+    prompt_len = len(prompt)
+    sys_len = len(system_prompt) if system_prompt else 0
+    try:
+        response = await client.chat.completions.create(
+            model=config["model"],
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    except Exception as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        body = None
+        try:
+            resp = getattr(exc, "response", None)
+            body = resp.text[:2000] if resp and getattr(resp, "text", None) else None
+        except Exception:
+            body = getattr(exc, "message", None) or str(exc)
+        logger.error(
+            f"{config['provider']} 请求失败 status={status} body={body} prompt_len={prompt_len} system_len={sys_len}",
+            exc_info=True,
+            extra={
+                "llm_provider": config["provider"],
+                "llm_model": config.get("model"),
+                "base_url": config.get("base_url"),
+                "status": status,
+                "body": body,
+                "prompt_len": prompt_len,
+                "system_len": sys_len,
+            },
+        )
+        raise
+    # 防御性处理，避免 None 下标错误
+    if not response or not getattr(response, "choices", None):
+        raise RuntimeError(f"{config['provider']} 返回空响应")
+    choice = response.choices[0]
+    if not choice or not getattr(choice, "message", None):
+        raise RuntimeError(f"{config['provider']} 响应缺少 message 字段")
+    return choice.message.content or ""
+
+
+async def _siliconflow_chat(
+    prompt: str,
+    system_prompt: str | None,
+    config: dict[str, Any],
+    temperature: float,
+    max_tokens: int,
+) -> str:
+    """SiliconFlow Chat（OpenAI 兼容，但需要更详细的错误信息）"""
+    api_key = config.get("api_key")
+    base_url = normalize_base_url(config.get("base_url")) or "https://api.siliconflow.cn/v1"
+    base_url = base_url.rstrip("/")
+    url = f"{base_url}/chat/completions"
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    payload = {
+        "model": config["model"],
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        response = await client.post(url, headers=headers, json=payload)
+    body_preview = response.text[:2000] if response.text else ""
+
+    if response.status_code >= 400:
+        logger.error(
+            f"siliconflow 请求失败 status={response.status_code} body={body_preview} prompt_len={len(prompt)} system_len={len(system_prompt) if system_prompt else 0}",
+            extra={
+                "llm_provider": "siliconflow",
+                "llm_model": config.get("model"),
+                "base_url": base_url,
+                "status": response.status_code,
+                "body": body_preview,
+                "prompt_len": len(prompt),
+                "system_len": len(system_prompt) if system_prompt else 0,
+            },
+        )
+        response.raise_for_status()
+
+    try:
+        data = response.json()
+    except Exception:
+        logger.error(
+            f"siliconflow 返回无法解析的响应 status={response.status_code} body={body_preview}",
+            extra={
+                "llm_provider": "siliconflow",
+                "llm_model": config.get("model"),
+                "base_url": base_url,
+                "status": response.status_code,
+                "body": body_preview,
+            },
+        )
+        raise RuntimeError("siliconflow 返回无法解析的响应")
+
+    if isinstance(data, dict) and data.get("error"):
+        logger.error(
+            f"siliconflow 返回错误对象 status={response.status_code} body={data}",
+            extra={
+                "llm_provider": "siliconflow",
+                "llm_model": config.get("model"),
+                "base_url": base_url,
+                "status": response.status_code,
+                "body": data,
+            },
+        )
+        raise RuntimeError("siliconflow 返回错误对象")
+
+    choices = data.get("choices") if isinstance(data, dict) else None
+    if not choices:
+        logger.error(
+            f"siliconflow 返回空响应 status={response.status_code} body={data}",
+            extra={
+                "llm_provider": "siliconflow",
+                "llm_model": config.get("model"),
+                "base_url": base_url,
+                "status": response.status_code,
+                "body": data,
+            },
+        )
+        raise RuntimeError("siliconflow 返回空响应")
+
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not content:
+        raise RuntimeError("siliconflow 响应缺少内容字段")
+    return content
 
 
 async def _gemini_chat(
@@ -459,7 +586,14 @@ async def chat_completion_with_config(
                 raise ValueError("GEMINI_API_KEY 未配置")
             return await _gemini_chat(prompt, system_prompt, provider_config, temperature, max_tokens)
         
-        elif provider in ("openai", "qwen", "kimi", "deepseek", "zhipu", "siliconflow"):
+        elif provider == "siliconflow":
+            if not provider_config.get("api_key"):
+                raise ValueError("SILICONFLOW_API_KEY 未配置")
+            return await _siliconflow_chat(
+                prompt, system_prompt, provider_config, temperature, max_tokens
+            )
+
+        elif provider in ("openai", "qwen", "kimi", "deepseek", "zhipu"):
             if not provider_config.get("api_key"):
                 raise ValueError(f"{provider.upper()}_API_KEY 未配置")
             return await _openai_compatible_chat(
@@ -470,7 +604,17 @@ async def chat_completion_with_config(
             raise ValueError(f"未知的 LLM 提供者: {provider}")
             
     except Exception as e:
-        logger.error(f"LLM 调用失败 ({provider}): {e}")
+        logger.error(
+            f"LLM 调用失败 ({provider}): {e}",
+            exc_info=True,
+            extra={
+                "llm_provider": provider,
+                "llm_model": provider_config.get("model"),
+                "base_url": provider_config.get("base_url"),
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            },
+        )
         raise
 
 

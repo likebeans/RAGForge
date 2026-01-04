@@ -601,8 +601,8 @@ async def ingest_ground_to_kb(
             )
             if payload.embedding_api_key is not None:
                 embedding_config["api_key"] = payload.embedding_api_key
-            if payload.embedding_base_url is not None:
-                embedding_config["base_url"] = payload.embedding_base_url
+            if payload.embedding_base_url and payload.embedding_base_url.strip():
+                embedding_config["base_url"] = payload.embedding_base_url.strip()
             needs_key = payload.embedding_provider.lower() in ("openai", "qwen", "zhipu", "siliconflow", "deepseek", "kimi", "gemini")
             if needs_key and not embedding_config.get("api_key"):
                 raise HTTPException(
