@@ -59,6 +59,36 @@ def _is_parent_chunk(metadata: dict) -> bool:
     return not is_child
 
 
+def _resolve_embedding_config_from_kb(kb: KnowledgeBase) -> dict | None:
+    """
+    从知识库配置解析 Embedding 配置（兼容 embedding.* 与旧版扁平字段）。
+    """
+    cfg = kb.config or {}
+    if not isinstance(cfg, dict):
+        return None
+
+    embedding_cfg = cfg.get("embedding") if isinstance(cfg.get("embedding"), dict) else {}
+    provider = embedding_cfg.get("provider") or cfg.get("embedding_provider")
+    model = embedding_cfg.get("model") or cfg.get("embedding_model")
+    dim = embedding_cfg.get("dim")
+    if dim is None:
+        dim = cfg.get("embedding_dim")
+
+    if not provider or not model:
+        return None
+
+    try:
+        from app.config import get_settings
+        settings = get_settings()
+        provider_config = settings._get_provider_config(provider, model)
+        if dim is not None:
+            provider_config["dim"] = dim
+        return provider_config
+    except Exception as exc:
+        logger.warning("知识库 Embedding 配置无效: %s/%s (%s)", provider, model, exc)
+        return None
+
+
 @dataclass
 class IndexingResult:
     """
@@ -209,6 +239,13 @@ async def ingest_document(
         return False
     
     add_log(f"开始处理文档: {params.title}")
+
+    if embedding_config is None:
+        embedding_config = _resolve_embedding_config_from_kb(kb)
+        if embedding_config:
+            add_log(
+                f"使用知识库 Embedding 配置: {embedding_config.get('provider')}/{embedding_config.get('model')}"
+            )
     
     # 支持使用已存在的文档记录（用于后台异步入库场景）
     # 先获取 doc，这样后续步骤的日志才能实时保存
