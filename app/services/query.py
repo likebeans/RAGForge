@@ -9,6 +9,7 @@
 5. 组装返回结果
 """
 
+import inspect
 import logging
 import time
 
@@ -99,12 +100,19 @@ async def retrieve_chunks(
     acl_filter = build_acl_filter_for_qdrant(user_context) if user_context else None
     token = set_acl_filter_ctx(acl_filter)
     try:
+        retrieve_kwargs = {}
+        if session is not None:
+            try:
+                if "session" in inspect.signature(retriever.retrieve).parameters:
+                    retrieve_kwargs["session"] = session
+            except (TypeError, ValueError):
+                pass
         raw_hits = await retriever.retrieve(
             query=params.query,
             tenant_id=tenant_id,
             kb_ids=[kb.id for kb in kbs],
             top_k=params.top_k,
-            session=session,  # RAPTOR 检索器需要 session 来检查索引
+            **retrieve_kwargs,
         )
     finally:
         reset_acl_filter_ctx(token)
