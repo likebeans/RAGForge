@@ -71,6 +71,7 @@ alembic/versions/*.pyc
 
 # Docs (暂不推送)
 docs/
+RAPTOR_REVIEW.md
 
 # Test data (测试文档)
 test/
