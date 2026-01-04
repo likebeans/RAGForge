@@ -39,6 +39,21 @@ services:
       - db
       - qdrant
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8020}
+    container_name: rag_kb_frontend
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8020}
+    ports:
+      - "3003:3000"
+    depends_on:
+      - api
+
   qdrant:
     image: qdrant/qdrant:v1.9.0
     container_name: rag_kb_qdrant
