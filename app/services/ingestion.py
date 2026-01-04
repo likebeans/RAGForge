@@ -24,7 +24,7 @@ from app.pipeline import operator_registry
 from app.schemas.internal import IngestionParams
 from app.pipeline.base import BaseChunkerOperator
 from app.pipeline.chunkers.simple import SimpleChunker
-from app.pipeline.enrichers.summarizer import generate_summary, SummaryConfig
+from app.pipeline.enrichers.summarizer import generate_summary, SummaryConfig, resolve_summary_preset
 from app.pipeline.enrichers.chunk_enricher import get_chunk_enricher, EnrichmentConfig
 from app.pipeline.indexers.raptor import (
     RaptorNativeIndexer,
@@ -101,14 +101,8 @@ def _resolve_summary_config(enricher_config: dict | None) -> SummaryConfig | Non
     if not summary_length:
         return None
 
-    length_presets = {
-        "short": {"max_tokens": 150, "length_hint": "50-80 字"},
-        "medium": {"max_tokens": 300, "length_hint": "100-200 字"},
-        "long": {"max_tokens": 600, "length_hint": "200-400 字"},
-    }
-    preset = length_presets.get(summary_length)
-    if not preset:
-        logger.warning("未知摘要长度配置: %s", summary_length)
+    max_tokens, length_hint = resolve_summary_preset(summary_length)
+    if not max_tokens:
         return None
 
     from app.config import get_settings
@@ -116,9 +110,9 @@ def _resolve_summary_config(enricher_config: dict | None) -> SummaryConfig | Non
     return SummaryConfig(
         enabled=True,
         min_tokens=settings.doc_summary_min_tokens,
-        max_tokens=preset["max_tokens"],
+        max_tokens=max_tokens,
         model=settings.doc_summary_model,
-        length_hint=preset["length_hint"],
+        length_hint=length_hint,
     )
 
 

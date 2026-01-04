@@ -17,7 +17,7 @@ from app.schemas.document import (
     PreviewChunkEnrichmentResponse,
     EnrichedChunkResult,
 )
-from app.pipeline.enrichers.summarizer import DocumentSummarizer
+from app.pipeline.enrichers.summarizer import DocumentSummarizer, resolve_summary_preset
 from app.pipeline.enrichers.chunk_enricher import ChunkEnricher
 
 logger = logging.getLogger(__name__)
@@ -46,9 +46,18 @@ async def preview_summary(
     try:
         logger.info(f"开始生成摘要，内容长度: {len(payload.content)}")
         
+        max_tokens = payload.max_tokens
+        length_hint = None
+        if payload.summary_length:
+            preset_max_tokens, preset_hint = resolve_summary_preset(payload.summary_length)
+            if preset_max_tokens:
+                max_tokens = preset_max_tokens
+                length_hint = preset_hint
+
         summarizer = DocumentSummarizer(
             min_tokens=0,  # 预览时不限制最小长度
-            max_tokens=payload.max_tokens,
+            max_tokens=max_tokens,
+            length_hint=length_hint,
         )
         
         # 使用异步方法

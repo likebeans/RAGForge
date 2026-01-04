@@ -1543,6 +1543,13 @@ export default function GroundDetailPage() {
     try {
       const needsSummary = selectedEnricher === "document_summary";
       const needsChunkEnrich = selectedEnricher === "chunk_context";
+      const summaryLength =
+        typeof (enricherParams as Record<string, unknown>).summary_length === "string" &&
+        ["short", "medium", "long"].includes(
+          (enricherParams as Record<string, unknown>).summary_length as string
+        )
+          ? ((enricherParams as Record<string, unknown>).summary_length as "short" | "medium" | "long")
+          : undefined;
       
       // 获取用于预览的文档内容（使用分块预览的文档）
       const selectedDoc = documents.find(d => d.id === selectedDocId);
@@ -1554,7 +1561,9 @@ export default function GroundDetailPage() {
       // 1. 预览摘要
       if (needsSummary) {
         setEnrichPreviewStep("正在生成文档摘要...(LLM 处理中，请耐心等待)");
-        const summaryResult = await client.previewSummary(fullContent, docTitle);
+        const summaryResult = await client.previewSummary(fullContent, docTitle, {
+          summaryLength,
+        });
         setSummaryPreview(summaryResult.summary);
         setEnrichPreviewStep("文档摘要生成完成");
       }
@@ -1564,7 +1573,11 @@ export default function GroundDetailPage() {
         setEnrichPreviewStep("正在增强 Chunk 上下文...(LLM 处理中，请耐心等待)");
         const chunksToEnrich = chunkPreviewResult.slice(0, 3).map(c => c.text);
         // 如果有摘要，使用摘要；否则用空字符串
-        const docSummary = summaryPreview || (needsSummary ? (await client.previewSummary(fullContent, docTitle)).summary : "");
+        const docSummary =
+          summaryPreview ||
+          (needsSummary
+            ? (await client.previewSummary(fullContent, docTitle, { summaryLength })).summary
+            : "");
         
         const enrichResult = await client.previewChunkEnrichment(
           chunksToEnrich,

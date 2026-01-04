@@ -135,7 +135,16 @@ class PreviewSummaryRequest(BaseModel):
     """预览文档摘要请求"""
     content: str = Field(..., min_length=1, description="文档内容")
     title: str | None = Field(default=None, description="文档标题（可选）")
-    max_tokens: int = Field(default=300, ge=50, le=1000, description="摘要最大 token 数")
+    summary_length: Literal["short", "medium", "long"] | None = Field(
+        default=None,
+        description="摘要长度等级（short/medium/long）",
+    )
+    max_tokens: int = Field(
+        default=300,
+        ge=50,
+        le=1000,
+        description="摘要最大 token 数（未指定 summary_length 时生效）",
+    )
 
 
 class PreviewSummaryResponse(BaseModel):

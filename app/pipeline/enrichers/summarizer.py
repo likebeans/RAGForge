@@ -30,6 +30,12 @@ class SummaryConfig:
 # 默认摘要提示词
 DEFAULT_LENGTH_HINT = "100-200 字"
 
+SUMMARY_LENGTH_PRESETS = {
+    "short": {"max_tokens": 150, "length_hint": "50-80 字"},
+    "medium": {"max_tokens": 300, "length_hint": "100-200 字"},
+    "long": {"max_tokens": 600, "length_hint": "200-400 字"},
+}
+
 DEFAULT_SUMMARY_PROMPT = """请为以下文档内容生成一段简洁的摘要。
 
 要求：
@@ -168,6 +174,17 @@ class DocumentSummarizer:
             model=config.model,
             length_hint=config.length_hint,
         )
+
+
+def resolve_summary_preset(summary_length: str | None) -> tuple[int | None, str | None]:
+    """解析摘要长度预设，返回 (max_tokens, length_hint)。"""
+    if not summary_length:
+        return None, None
+    preset = SUMMARY_LENGTH_PRESETS.get(summary_length)
+    if not preset:
+        logger.warning("未知摘要长度配置: %s", summary_length)
+        return None, None
+    return preset["max_tokens"], preset["length_hint"]
 
 
 def get_summarizer(config: SummaryConfig | None = None) -> DocumentSummarizer | None:
