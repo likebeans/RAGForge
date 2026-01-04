@@ -27,7 +27,12 @@ logger = get_logger(__name__)
 AUDIT_PATHS = {
     "/v1/retrieve": "retrieve",
     "/v1/rag": "rag",
+    "/v1/chat/completions": "rag_chat",
+    "/v1/embeddings": "embedding",
     "/v1/knowledge-bases": "kb",
+    "/v1/api-keys": "apikey",
+    "/admin/tenants": "admin_tenant",
+    "/admin": "admin_generic",
     "/documents": "document",
 }
 
@@ -41,8 +46,18 @@ def _get_action_from_path(method: str, path: str) -> str | None:
                     return "retrieve"
                 elif action_prefix == "rag":
                     return "rag"
+                elif action_prefix == "rag_chat":
+                    return "rag_chat"
+                elif action_prefix == "embedding":
+                    return "embedding"
                 elif action_prefix == "kb":
                     return "kb_create"
+                elif action_prefix == "apikey":
+                    return "apikey_create"
+                elif action_prefix == "admin_tenant":
+                    return "admin_tenant_create"
+                elif action_prefix == "admin_generic":
+                    return "admin_action"
                 elif action_prefix == "document":
                     return "doc_upload"
             elif method == "DELETE":
@@ -50,8 +65,21 @@ def _get_action_from_path(method: str, path: str) -> str | None:
                     return "kb_delete"
                 elif action_prefix == "document":
                     return "doc_delete"
+                elif action_prefix == "apikey":
+                    return "apikey_delete"
+                elif action_prefix in ("admin_tenant", "admin_generic"):
+                    return "admin_delete"
             elif method == "GET":
                 return f"{action_prefix}_read"
+            elif method in ("PATCH", "PUT"):
+                if action_prefix == "kb":
+                    return "kb_update"
+                elif action_prefix == "document":
+                    return "doc_update"
+                elif action_prefix == "apikey":
+                    return "apikey_update"
+                elif action_prefix.startswith("admin"):
+                    return "admin_update"
     return None
 
 

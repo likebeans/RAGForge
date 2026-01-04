@@ -22,6 +22,7 @@ from app.auth.api_key import APIKeyContext, get_api_key_context
 from app.config import get_settings
 from app.db.session import get_db
 from app.models import Tenant
+from app.infra.logging import set_tenant_id
 
 
 async def get_tenant(
@@ -38,6 +39,7 @@ async def get_tenant(
     # 设置 request.state 供审计日志中间件使用
     request.state.tenant_id = context.tenant.id
     request.state.api_key_id = context.api_key.id
+    set_tenant_id(context.tenant.id)
     return context.tenant
 
 
