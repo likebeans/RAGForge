@@ -151,7 +151,7 @@ export default function KnowledgeBaseDetailPage() {
   // 知识库配置状态
   const [configName, setConfigName] = useState("");
   const [configDescription, setConfigDescription] = useState("");
-  const [configEmbeddingModel, setConfigEmbeddingModel] = useState<{ provider: string; model: string }>({ provider: "ollama", model: "bge-m3" });
+  const [configEmbeddingModel, setConfigEmbeddingModel] = useState<{ provider: string; model: string }>({ provider: "", model: "" });
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   // 自定义图标
   const [customIconUrl, setCustomIconUrl] = useState<string | null>(null);
@@ -173,11 +173,20 @@ export default function KnowledgeBaseDetailPage() {
       setConfigDescription(kb.description || "");
       // 从 kb.config 中读取配置（如果有）
       const kbConfig = (kb as any).config || {};
-      if (kbConfig.embedding_provider && kbConfig.embedding_model) {
+      const embeddingConfig = (kbConfig.embedding && typeof kbConfig.embedding === "object") ? kbConfig.embedding : {};
+      if (embeddingConfig.provider && embeddingConfig.model) {
+        setConfigEmbeddingModel({
+          provider: embeddingConfig.provider,
+          model: embeddingConfig.model,
+        });
+      } else if (kbConfig.embedding_provider && kbConfig.embedding_model) {
+        // 兼容旧版扁平字段
         setConfigEmbeddingModel({
           provider: kbConfig.embedding_provider,
           model: kbConfig.embedding_model,
         });
+      } else {
+        setConfigEmbeddingModel({ provider: "", model: "" });
       }
       // 从 localStorage 读取自定义图标
       const customIcons = JSON.parse(localStorage.getItem("kb_custom_icons") || "{}");
@@ -497,15 +506,22 @@ export default function KnowledgeBaseDetailPage() {
       // 如果没有选择 Embedding 模型，使用前端默认设置
       const embeddingProvider = configEmbeddingModel.provider || defaultModels.embedding?.provider;
       const embeddingModel = configEmbeddingModel.model || defaultModels.embedding?.model;
+      const currentConfig = (kb as any)?.config || {};
+      const nextConfig: Record<string, any> = { ...currentConfig };
+      if (embeddingProvider && embeddingModel) {
+        nextConfig.embedding = {
+          provider: embeddingProvider,
+          model: embeddingModel,
+        };
+      } else {
+        delete nextConfig.embedding;
+      }
       
       // 调用更新知识库 API
       await client.updateKnowledgeBase(kbId, {
         name: configName,
         description: configDescription,
-        config: {
-          embedding_provider: embeddingProvider,
-          embedding_model: embeddingModel,
-        },
+        config: nextConfig,
       });
       toast.success("配置保存成功");
     } catch (error) {

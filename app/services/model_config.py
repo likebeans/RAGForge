@@ -195,11 +195,22 @@ class ModelConfigResolver:
         
         # 3. 知识库配置（最高优先级，不可覆盖）
         kb_config = {}
-        if kb and kb.config:
-            kb_config = {
-                k: v for k, v in kb.config.items() 
-                if k in self.EMBEDDING_KEYS
-            }
+        if kb and kb.config and isinstance(kb.config, dict):
+            embedding_cfg = kb.config.get("embedding")
+            if isinstance(embedding_cfg, dict):
+                provider = embedding_cfg.get("provider")
+                model = embedding_cfg.get("model")
+                dim = embedding_cfg.get("dim")
+                if provider is not None:
+                    kb_config["embedding_provider"] = provider
+                if model is not None:
+                    kb_config["embedding_model"] = model
+                if dim is not None:
+                    kb_config["embedding_dim"] = dim
+            # 兼容旧版扁平字段
+            for key in self.EMBEDDING_KEYS:
+                if key not in kb_config and kb.config.get(key) is not None:
+                    kb_config[key] = kb.config.get(key)
         
         # 合并配置
         merged = self._merge_configs(env_config, system_config, kb_config)

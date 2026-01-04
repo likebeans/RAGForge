@@ -88,7 +88,10 @@ async def _get_kb_or_404(
     kb = result.scalar_one_or_none()
     
     if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "KB_NOT_FOUND", "detail": "Knowledge base not found"},
+        )
     
     return kb
 
@@ -221,9 +224,14 @@ async def _build_raptor_index_task(
             
             # 获取 embedding 配置
             kb_config = kb.config or {}
+            embedding_cfg = kb_config.get("embedding") if isinstance(kb_config, dict) else {}
+            if not isinstance(embedding_cfg, dict):
+                embedding_cfg = {}
+            provider = embedding_cfg.get("provider") or kb_config.get("embedding_provider") or "qwen"
+            model = embedding_cfg.get("model") or kb_config.get("embedding_model") or "text-embedding-v3"
             embedding_config = {
-                "provider": kb_config.get("embedding_provider", "qwen"),
-                "model": kb_config.get("embedding_model", "text-embedding-v3"),
+                "provider": provider,
+                "model": model,
             }
             
             # 调用构建函数
@@ -332,7 +340,7 @@ async def build_raptor_index(
     if chunk_count == 0:
         raise HTTPException(
             status_code=400,
-            detail="知识库没有文档 chunks，请先上传文档",
+            detail={"code": "KB_EMPTY", "detail": "知识库没有文档 chunks，请先上传文档"},
         )
     
     # 生成任务 ID
