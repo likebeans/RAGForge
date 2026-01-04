@@ -48,8 +48,7 @@ class DocumentResponse(BaseModel):
     processing_status: str = "pending"  # pending/processing/completed/failed/interrupted
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class DocumentListResponse(BaseModel):
@@ -77,8 +76,7 @@ class ChunkResponse(BaseModel):
     indexing_status: str
     metadata: dict | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class ChunkListResponse(BaseModel):

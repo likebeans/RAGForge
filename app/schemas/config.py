@@ -339,9 +339,8 @@ class KBConfig(BaseModel):
         default=None,
         description="RAPTOR 索引配置",
     )
-
-    class Config:
-        json_schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "ingestion": {
                     "chunker": {"name": "markdown", "params": {"chunk_size": 512, "chunk_overlap": 100}},
@@ -357,3 +356,4 @@ class KBConfig(BaseModel):
                 },
             }
         }
+    }

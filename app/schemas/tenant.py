@@ -49,9 +49,8 @@ class TenantResponse(BaseModel):
     # 统计信息（可选，由服务层填充）
     kb_count: int | None = None
     doc_count: int | None = None
-    
-    class Config:
-        from_attributes = True
+
+    model_config = {"from_attributes": True}
 
 
 class TenantCreateResponse(TenantResponse):

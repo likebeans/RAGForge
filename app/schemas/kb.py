@@ -35,9 +35,7 @@ class KnowledgeBaseResponse(BaseModel):
     name: str
     description: str | None
     config: dict | None = None
-
-    class Config:
-        from_attributes = True  # 允许从 ORM 对象构造
+    model_config = {"from_attributes": True}  # 允许从 ORM 对象构造
 
 
 class KnowledgeBaseUpdate(BaseModel):

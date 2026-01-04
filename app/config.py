@@ -175,10 +175,11 @@ class Settings(BaseSettings):
     chunk_enrichment_context_chunks: int = 1 # 上下文 chunk 数量（前后各 N 个）
     chunk_enrichment_model: str | None = None  # 增强使用的模型，None 使用默认 openai_model
 
-    class Config:
-        """Pydantic 配置"""
-        env_file = ".env"           # 从 .env 文件加载配置
-        env_file_encoding = "utf-8"  # .env 文件编码
+    model_config = {
+        "env_file": ".env",           # 从 .env 文件加载配置
+        "env_file_encoding": "utf-8",  # .env 文件编码
+        "extra": "ignore",
+    }
     
     def get_llm_config(self) -> dict:
         """获取 LLM 配置（api_key, base_url, model）"""

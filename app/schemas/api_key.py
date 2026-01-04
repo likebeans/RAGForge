@@ -36,8 +36,7 @@ class APIKeyInfo(BaseModel):
     description: str | None = None
     identity: dict | None = None  # 用户身份信息（用于 ACL）
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class APIKeySecret(APIKeyInfo):

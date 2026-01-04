@@ -44,8 +44,7 @@ class MessageResponse(BaseModel):
     metadata: dict | None = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 # ==================== 对话 ====================
@@ -86,8 +85,7 @@ class ConversationResponse(BaseModel):
     updated_at: datetime
     message_count: int | None = None  # 消息数量（可选）
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class ConversationDetailResponse(BaseModel):
@@ -99,8 +97,7 @@ class ConversationDetailResponse(BaseModel):
     updated_at: datetime
     messages: list[MessageResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class ConversationListResponse(BaseModel):
