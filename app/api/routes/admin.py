@@ -40,6 +40,11 @@ router = APIRouter(
 )
 
 
+def _err(code: str, detail: str) -> dict:
+    """统一错误响应结构"""
+    return {"code": code, "detail": detail}
+
+
 # ==================== 租户管理 ====================
 
 @router.post("/tenants", response_model=TenantCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -146,7 +151,7 @@ async def get_tenant(
     """获取租户详情"""
     tenant = await db.get(Tenant, tenant_id)
     if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+        raise HTTPException(status_code=404, detail=_err("TENANT_NOT_FOUND", "Tenant not found"))
     
     # 统计 KB 和文档数
     kb_count = (await db.execute(
@@ -167,7 +172,7 @@ async def update_tenant(
     """更新租户信息"""
     tenant = await db.get(Tenant, tenant_id)
     if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+        raise HTTPException(status_code=404, detail=_err("TENANT_NOT_FOUND", "Tenant not found"))
     
     # 检查名称唯一性（如果要更新名称）
     if data.name and data.name != tenant.name:
@@ -175,7 +180,7 @@ async def update_tenant(
         if existing.scalar_one_or_none():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Tenant with name '{data.name}' already exists",
+                detail=_err("TENANT_NAME_EXISTS", f"Tenant with name '{data.name}' already exists"),
             )
     
     # 更新字段
@@ -201,10 +206,10 @@ async def disable_tenant(
     """
     tenant = await db.get(Tenant, tenant_id)
     if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+        raise HTTPException(status_code=404, detail=_err("TENANT_NOT_FOUND", "Tenant not found"))
     
     if tenant.status == "disabled":
-        raise HTTPException(status_code=400, detail="Tenant is already disabled")
+        raise HTTPException(status_code=400, detail=_err("TENANT_ALREADY_DISABLED", "Tenant is already disabled"))
     
     tenant.status = "disabled"
     tenant.disabled_at = datetime.now(timezone.utc)
@@ -223,10 +228,10 @@ async def enable_tenant(
     """启用租户"""
     tenant = await db.get(Tenant, tenant_id)
     if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+        raise HTTPException(status_code=404, detail=_err("TENANT_NOT_FOUND", "Tenant not found"))
     
     if tenant.status == "active":
-        raise HTTPException(status_code=400, detail="Tenant is already active")
+        raise HTTPException(status_code=400, detail=_err("TENANT_ALREADY_ACTIVE", "Tenant is already active"))
     
     tenant.status = "active"
     tenant.disabled_at = None
@@ -249,7 +254,7 @@ async def delete_tenant(
     """
     tenant = await db.get(Tenant, tenant_id)
     if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+        raise HTTPException(status_code=404, detail=_err("TENANT_NOT_FOUND", "Tenant not found"))
     
     await db.delete(tenant)
     await db.commit()
@@ -265,7 +270,7 @@ async def list_tenant_api_keys(
     """列出租户的所有 API Key"""
     tenant = await db.get(Tenant, tenant_id)
     if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+        raise HTTPException(status_code=404, detail=_err("TENANT_NOT_FOUND", "Tenant not found"))
     
     result = await db.execute(
         select(APIKey)
@@ -285,7 +290,7 @@ async def create_tenant_api_key(
     """为租户创建新的 API Key"""
     tenant = await db.get(Tenant, tenant_id)
     if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+        raise HTTPException(status_code=404, detail=_err("TENANT_NOT_FOUND", "Tenant not found"))
     
     settings = get_settings()
     raw_key, hashed, prefix = generate_api_key(settings.api_key_prefix)
@@ -332,7 +337,7 @@ async def delete_tenant_api_key(
     """删除租户的 API Key"""
     api_key = await db.get(APIKey, key_id)
     if not api_key or api_key.tenant_id != tenant_id:
-        raise HTTPException(status_code=404, detail="API Key not found")
+        raise HTTPException(status_code=404, detail=_err("API_KEY_NOT_FOUND", "API Key not found"))
     
     await db.delete(api_key)
     await db.commit()
@@ -388,7 +393,7 @@ async def get_system_config(
     if not config:
         raise HTTPException(
             status_code=404,
-            detail=f"System config '{key}' not found",
+            detail=_err("CONFIG_NOT_FOUND", f"System config '{key}' not found"),
         )
     
     return SystemConfigItem(
@@ -415,7 +420,7 @@ async def update_system_config(
     if key not in DEFAULT_SYSTEM_CONFIGS:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown config key: {key}. Valid keys: {list(DEFAULT_SYSTEM_CONFIGS.keys())}",
+            detail=_err("CONFIG_KEY_INVALID", f"Unknown config key: {key}. Valid keys: {list(DEFAULT_SYSTEM_CONFIGS.keys())}"),
         )
     
     # 序列化值

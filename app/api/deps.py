@@ -66,19 +66,19 @@ async def verify_admin_token(
     if not settings.admin_token:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Admin API is not configured. Set ADMIN_TOKEN environment variable.",
+            detail={"code": "ADMIN_API_NOT_CONFIGURED", "detail": "Admin API is not configured. Set ADMIN_TOKEN environment variable."},
         )
     
     if not x_admin_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing X-Admin-Token header",
+            detail={"code": "MISSING_ADMIN_TOKEN", "detail": "Missing X-Admin-Token header"},
         )
     
     if x_admin_token != settings.admin_token:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid admin token",
+            detail={"code": "INVALID_ADMIN_TOKEN", "detail": "Invalid admin token"},
         )
     
     return x_admin_token

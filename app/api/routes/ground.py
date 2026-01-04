@@ -260,7 +260,7 @@ async def preview_document_chunks(
             break
     
     if not kb:
-        raise HTTPException(status_code=404, detail="Ground not found")
+        raise HTTPException(status_code=404, detail={"code": "GROUND_NOT_FOUND", "detail": "Ground not found"})
     
     # 获取文档
     doc_result = await db.execute(
@@ -271,12 +271,12 @@ async def preview_document_chunks(
     )
     doc = doc_result.scalar_one_or_none()
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail={"code": "DOCUMENT_NOT_FOUND", "detail": "Document not found"})
     
     # 从 raw_content 获取原始文件内容
     content = doc.raw_content or ""
     if not content:
-        raise HTTPException(status_code=400, detail="Document has no raw content. Please re-upload the file.")
+        raise HTTPException(status_code=400, detail={"code": "NO_RAW_CONTENT", "detail": "Document has no raw content. Please re-upload the file."})
     
     chunker_name = payload.chunker or "recursive"
     chunker_params = payload.chunker_params or {}
@@ -356,7 +356,7 @@ async def upload_ground_document(
             break
     
     if not kb:
-        raise HTTPException(status_code=404, detail="Ground not found")
+        raise HTTPException(status_code=404, detail={"code": "GROUND_NOT_FOUND", "detail": "Ground not found"})
     
     # 验证文件类型
     allowed_extensions = {".txt", ".md", ".markdown", ".json"}
@@ -493,7 +493,7 @@ async def ingest_ground_to_kb(
             break
     
     if not ground_kb:
-        raise HTTPException(status_code=404, detail="Ground not found")
+        raise HTTPException(status_code=404, detail={"code": "GROUND_NOT_FOUND", "detail": "Ground not found"})
     
     # 获取 Ground 中的所有文档
     doc_result = await db.execute(
