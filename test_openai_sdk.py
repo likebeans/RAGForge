@@ -1,19 +1,25 @@
 """
-测试 OpenAI 兼容接口和 Python SDK
+测试 OpenAI 兼容接口和 Python SDK（E2E，可选）
 
-测试内容：
-1. OpenAI Embeddings API
-2. OpenAI Chat Completions API (RAG 模式)
-3. Python SDK 完整功能
+通过环境变量控制是否运行：
+    RUN_OPENAI_E2E=1 API_KEY=xxx API_BASE=http://localhost:8020 uv run pytest -m e2e test_openai_sdk.py
 """
 
 import os
 import sys
 import time
 
-# 测试环境配置
-API_KEY = "kb_sk_zeELI2nytTxS2O56L3RyghJrAUnRorNFfnsNaj-5DS8"
-API_BASE = "http://localhost:8020"
+import pytest
+
+# 跳过：默认不运行，避免 CI 依赖外部服务
+if not os.getenv("RUN_OPENAI_E2E"):
+    pytest.skip("RUN_OPENAI_E2E not set, skipping OpenAI e2e tests", allow_module_level=True)
+
+# 测试环境配置（必须提供）
+API_KEY = os.getenv("API_KEY")
+API_BASE = os.getenv("API_BASE")
+if not API_KEY or not API_BASE:
+    pytest.skip("API_KEY or API_BASE not set for OpenAI e2e tests", allow_module_level=True)
 
 # 使用时间戳确保名称唯一
 TIMESTAMP = int(time.time())

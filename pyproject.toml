@@ -57,3 +57,12 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["app", "app.*", "sdk", "sdk.*"]
 exclude = ["alembic", "alembic.*", "tests", "tests.*"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+markers = [
+    "e2e: end-to-end tests that rely on external services or real databases",
+]
+filterwarnings = [
+    "ignore:pkg_resources is deprecated as an API:UserWarning",
+]

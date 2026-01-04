@@ -28,6 +28,8 @@ from app.config import get_settings  # noqa: E402
 from app.db.session import SessionLocal, init_models  # noqa: E402
 from app.models import APIKey, Tenant  # noqa: E402
 
+pytestmark = pytest.mark.e2e
+
 
 @pytest.fixture(scope="session")
 def event_loop():
