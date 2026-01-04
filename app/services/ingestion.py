@@ -374,7 +374,7 @@ async def ingest_document(
         for chunk in chunks
         if not _is_parent_chunk(chunk.extra_metadata or {})
     ]
-    bm25_store.upsert_chunks(
+    await bm25_store.upsert_chunks(
         tenant_id=tenant_id,
         knowledge_base_id=kb.id,
         chunks=bm25_chunks,

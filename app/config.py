@@ -145,7 +145,17 @@ class Settings(BaseSettings):
     es_username: str | None = None
     es_password: str | None = None
     es_index_prefix: str = "kb_"
+    es_index_mode: str = "shared"  # shared | per_kb
+    es_request_timeout: int = 10
+    es_bulk_batch_size: int = 500
+    es_analyzer: str = "standard"  # 可选：ik_max_word 等
+    es_refresh: str = "false"      # bulk refresh 策略：false/true/wait_for/auto
+    es_max_retries: int = 2        # ES 请求重试次数
     
+    # ==================== BM25 配置（内存实现，生产建议 ES/OpenSearch） ====================
+    bm25_enabled: bool = True  # 可关闭内存 BM25，避免多实例不一致
+    bm25_backend: str = "memory"  # memory / es
+
     # ==================== HyDE 配置 ====================
     hyde_enabled: bool = False          # 是否启用 HyDE（需要 LLM）
     hyde_num_queries: int = 4           # 生成的假设答案数量

@@ -273,7 +273,7 @@ async def delete_knowledge_base(
 
     # 删除 KnowledgeBase
     await db.delete(kb)
-    bm25_store.delete_by_kb(tenant_id=tenant.id, knowledge_base_id=kb_id)
+    await bm25_store.delete_by_kb(tenant_id=tenant.id, knowledge_base_id=kb_id)
     await db.commit()
 
     logger.info(f"Deleted knowledge base {kb_id} with {len(doc_ids)} documents")

@@ -390,7 +390,7 @@ async def delete_document(
             logger.info(f"Deleted {len(chunk_ids)} vectors for document {doc_id}")
         except Exception as e:
             logger.warning(f"Failed to delete vectors for document {doc_id}: {e}")
-        bm25_store.delete_by_ids(
+        await bm25_store.delete_by_ids(
             tenant_id=tenant.id,
             knowledge_base_id=doc.knowledge_base_id,
             chunk_ids=chunk_ids,

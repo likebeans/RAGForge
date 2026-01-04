@@ -17,6 +17,7 @@ from sqlalchemy import text
 from app.db.session import SessionLocal
 from app.config import get_settings
 from app.infra.metrics import metrics_collector
+from app.infra.bm25_store import bm25_store
 
 router = APIRouter()
 
@@ -41,6 +42,19 @@ async def _check_qdrant() -> tuple[bool, str]:
         # 尝试获取集合列表
         collections = await vector_store.client.get_collections()
         return True, f"connected ({len(collections.collections)} collections)"
+    except Exception as e:
+        return False, str(e)
+
+async def _check_es() -> tuple[bool, str]:
+    """检查 ES/OpenSearch 连接（仅当 bm25_backend=es 且启用时）"""
+    try:
+        if not getattr(bm25_store, "enabled", False):
+            return True, "disabled"
+        if getattr(bm25_store, "backend_name", "memory") != "es":
+            return True, "using memory"
+        backend = bm25_store.backend
+        ping = await backend.client.ping()
+        return (True, "connected") if ping else (False, "ping failed")
     except Exception as e:
         return False, str(e)
 
@@ -81,6 +95,12 @@ async def readiness_check() -> JSONResponse:
     qdrant_ok, qdrant_msg = await _check_qdrant()
     checks["qdrant"] = {"status": "ok" if qdrant_ok else "error", "message": qdrant_msg}
     if not qdrant_ok:
+        all_healthy = False
+
+    # 检查 ES/OpenSearch（可选）
+    es_ok, es_msg = await _check_es()
+    checks["es"] = {"status": "ok" if es_ok else "error", "message": es_msg}
+    if not es_ok:
         all_healthy = False
     
     response = {
@@ -123,8 +143,12 @@ async def get_metrics() -> dict:
             "embedding_model": settings.embedding_model,
             "embedding_dim": settings.embedding_dim,
             "rerank_provider": settings.rerank_provider,
+            "bm25_backend": getattr(bm25_store, "backend_name", "memory"),
+            "bm25_enabled": getattr(bm25_store, "enabled", True),
+            "es_index_mode": settings.es_index_mode,
         },
         "stats": stats,
+        "bm25_backends": stats.get("retrieval_backends", {}),
     }
 
 

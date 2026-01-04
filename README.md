@@ -134,6 +134,8 @@ docker compose exec api uv run alembic upgrade head
 
 # 5. 检查服务状态
 curl http://localhost:8020/health
+# 前端控制台
+# 浏览器访问 http://localhost:3003
 ```
 
 ### 方式二：本地开发
@@ -153,6 +155,19 @@ cp .env.example .env
 uv run alembic upgrade head
 
 # 5. 启动开发服务器
+uv run uvicorn app.main:app --reload --port 8020
+```
+
+### 本地验证 OpenSearch 稀疏检索（可选）
+```bash
+# 启动带 OpenSearch 的组合（包含 API + Postgres + OpenSearch）
+docker compose -f docker-compose.opensearch.yml up -d
+
+# 切换稀疏检索为 ES/OpenSearch
+export BM25_ENABLED=true
+export BM25_BACKEND=es
+export ES_HOSTS=http://localhost:9200
+uv run alembic upgrade head
 uv run uvicorn app.main:app --reload --port 8020
 ```
 
@@ -443,12 +458,29 @@ curl -X POST "http://localhost:8020/v1/rag" \
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant 服务地址 |
 | `QDRANT_API_KEY` | - | Qdrant API Key（云服务） |
 | `QDRANT_COLLECTION_PREFIX` | `kb_` | Collection 前缀 |
+| **BM25/稀疏检索** |
+| `BM25_ENABLED` | `true` | 是否启用稀疏检索 |
+| `BM25_BACKEND` | `memory` | `memory` / `es`（OpenSearch/ES） |
 | **Milvus（可选）** |
 | `MILVUS_HOST` | - | Milvus 主机 |
 | `MILVUS_PORT` | - | Milvus 端口 |
 | **Elasticsearch（可选）** |
 | `ES_HOSTS` | - | ES 主机（逗号分隔） |
+| `ES_USERNAME` / `ES_PASSWORD` | - | 认证信息（可选） |
 | `ES_INDEX_PREFIX` | `kb_` | 索引前缀 |
+| `ES_INDEX_MODE` | `shared` | `shared` 单索引或 `per_kb` 每 KB 一索引 |
+| `ES_REQUEST_TIMEOUT` | `10` | 请求超时时间（秒） |
+| `ES_BULK_BATCH_SIZE` | `500` | bulk 写入批大小 |
+| `ES_ANALYZER` | `standard` | 索引 analyzer，中文可换 IK 等 |
+| `ES_REFRESH` | `false` | bulk 写入刷新策略 |
+
+> 稀疏检索运维脚本：
+> - `scripts/migrate_bm25_to_es.py`：DB → ES/OpenSearch 迁移/双写。
+> - `scripts/manage_es_indices.py`：列出/删除/刷新索引。
+> - `scripts/rebuild_bm25.py`：从 DB 重建内存 BM25（回滚时用）。
+> 更多迁移细节见 `docs/MIGRATION_SPARSE_ES.md`。
+
+> Qdrant 多向量字段：同一 Collection 支持多模型/多维度的向量字段，字段名自动由模型+维度生成（如 `vec_qwen_embedding_4096`）。保持入库与检索的模型一致即可避免维度错误。
 
 ### 端口配置
 

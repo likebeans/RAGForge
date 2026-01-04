@@ -202,7 +202,7 @@ async def delete_ground(
         await db.execute(delete(Chunk).where(Chunk.document_id.in_(doc_ids)))
 
     await db.delete(kb)
-    bm25_store.delete_by_kb(tenant_id=tenant.id, knowledge_base_id=kb.id)
+    await bm25_store.delete_by_kb(tenant_id=tenant.id, knowledge_base_id=kb.id)
     await db.commit()
 
 
