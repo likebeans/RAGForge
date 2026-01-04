@@ -283,7 +283,6 @@ async def ingest_document(
     # 支持使用已存在的文档记录（用于后台异步入库场景）
     # 先获取 doc，这样后续步骤的日志才能实时保存
     if params.existing_doc_id:
-        from sqlalchemy import select
         doc_result = await session.execute(
             select(Document).where(Document.id == params.existing_doc_id)
         )
