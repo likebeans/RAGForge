@@ -1,11 +1,10 @@
 # 使用官方 uv 镜像作为构建基础
 FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
 
-# 代理配置（临时，测试完成后删除）
-# 注意：运行时不使用代理，只在构建时使用
-ARG BUILD_HTTP_PROXY=http://192.168.211.58:7897
-ENV http_proxy=$BUILD_HTTP_PROXY \
-    https_proxy=$BUILD_HTTP_PROXY
+## 可选：构建阶段代理（仅 build 使用，运行时会清空）
+ARG BUILD_HTTP_PROXY
+ENV http_proxy=${BUILD_HTTP_PROXY} \
+    https_proxy=${BUILD_HTTP_PROXY}
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -34,6 +33,12 @@ RUN chmod +x ./scripts/docker-entrypoint.sh
 # 安装项目
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen
+
+# 运行时清空代理，避免生产环境意外走代理
+ENV http_proxy= \
+    https_proxy= \
+    HTTP_PROXY= \
+    HTTPS_PROXY=
 
 EXPOSE 8020
 
