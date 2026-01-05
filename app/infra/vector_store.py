@@ -97,8 +97,22 @@ def _slugify_model(model: str | None) -> str:
 def get_vector_field_name(model: str | None, dim: int | None) -> str:
     """
     根据模型名和维度生成向量字段名，保证同一 collection 可容纳不同模型的向量。
+    
+    生成规则：
+    - 如果没有模型名或维度，返回 "default"
+    - 如果维度是常见的默认维度（1024），使用简化名称
+    - 否则包含完整的模型名和维度信息
     """
+    if not model and not dim:
+        return "default"
+    
     base = _slugify_model(model)
+    
+    # 对于常见的默认维度，使用简化名称
+    if dim == 1024 and base in ("bge_m3", "text_embedding_v3", "default"):
+        return f"vec_{base}"
+    
+    # 对于其他情况，包含维度信息以避免冲突
     return f"vec_{base}_{dim}" if dim else f"vec_{base}"
 
 
@@ -350,6 +364,12 @@ class AsyncQdrantVectorStore:
     async def _ensure_vector_field(self, collection: str, vector_name: str, dim: int) -> str:
         """
         确保 collection 中存在指定的向量字段；如不存在则追加。
+        
+        支持多维度向量字段共存：
+        - 如果请求的向量字段已存在，直接返回
+        - 如果有默认向量字段且维度匹配，复用默认字段
+        - 如果有默认向量字段但维度不匹配，创建新的命名字段
+        - 如果没有向量字段，创建新的命名字段
         """
         try:
             info = await self.client.get_collection(collection)
@@ -363,15 +383,31 @@ class AsyncQdrantVectorStore:
                     existing = {"": getattr(vectors, "size", None)}
             except Exception:
                 pass
+            
+            # 如果请求的向量字段已存在，直接返回
             if vector_name in existing:
-                return vector_name
-            # 如果已有单 unnamed 向量字段，直接复用
-            if "" in existing:
-                if existing[""] == dim:
-                    return ""
-                raise RuntimeError(
-                    f"collection {collection} default vector dim {existing['']} != requested {dim}"
-                )
+                existing_dim = existing[vector_name]
+                if existing_dim == dim:
+                    return vector_name
+                else:
+                    logger.warning(f"向量字段 {vector_name} 已存在但维度不匹配: {existing_dim} != {dim}")
+                    # 生成新的字段名避免冲突
+                    vector_name = f"{vector_name}_{dim}"
+            
+            # 如果有默认向量字段且维度匹配，可以复用
+            if "" in existing and existing[""] == dim and vector_name != "":
+                logger.info(f"复用 {collection} 的默认向量字段 (dim={dim})")
+                return ""
+            
+            # 如果有默认向量字段但维度不匹配，或者没有默认字段，创建新的命名字段
+            if vector_name in existing:
+                # 如果字段名冲突，生成新名称
+                counter = 1
+                base_name = vector_name
+                while vector_name in existing:
+                    vector_name = f"{base_name}_{counter}"
+                    counter += 1
+            
             await self.client.update_collection(
                 collection_name=collection,
                 vectors_config={vector_name: models.VectorParams(size=dim, distance=models.Distance.COSINE)},
