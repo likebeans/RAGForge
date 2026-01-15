@@ -1,58 +1,21 @@
+# =============================================================================
+# Docker Compose - OpenSearch/Elasticsearch BM25 后端
+# =============================================================================
+# 用途：使用 OpenSearch 作为 BM25 存储后端（替代内存存储）
+# 场景：生产环境、大规模数据、多副本部署
+#
+# 启动方式：
+#   docker compose -f docker-compose.opensearch.yml up -d
+#
+# 配置说明：
+#   BM25_BACKEND=es          启用 Elasticsearch/OpenSearch 后端
+#   ES_HOSTS                 OpenSearch 服务地址
+#   ES_INDEX_MODE=shared     索引模式（shared/per_kb）
+# =============================================================================
+
 version: "3.8"
 
 services:
-  opensearch:
-    image: opensearchproject/opensearch:2.11.1
-    container_name: rag_opensearch
-    environment:
-      - discovery.type=single-node
-      - bootstrap.memory_lock=true
-      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
-      - plugins.security.disabled=true
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-    ports:
-      - "9200:9200"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9200 >/dev/null"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  api:
-    build: .
-    container_name: rag_kb_api_es
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://kb:kb@db:5432/kb}
-      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
-      BM25_BACKEND: es
-      ES_HOSTS: http://opensearch:9200
-      ES_INDEX_MODE: shared
-    ports:
-      - "8020:8020"
-    depends_on:
-      - db
-      - opensearch
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8020}
-    container_name: rag_kb_frontend_es
-    environment:
-      NODE_ENV: production
-      NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8020}
-    ports:
-      - "3003:3000"
-    depends_on:
-      - api
-
   db:
     image: postgres:15
     container_name: rag_kb_postgres_es
@@ -66,5 +29,90 @@ services:
     volumes:
       - pgdata_es:/var/lib/postgresql/data
 
+  redis:
+    image: redis:7-alpine
+    container_name: rag_kb_redis_es
+    restart: unless-stopped
+    ports:
+      - "6390:6379"
+    volumes:
+      - redis_data_es:/data
+    command: redis-server --appendonly yes
+
+  opensearch:
+    image: opensearchproject/opensearch:2.11.1
+    container_name: rag_kb_opensearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      - plugins.security.disabled=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200 >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    container_name: rag_kb_api_es
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # 基础配置
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://kb:kb@db:5432/kb}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      VECTOR_STORE: postgresql
+      
+      # BM25 配置（使用 OpenSearch）
+      BM25_BACKEND: es
+      ES_HOSTS: http://opensearch:9200
+      ES_INDEX_MODE: shared
+      
+      # 其他配置
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      
+      # 清除代理
+      http_proxy: ""
+      https_proxy: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8021:8020"
+    depends_on:
+      - db
+      - redis
+      - opensearch
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8021}
+    container_name: rag_kb_frontend_es
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8021}
+    ports:
+      - "3004:3000"
+    depends_on:
+      - api
+
 volumes:
   pgdata_es:
+  redis_data_es:
+  opensearch_data:

@@ -37,21 +37,81 @@ from app.services.acl import (
     build_acl_filter_for_qdrant,
 )
 from app.infra.vector_store import set_acl_filter_ctx, reset_acl_filter_ctx
+from app.infra.redis_cache import get_redis_cache
 
 
-async def get_tenant_kbs(session: AsyncSession, tenant_id: str, kb_ids: list[str]) -> list[KnowledgeBase]:
+async def get_tenant_kbs(
+    session: AsyncSession,
+    tenant_id: str,
+    kb_ids: list[str],
+    use_cache: bool = True,
+) -> list[KnowledgeBase]:
     """
-    获取租户的知识库列表
+    获取租户的知识库列表（带配置缓存）
     
     用于验证请求的知识库是否都属于当前租户。
+    
+    Args:
+        session: 数据库会话
+        tenant_id: 租户 ID
+        kb_ids: 知识库 ID 列表
+        use_cache: 是否使用缓存（默认 True）
+        
+    Returns:
+        list[KnowledgeBase]: 知识库对象列表
     """
-    result = await session.execute(
-        select(KnowledgeBase).where(
-            KnowledgeBase.tenant_id == tenant_id,
-            KnowledgeBase.id.in_(kb_ids),
+    redis_cache = get_redis_cache()
+    kbs = []
+    kb_ids_to_fetch = []
+    
+    # 尝试从缓存读取
+    if use_cache:
+        for kb_id in kb_ids:
+            cached_config = await redis_cache.get_kb_config_cache(
+                tenant_id=tenant_id,
+                kb_id=kb_id,
+            )
+            if cached_config:
+                # 从缓存恢复 KB 对象（仅使用 config 字段）
+                kb = KnowledgeBase(
+                    id=cached_config["id"],
+                    tenant_id=cached_config["tenant_id"],
+                    name=cached_config["name"],
+                    config=cached_config["config"],
+                )
+                kbs.append(kb)
+                logger.debug(f"KB 配置缓存命中: kb_id={kb_id}")
+            else:
+                kb_ids_to_fetch.append(kb_id)
+    else:
+        kb_ids_to_fetch = kb_ids
+    
+    # 从数据库读取未缓存的 KB
+    if kb_ids_to_fetch:
+        result = await session.execute(
+            select(KnowledgeBase).where(
+                KnowledgeBase.tenant_id == tenant_id,
+                KnowledgeBase.id.in_(kb_ids_to_fetch),
+            )
         )
-    )
-    return result.scalars().all()
+        fetched_kbs = list(result.scalars().all())
+        kbs.extend(fetched_kbs)
+        
+        # 保存到缓存
+        if use_cache:
+            for kb in fetched_kbs:
+                await redis_cache.set_kb_config_cache(
+                    tenant_id=tenant_id,
+                    kb_id=kb.id,
+                    config={
+                        "id": kb.id,
+                        "tenant_id": kb.tenant_id,
+                        "name": kb.name,
+                        "config": kb.config or {},
+                    },
+                )
+    
+    return kbs
 
 
 async def retrieve_chunks(
@@ -93,6 +153,29 @@ async def retrieve_chunks(
             "base_url": params.embedding_override.base_url,
         }
     retriever, retriever_name = _resolve_retriever(kbs, retriever_override, embedding_override_dict)
+    
+    # 查询缓存（仅对无 ACL 过滤且无 rerank 的查询启用缓存，避免缓存污染）
+    redis_cache = get_redis_cache()
+    kb_ids = [kb.id for kb in kbs]
+    cache_key_params = {
+        "tenant_id": tenant_id,
+        "query": params.query,
+        "kb_ids": kb_ids,
+        "retriever_name": retriever_name,
+        "top_k": params.top_k,
+    }
+    
+    # 只有在没有用户上下文（无 ACL 过滤）且无 rerank 时才使用缓存
+    use_cache = user_context is None and not params.rerank
+    cached_result = None
+    
+    if use_cache:
+        cached_result = await redis_cache.get_query_cache(**cache_key_params)
+        if cached_result:
+            logger.info(f"查询缓存命中: query={params.query[:50]}...")
+            # 从缓存恢复 ChunkHit 对象
+            results = [ChunkHit(**hit) for hit in cached_result.get("results", [])]
+            return results, cached_result.get("retriever_name", retriever_name), False
     
     # 执行检索并记录指标
     start_time = time.perf_counter()
@@ -206,6 +289,15 @@ async def retrieve_chunks(
         )
         for hit in filtered_hits
     ]
+    
+    # 保存到缓存（仅对无 ACL 过滤且无 rerank 的查询）
+    if use_cache and results:
+        cache_data = {
+            "results": [hit.model_dump() for hit in results],
+            "retriever_name": retriever_name,
+        }
+        await redis_cache.set_query_cache(**cache_key_params, result=cache_data)
+    
     return results, retriever_name, acl_blocked
 
 

@@ -54,34 +54,16 @@ async def get_current_api_key(
 
 async def verify_admin_token(
     x_admin_token: str | None = Header(None, alias="X-Admin-Token"),
+    db: AsyncSession = Depends(get_db_session),
 ) -> str:
     """
-    验证管理员 Token
+    验证管理员 Token（自动选择数据库或环境变量）
     
-    管理员接口使用独立的 Token 认证，通过 X-Admin-Token 请求头传递。
-    Token 值从环境变量 ADMIN_TOKEN 读取。
+    优先使用数据库验证，如果数据库中没有 Token，则回退到环境变量。
+    这是为了向后兼容，建议迁移到数据库存储。
     """
-    settings = get_settings()
-    
-    if not settings.admin_token:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "ADMIN_API_NOT_CONFIGURED", "detail": "Admin API is not configured. Set ADMIN_TOKEN environment variable."},
-        )
-    
-    if not x_admin_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "MISSING_ADMIN_TOKEN", "detail": "Missing X-Admin-Token header"},
-        )
-    
-    if x_admin_token != settings.admin_token:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "INVALID_ADMIN_TOKEN", "detail": "Invalid admin token"},
-        )
-    
-    return x_admin_token
+    from app.auth.admin_token import verify_admin_token as verify_token
+    return await verify_token(x_admin_token, db)
 
 
 # ==================== 角色权限检查 ====================

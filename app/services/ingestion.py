@@ -19,6 +19,7 @@ from app.infra.vector_store import vector_store
 from app.infra.bm25_store import bm25_store
 from app.infra.bm25_cache import get_bm25_cache
 from app.infra.llamaindex import build_index_by_store, nodes_from_chunks
+from app.infra.redis_cache import get_redis_cache
 from app.models import Chunk, Document, KnowledgeBase
 from app.pipeline import operator_registry
 from app.schemas.internal import IngestionParams
@@ -34,6 +35,86 @@ from app.pipeline.indexers.raptor import (
 from app.services.acl import build_acl_metadata_for_chunk
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class IngestionContext:
+    """
+    文档摄取上下文
+    
+    用于在摄取过程中传递共享状态（日志、进度、文档引用等）
+    """
+    session: AsyncSession
+    tenant_id: str
+    kb: KnowledgeBase
+    params: IngestionParams
+    embedding_config: dict | None
+    
+    # 日志和进度管理
+    log_lines: list[str] = field(default_factory=list)
+    steps_info: list[dict] = field(default_factory=list)
+    doc_ref: list = field(default_factory=list)  # [Document] 或空列表
+    
+    def add_log(self, msg: str, level: str = "INFO") -> None:
+        """添加日志"""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from app.config import get_settings
+        
+        tz = ZoneInfo(get_settings().timezone)
+        ts = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+        self.log_lines.append(f"[{ts}] [{level}] {msg}")
+        
+        if level == "ERROR":
+            logger.error(msg)
+        elif level == "WARNING":
+            logger.warning(msg)
+        else:
+            logger.info(msg)
+    
+    async def save_log_to_db(self) -> None:
+        """将日志实时保存到数据库"""
+        if self.doc_ref:
+            self.doc_ref[0].processing_log = "\n".join(self.log_lines)
+            await self.session.commit()
+    
+    async def add_step(self, step_num: int, total: int, label: str, status: str = "running") -> None:
+        """添加步骤进度信息并保存到数据库"""
+        self.steps_info.append({"step": step_num, "total": total, "label": label, "status": status})
+        self.add_log(f"[STEP:{step_num}/{total}:{status}] {label}")
+        await self.save_log_to_db()
+    
+    async def update_step(self, step_num: int, status: str) -> None:
+        """更新步骤状态并保存到数据库"""
+        total = 6  # 默认总步骤数
+        for s in self.steps_info:
+            if s["step"] == step_num:
+                s["status"] = status
+                total = s["total"]
+                break
+        self.add_log(f"[STEP:{step_num}/{total}:{status}]")
+        await self.save_log_to_db()
+    
+    async def check_interrupted(self) -> bool:
+        """检查文档是否被用户中断，返回 True 表示已中断"""
+        if not self.doc_ref:
+            return False
+        
+        # 从数据库重新读取文档状态（使用新查询避免缓存）
+        result = await self.session.execute(
+            select(Document.processing_status).where(Document.id == self.doc_ref[0].id)
+        )
+        current_status = result.scalar_one_or_none()
+        if current_status == "interrupted":
+            self.add_log("检测到用户中断请求，停止处理", level="WARNING")
+            await self.save_log_to_db()
+            return True
+        return False
+    
+    @property
+    def doc(self) -> Document | None:
+        """获取当前文档对象"""
+        return self.doc_ref[0] if self.doc_ref else None
 
 
 def _is_parent_chunk(metadata: dict) -> bool:
@@ -171,7 +252,40 @@ async def ensure_kb_belongs_to_tenant(
     session: AsyncSession,
     kb_id: str,
     tenant_id: str,
+    use_cache: bool = True,
 ) -> KnowledgeBase:
+    """
+    确保知识库属于指定租户（带配置缓存）
+    
+    Args:
+        session: 数据库会话
+        kb_id: 知识库 ID
+        tenant_id: 租户 ID
+        use_cache: 是否使用缓存（默认 True）
+        
+    Returns:
+        KnowledgeBase | None: 知识库对象，不存在或不属于租户则返回 None
+    """
+    redis_cache = get_redis_cache()
+    
+    # 尝试从缓存读取
+    if use_cache:
+        cached_config = await redis_cache.get_kb_config_cache(
+            tenant_id=tenant_id,
+            kb_id=kb_id,
+        )
+        if cached_config:
+            # 从缓存恢复 KB 对象
+            kb = KnowledgeBase(
+                id=cached_config["id"],
+                tenant_id=cached_config["tenant_id"],
+                name=cached_config["name"],
+                config=cached_config["config"],
+            )
+            logger.debug(f"KB 配置缓存命中: kb_id={kb_id}")
+            return kb
+    
+    # 从数据库读取
     result = await session.execute(
         select(KnowledgeBase).where(
             KnowledgeBase.id == kb_id,
@@ -179,214 +293,197 @@ async def ensure_kb_belongs_to_tenant(
         )
     )
     kb = result.scalar_one_or_none()
+    
+    # 保存到缓存
+    if kb and use_cache:
+        await redis_cache.set_kb_config_cache(
+            tenant_id=tenant_id,
+            kb_id=kb.id,
+            config={
+                "id": kb.id,
+                "tenant_id": kb.tenant_id,
+                "name": kb.name,
+                "config": kb.config or {},
+            },
+        )
+    
     return kb
 
 
-async def ingest_document(
-    session: AsyncSession,
-    *,
-    tenant_id: str,
-    kb: KnowledgeBase,
-    params: IngestionParams,
-    embedding_config: dict | None = None,
-) -> IngestionResult:
+async def _setup_document(ctx: IngestionContext) -> Document:
     """
-    摄取文档
+    步骤 1-2：设置文档记录（获取或创建）
     
     Args:
-        session: 数据库会话
-        tenant_id: 租户 ID
-        kb: 知识库（已验证）
-        params: 摄取参数对象，包含标题、内容、元数据等配置
-        embedding_config: 可选的 embedding 配置（来自前端），格式为 {provider, model, api_key, base_url}
-    
+        ctx: 摄取上下文
+        
     Returns:
-        IngestionResult: 包含文档、chunks 和各后端写入状态的结果对象
+        Document: 文档对象
     """
-    import time
-    from datetime import datetime
-    ingest_start = time.time()
+    # 步骤 1：解析配置
+    await ctx.add_step(1, 6, "解析切分器配置", "running")
     
-    # 处理日志缓冲区
-    log_lines: list[str] = []
-    # 步骤进度信息（用于前端解析）
-    steps_info: list[dict] = []
-    # 用于保存日志的文档引用（在获取到 doc 后设置）
-    doc_ref: list = []  # 使用列表来存储引用，便于在闭包中修改
-    
-    async def save_log_to_db():
-        """将日志实时保存到数据库（使用 commit 确保其他会话可见）"""
-        if doc_ref:
-            doc_ref[0].processing_log = "\n".join(log_lines)
-            await session.commit()
-    
-    def add_log(msg: str, level: str = "INFO"):
-        from zoneinfo import ZoneInfo
-        from app.config import get_settings
-        tz = ZoneInfo(get_settings().timezone)
-        ts = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
-        log_lines.append(f"[{ts}] [{level}] {msg}")
-        if level == "ERROR":
-            logger.error(msg)
-        elif level == "WARNING":
-            logger.warning(msg)
-        else:
-            logger.info(msg)
-    
-    async def add_step(step_num: int, total: int, label: str, status: str = "running"):
-        """添加步骤进度信息并保存到数据库"""
-        steps_info.append({"step": step_num, "total": total, "label": label, "status": status})
-        add_log(f"[STEP:{step_num}/{total}:{status}] {label}")
-        await save_log_to_db()
-    
-    async def update_step(step_num: int, status: str):
-        """更新步骤状态并保存到数据库"""
-        total = 6  # 默认总步骤数
-        for s in steps_info:
-            if s["step"] == step_num:
-                s["status"] = status
-                total = s["total"]
-                break
-        add_log(f"[STEP:{step_num}/{total}:{status}]")
-        await save_log_to_db()
-    
-    async def check_interrupted() -> bool:
-        """检查文档是否被用户中断，返回 True 表示已中断"""
-        if not doc_ref:
-            return False
-        # 从数据库重新读取文档状态（使用新查询避免缓存）
-        result = await session.execute(
-            select(Document.processing_status).where(Document.id == doc_ref[0].id)
-        )
-        current_status = result.scalar_one_or_none()
-        if current_status == "interrupted":
-            add_log("检测到用户中断请求，停止处理", level="WARNING")
-            await save_log_to_db()
-            return True
-        return False
-    
-    add_log(f"开始处理文档: {params.title}")
-
-    if embedding_config is None:
-        embedding_config = _resolve_embedding_config_from_kb(kb)
-        if embedding_config:
-            add_log(
-                f"使用知识库 Embedding 配置: {embedding_config.get('provider')}/{embedding_config.get('model')}"
+    if ctx.embedding_config is None:
+        ctx.embedding_config = _resolve_embedding_config_from_kb(ctx.kb)
+        if ctx.embedding_config:
+            ctx.add_log(
+                f"使用知识库 Embedding 配置: {ctx.embedding_config.get('provider')}/{ctx.embedding_config.get('model')}"
             )
     
-    # 支持使用已存在的文档记录（用于后台异步入库场景）
-    # 先获取 doc，这样后续步骤的日志才能实时保存
-    if params.existing_doc_id:
-        doc_result = await session.execute(
-            select(Document).where(Document.id == params.existing_doc_id)
+    chunker = _resolve_chunker(ctx.kb)
+    ctx.add_log(f"使用切分器: {type(chunker).__name__}")
+    await ctx.update_step(1, "done")
+    
+    # 步骤 2：创建或获取文档记录
+    await ctx.add_step(2, 6, "创建文档记录", "running")
+    
+    if ctx.params.existing_doc_id:
+        # 使用已存在的文档记录
+        doc_result = await ctx.session.execute(
+            select(Document).where(Document.id == ctx.params.existing_doc_id)
         )
         doc = doc_result.scalar_one_or_none()
         if not doc:
-            raise ValueError(f"文档 {params.existing_doc_id} 不存在")
-        doc_ref.append(doc)  # 设置文档引用，便于实时保存日志
-        # 读取已有的处理日志（在后台任务中可能已经设置了初始日志）
+            raise ValueError(f"文档 {ctx.params.existing_doc_id} 不存在")
+        
+        ctx.doc_ref.append(doc)
+        
+        # 读取已有的处理日志
         if doc.processing_log:
-            log_lines.extend(doc.processing_log.split("\n"))
-        add_log(f"使用已存在的文档记录: doc_id={doc.id}")
-        # 设置状态为处理中
+            ctx.log_lines.extend(doc.processing_log.split("\n"))
+        
+        ctx.add_log(f"使用已存在的文档记录: doc_id={doc.id}")
         doc.processing_status = "processing"
-        await save_log_to_db()
-    
-    await add_step(1, 6, "解析切分器配置", "running")
-    chunker = _resolve_chunker(kb)
-    add_log(f"使用切分器: {type(chunker).__name__}")
-    await update_step(1, "done")
-
-    await add_step(2, 6, "创建文档记录", "running")
-    
-    if not params.existing_doc_id:
+        await ctx.save_log_to_db()
+    else:
+        # 创建新文档
         doc = Document(
-            tenant_id=tenant_id,
-            knowledge_base_id=kb.id,
-            title=params.title,
-            extra_metadata=params.metadata or {},
-            source=params.source,
+            tenant_id=ctx.tenant_id,
+            knowledge_base_id=ctx.kb.id,
+            title=ctx.params.title,
+            extra_metadata=ctx.params.metadata or {},
+            source=ctx.params.source,
             summary_status="pending",
-            # ACL 字段（模型中属性名为 acl_allow_*）
-            sensitivity_level=params.sensitivity_level,
-            acl_allow_users=params.acl_users,
-            acl_allow_roles=params.acl_roles,
-            acl_allow_groups=params.acl_groups,
+            # ACL 字段
+            sensitivity_level=ctx.params.sensitivity_level,
+            acl_allow_users=ctx.params.acl_users,
+            acl_allow_roles=ctx.params.acl_roles,
+            acl_allow_groups=ctx.params.acl_groups,
         )
-        doc.processing_status = "processing"  # 设置状态为处理中
-        session.add(doc)
-        await session.flush()
-        doc_ref.append(doc)  # 设置文档引用
-        add_log(f"文档记录创建完成: doc_id={doc.id}")
+        doc.processing_status = "processing"
+        ctx.session.add(doc)
+        await ctx.session.flush()
+        ctx.doc_ref.append(doc)
+        ctx.add_log(f"文档记录创建完成: doc_id={doc.id}")
     
-    await update_step(2, "done")
+    await ctx.update_step(2, "done")
     
-    # 异步生成文档摘要（不阻塞主流程）
-    if params.generate_doc_summary:
-        add_log("生成文档摘要...")
-        summary_config = _resolve_summary_config(params.enricher_config)
-        await _generate_document_summary(doc, params.content, summary_config=summary_config)
+    # 生成文档摘要（如果需要）
+    if ctx.params.generate_doc_summary:
+        ctx.add_log("生成文档摘要...")
+        summary_config = _resolve_summary_config(ctx.params.enricher_config)
+        await _generate_document_summary(doc, ctx.params.content, summary_config=summary_config)
+    
+    return doc
 
-    await add_step(3, 6, "切分文档内容", "running")
-    chunk_pieces = chunker.chunk(params.content, metadata=params.metadata or {})
+
+async def _chunk_document(ctx: IngestionContext, doc: Document) -> list[Chunk]:
+    """
+    步骤 3：切分文档内容
+    
+    Args:
+        ctx: 摄取上下文
+        doc: 文档对象
+        
+    Returns:
+        list[Chunk]: 切分后的 chunks
+    """
+    await ctx.add_step(3, 6, "切分文档内容", "running")
+    
+    chunker = _resolve_chunker(ctx.kb)
+    chunk_pieces = chunker.chunk(ctx.params.content, metadata=ctx.params.metadata or {})
+    
     chunks: list[Chunk] = []
     for idx, piece in enumerate(chunk_pieces):
-        # 添加 chunk_index 到 metadata，用于 Context Window 扩展
+        # 添加 chunk_index 到 metadata
         piece_metadata = (piece.metadata or {}).copy()
         piece_metadata["chunk_index"] = idx
         piece_metadata["total_chunks"] = len(chunk_pieces)
         
         chunk = Chunk(
-            tenant_id=tenant_id,
-            knowledge_base_id=kb.id,
+            tenant_id=ctx.tenant_id,
+            knowledge_base_id=ctx.kb.id,
             document_id=doc.id,
             text=piece.text,
             extra_metadata=piece_metadata,
             indexing_status="pending",
             indexing_retry_count=0,
         )
-        session.add(chunk)
+        ctx.session.add(chunk)
         chunks.append(chunk)
+    
+    await ctx.session.flush()
+    ctx.add_log(f"切分完成: 生成 {len(chunks)} 个 chunks")
+    await ctx.update_step(3, "done")
+    
+    return chunks
 
-    await session.flush()
-    add_log(f"切分完成: 生成 {len(chunks)} 个 chunks")
-    await update_step(3, "done")
+
+async def _enrich_chunks_step(ctx: IngestionContext, chunks: list[Chunk], doc: Document) -> None:
+    """
+    步骤 4：Chunk 上下文增强（可选）
     
-    # 中断检查点 1：切分完成后
-    if await check_interrupted():
-        return IngestionResult(document=doc, chunks=chunks, indexing_results=[])
-    
-    # Chunk Enrichment（可选，默认关闭）
-    if params.enrich_chunks:
-        await add_step(4, 6, "Chunk 上下文增强", "running")
+    Args:
+        ctx: 摄取上下文
+        chunks: chunk 列表
+        doc: 文档对象
+    """
+    if ctx.params.enrich_chunks:
+        await ctx.add_step(4, 6, "Chunk 上下文增强", "running")
         await _enrich_chunks(
             chunks, doc,
-            llm_config=params.llm_config,
-            enricher_config=params.enricher_config,
+            llm_config=ctx.params.llm_config,
+            enricher_config=ctx.params.enricher_config,
         )
-        add_log(f"Chunk 增强完成")
-        await update_step(4, "done")
+        ctx.add_log("Chunk 增强完成")
+        await ctx.update_step(4, "done")
     else:
-        await add_step(4, 6, "Chunk 上下文增强", "skipped")
+        await ctx.add_step(4, 6, "Chunk 上下文增强", "skipped")
 
-    store_cfg = _get_store_config(kb)
+
+async def _index_to_vector_stores(
+    ctx: IngestionContext,
+    doc: Document,
+    chunks: list[Chunk],
+) -> list[IndexingResult]:
+    """
+    步骤 5：写入向量库（Qdrant + BM25 + 多后端）
+    
+    Args:
+        ctx: 摄取上下文
+        doc: 文档对象
+        chunks: chunk 列表
+        
+    Returns:
+        list[IndexingResult]: 各后端写入结果
+    """
+    await ctx.add_step(5, 6, "写入向量库", "running")
+    
+    store_cfg = _get_store_config(ctx.kb)
     skip_qdrant = store_cfg.get("skip_qdrant", False)
-
-    # 中断检查点 2：向量化前
-    if await check_interrupted():
-        return IngestionResult(document=doc, chunks=chunks, indexing_results=[])
-
+    indexing_results: list[IndexingResult] = []
+    
     # 标记所有 chunks 为 indexing 状态
     for chunk in chunks:
         chunk.indexing_status = "indexing"
-    await session.flush()
-
-    # 批量写入向量库（异步，带错误处理）
-    # 父子分块模式下：只对子块向量化，父块只存 DB 作为上下文
-    await add_step(5, 6, "写入向量库", "running")
+    await ctx.session.flush()
+    
+    # 写入 Qdrant
     indexing_error = None
+    chunk_data = []
+    
     if not skip_qdrant:
-        # 构建 ACL metadata（从文档继承）
+        # 构建 ACL metadata
         acl_metadata = build_acl_metadata_for_chunk(
             document_id=doc.id,
             sensitivity_level=getattr(doc, "sensitivity_level", "internal"),
@@ -398,32 +495,31 @@ async def ingest_document(
         chunk_data = [
             {
                 "chunk_id": chunk.id,
-                "knowledge_base_id": kb.id,
+                "knowledge_base_id": ctx.kb.id,
                 "text": chunk.text,
                 "metadata": {
                     "document_id": doc.id,
                     "title": doc.title,
-                    "source": params.source,
+                    "source": ctx.params.source,
                 } | (chunk.extra_metadata or {}) | acl_metadata,
             }
             for chunk in chunks
-            # 父块（有 parent_id 但没有 child 标记）不写入向量库
             if not _is_parent_chunk(chunk.extra_metadata or {})
         ]
+        
         try:
-            add_log(f"向量化并写入 {len(chunk_data)} 个 chunks 到 Qdrant...")
+            ctx.add_log(f"向量化并写入 {len(chunk_data)} 个 chunks 到 Qdrant...")
             await vector_store.upsert_chunks(
-                tenant_id=tenant_id, 
+                tenant_id=ctx.tenant_id,
                 chunks=chunk_data,
-                embedding_config=embedding_config,
+                embedding_config=ctx.embedding_config,
             )
-            add_log(f"向量库写入成功")
+            ctx.add_log("向量库写入成功")
         except Exception as e:
             indexing_error = str(e)
-            add_log(f"向量库写入失败: {e}", "ERROR")
+            ctx.add_log(f"向量库写入失败: {e}", "ERROR")
     
-    # 写入 BM25 索引（同步，内存操作）
-    # 同样只索引子块，父块不参与 BM25 检索
+    # 写入 BM25 索引
     bm25_chunks = [
         {
             "chunk_id": chunk.id,
@@ -431,7 +527,7 @@ async def ingest_document(
             "metadata": {
                 "document_id": doc.id,
                 "title": doc.title,
-                "source": params.source,
+                "source": ctx.params.source,
             }
             | (chunk.extra_metadata or {}),
         }
@@ -439,15 +535,12 @@ async def ingest_document(
         if not _is_parent_chunk(chunk.extra_metadata or {})
     ]
     await bm25_store.upsert_chunks(
-        tenant_id=tenant_id,
-        knowledge_base_id=kb.id,
+        tenant_id=ctx.tenant_id,
+        knowledge_base_id=ctx.kb.id,
         chunks=bm25_chunks,
     )
-
-    # 收集写入结果
-    indexing_results: list[IndexingResult] = []
     
-    # Qdrant 写入结果（计数使用实际索引的 chunk 数量，不含父块）
+    # 收集 Qdrant 写入结果
     indexed_count = len(chunk_data) if not skip_qdrant else 0
     if not skip_qdrant:
         if indexing_error:
@@ -464,63 +557,152 @@ async def ingest_document(
         if indexing_error:
             chunk.indexing_status = "failed"
             chunk.indexing_error = indexing_error
-            chunk.indexing_retry_count += 1
+            chunk.indexing_retry_count = (chunk.indexing_retry_count or 0) + 1
         else:
             chunk.indexing_status = "indexed"
             chunk.indexing_error = None
-
-    # 多后端写入（Milvus/ES），返回结构化结果
-    extra_result = _maybe_upsert_llamaindex(store_config=store_cfg, kb=kb, tenant_id=tenant_id, chunks=chunks)
+    
+    # 多后端写入（Milvus/ES）
+    extra_result = _maybe_upsert_llamaindex(
+        store_config=store_cfg,
+        kb=ctx.kb,
+        tenant_id=ctx.tenant_id,
+        chunks=chunks,
+    )
     if extra_result is not None:
         indexing_results.append(extra_result)
-        # 如果多后端写入失败，记录警告但不影响主流程
         if not extra_result.success:
             logger.warning(f"[{extra_result.store_type}] 写入失败: {extra_result.error}")
-
-    # 失效 BM25 缓存（文档更新后需要重新加载）
-    cache = get_bm25_cache()
-    await cache.invalidate(tenant_id=tenant_id, kb_id=kb.id)
-
-    # 更新步骤 5 状态
+    
+    # 失效 BM25 缓存
+    bm25_cache = get_bm25_cache()
+    await bm25_cache.invalidate(tenant_id=ctx.tenant_id, kb_id=ctx.kb.id)
+    
+    # 失效 Redis 查询缓存和配置缓存
+    redis_cache = get_redis_cache()
+    await redis_cache.invalidate_kb_cache(tenant_id=ctx.tenant_id, kb_id=ctx.kb.id)
+    
+    # 更新步骤状态
     if indexing_error:
-        await update_step(5, "error")
+        await ctx.update_step(5, "error")
     else:
-        await update_step(5, "done")
+        await ctx.update_step(5, "done")
+    
+    return indexing_results
 
-    # 中断检查点 3：RAPTOR 索引构建前
-    if await check_interrupted():
-        return IngestionResult(document=doc, chunks=chunks, indexing_results=indexing_results)
 
-    # RAPTOR 索引构建（可选，根据 KB 配置）
-    raptor_config = _get_raptor_config(kb)
+async def _build_raptor_index_step(
+    ctx: IngestionContext,
+    chunks: list[Chunk],
+) -> IndexingResult | None:
+    """
+    步骤 6：构建 RAPTOR 索引（可选）
+    
+    Args:
+        ctx: 摄取上下文
+        chunks: chunk 列表
+        
+    Returns:
+        IndexingResult | None: RAPTOR 索引构建结果
+    """
+    raptor_config = _get_raptor_config(ctx.kb)
     if raptor_config and raptor_config.get("enabled", False):
-        await add_step(6, 6, "构建 RAPTOR 索引", "running")
-        add_log(f"这一步可能较慢，涉及向量化和 LLM 摘要...")
+        await ctx.add_step(6, 6, "构建 RAPTOR 索引", "running")
+        ctx.add_log("这一步可能较慢，涉及向量化和 LLM 摘要...")
+        
         raptor_result = await _build_raptor_index(
-            session=session,
-            tenant_id=tenant_id,
-            kb=kb,
+            session=ctx.session,
+            tenant_id=ctx.tenant_id,
+            kb=ctx.kb,
             chunks=chunks,
             raptor_config=raptor_config,
-            embedding_config=embedding_config,
+            embedding_config=ctx.embedding_config,
         )
+        
         if raptor_result:
-            indexing_results.append(raptor_result)
             if raptor_result.success:
-                add_log(f"RAPTOR 索引构建成功")
-                await update_step(6, "done")
+                ctx.add_log("RAPTOR 索引构建成功")
+                await ctx.update_step(6, "done")
             else:
-                add_log(f"RAPTOR 索引构建失败: {raptor_result.error}", "WARNING")
-                await update_step(6, "error")
+                ctx.add_log(f"RAPTOR 索引构建失败: {raptor_result.error}", "WARNING")
+                await ctx.update_step(6, "error")
+            return raptor_result
     else:
-        await add_step(6, 6, "构建 RAPTOR 索引", "skipped")
-
-    total_time = time.time() - ingest_start
-    add_log(f"文档入库完成! 总耗时 {total_time:.2f}s, chunks={len(chunks)}")
+        await ctx.add_step(6, 6, "构建 RAPTOR 索引", "skipped")
     
-    # 保存处理日志到文档
-    doc.processing_log = "\n".join(log_lines)
-    # 设置处理状态为完成
+    return None
+
+
+async def ingest_document(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    kb: KnowledgeBase,
+    params: IngestionParams,
+    embedding_config: dict | None = None,
+) -> IngestionResult:
+    """
+    摄取文档（重构后的主函数）
+    
+    Args:
+        session: 数据库会话
+        tenant_id: 租户 ID
+        kb: 知识库（已验证）
+        params: 摄取参数对象，包含标题、内容、元数据等配置
+        embedding_config: 可选的 embedding 配置（来自前端），格式为 {provider, model, api_key, base_url}
+    
+    Returns:
+        IngestionResult: 包含文档、chunks 和各后端写入状态的结果对象
+    """
+    import time
+    ingest_start = time.time()
+    
+    # 创建摄取上下文
+    ctx = IngestionContext(
+        session=session,
+        tenant_id=tenant_id,
+        kb=kb,
+        params=params,
+        embedding_config=embedding_config,
+    )
+    
+    ctx.add_log(f"开始处理文档: {params.title}")
+    
+    # 步骤 1-2：设置文档记录
+    doc = await _setup_document(ctx)
+    
+    # 步骤 3：切分文档
+    chunks = await _chunk_document(ctx, doc)
+    
+    # 中断检查点 1：切分完成后
+    if await ctx.check_interrupted():
+        return IngestionResult(document=doc, chunks=chunks, indexing_results=[])
+    
+    # 步骤 4：Chunk 增强（可选）
+    await _enrich_chunks_step(ctx, chunks, doc)
+    
+    # 中断检查点 2：向量化前
+    if await ctx.check_interrupted():
+        return IngestionResult(document=doc, chunks=chunks, indexing_results=[])
+    
+    # 步骤 5：写入向量库
+    indexing_results = await _index_to_vector_stores(ctx, doc, chunks)
+    
+    # 中断检查点 3：RAPTOR 索引构建前
+    if await ctx.check_interrupted():
+        return IngestionResult(document=doc, chunks=chunks, indexing_results=indexing_results)
+    
+    # 步骤 6：构建 RAPTOR 索引（可选）
+    raptor_result = await _build_raptor_index_step(ctx, chunks)
+    if raptor_result:
+        indexing_results.append(raptor_result)
+    
+    # 完成
+    total_time = time.time() - ingest_start
+    ctx.add_log(f"文档入库完成! 总耗时 {total_time:.2f}s, chunks={len(chunks)}")
+    
+    # 保存最终日志和状态
+    doc.processing_log = "\n".join(ctx.log_lines)
     doc.processing_status = "completed"
     await session.flush()
     

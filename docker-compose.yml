@@ -12,6 +12,16 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  redis:
+    image: redis:7
+    container_name: rag_kb_redis
+    restart: unless-stopped
+    ports:
+      - "6389:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
   api:
     build: .
     container_name: rag_kb_api
@@ -20,7 +30,7 @@ services:
       - .env
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://kb:kb@db:5432/kb}
-      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
       SILICONFLOW_API_BASE: ${SILICONFLOW_API_BASE:-https://api.siliconflow.cn/v1}
@@ -37,7 +47,7 @@ services:
       - "8020:8020"
     depends_on:
       - db
-      - qdrant
+      - redis
 
   frontend:
     build:
@@ -54,15 +64,6 @@ services:
     depends_on:
       - api
 
-  qdrant:
-    image: qdrant/qdrant:v1.9.0
-    container_name: rag_kb_qdrant
-    restart: unless-stopped
-    ports:
-      - "6333:6333"
-    volumes:
-      - qdrant_storage:/qdrant/storage
-
 volumes:
   pgdata:
-  qdrant_storage:
+  redis_data:

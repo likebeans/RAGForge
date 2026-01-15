@@ -1,0 +1,22 @@
+{
+  "name": "self-rag-pipeline-docs",
+  "version": "1.0.0",
+  "description": "Self-RAG Pipeline 项目文档",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "^1.0.0"
+  },
+  "keywords": [
+    "documentation",
+    "vitepress",
+    "rag",
+    "knowledge-base",
+    "multi-tenant"
+  ],
+  "author": "Self-RAG Pipeline Team",
+  "license": "MIT"
+}

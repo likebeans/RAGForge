@@ -53,9 +53,17 @@ class Settings(BaseSettings):
     # 生产环境必须设置，建议使用随机生成的长字符串
     admin_token: str | None = None
     
-    # ==================== Redis 配置（限流用） ====================
+    # ==================== Redis 配置（限流 + 缓存） ====================
     redis_url: str | None = None  # Redis 连接 URL，如 redis://localhost:6379/0
     # 未配置时使用内存限流（单实例模式）
+    
+    # 查询缓存配置
+    redis_cache_enabled: bool = True  # 是否启用 Redis 查询缓存（需要 redis_url 配置）
+    redis_cache_ttl: int = 300  # 查询缓存 TTL（秒），默认 5 分钟
+    redis_cache_key_prefix: str = "rag:cache:"  # 缓存键前缀
+    
+    # 配置缓存配置
+    redis_config_cache_ttl: int = 600  # KB 配置缓存 TTL（秒），默认 10 分钟
     
     # ==================== 向量数据库配置 (Qdrant) ====================
     qdrant_url: str = "http://localhost:6333"  # Qdrant 服务地址

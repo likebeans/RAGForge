@@ -23,6 +23,7 @@
 - Chunk: 文档片段，切分后的文本块（用于向量检索）
 """
 
+from app.models.admin_token import AdminToken
 from app.models.api_key import APIKey
 from app.models.audit_log import AuditLog
 from app.models.chunk import Chunk
@@ -37,6 +38,7 @@ from app.models.user import User
 
 # 导出所有模型，方便外部导入
 __all__ = [
+    "AdminToken",
     "APIKey",
     "AuditLog",
     "Chunk",

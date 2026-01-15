@@ -65,6 +65,12 @@ class InMemoryBM25Store:
     注意：重启后数据丢失，需要从数据库重建
     """
 
+    # 每个知识库最多存储的记录数（防止 OOM）
+    MAX_RECORDS_PER_KB = 10000
+    
+    # 单个文档最大大小（MB）
+    MAX_DOC_SIZE_MB = 10
+
     def __init__(self):
         self.enabled = True
         self._records: dict[tuple[str, str], dict[str, BM25Record]] = defaultdict(dict)
@@ -86,6 +92,16 @@ class InMemoryBM25Store:
         if not self.enabled:
             return
         key = (tenant_id, knowledge_base_id)
+        
+        # 检查知识库记录数限制
+        if len(self._records[key]) >= self.MAX_RECORDS_PER_KB and chunk_id not in self._records[key]:
+            logger.warning(
+                f"BM25 索引已达到限制: KB={knowledge_base_id}, "
+                f"当前={len(self._records[key])}, 最大={self.MAX_RECORDS_PER_KB}。"
+                f"建议使用 Elasticsearch 替代内存 BM25。"
+            )
+            return
+        
         rec = BM25Record(
             chunk_id=chunk_id,
             tenant_id=tenant_id,
@@ -112,6 +128,30 @@ class InMemoryBM25Store:
         if not chunks:
             return
         key = (tenant_id, knowledge_base_id)
+        
+        # 检查是否超出限制
+        current_count = len(self._records[key])
+        new_chunk_ids = {c["chunk_id"] for c in chunks}
+        existing_chunk_ids = set(self._records[key].keys())
+        new_records_count = len(new_chunk_ids - existing_chunk_ids)
+        
+        if current_count + new_records_count > self.MAX_RECORDS_PER_KB:
+            logger.warning(
+                f"BM25 批量插入超出限制: KB={knowledge_base_id}, "
+                f"当前={current_count}, 新增={new_records_count}, 最大={self.MAX_RECORDS_PER_KB}。"
+                f"将跳过超出部分，建议使用 Elasticsearch 替代。"
+            )
+            # 只插入不超限制的部分
+            allowed_new = self.MAX_RECORDS_PER_KB - current_count
+            chunks_to_insert = []
+            for c in chunks:
+                if c["chunk_id"] in existing_chunk_ids:
+                    chunks_to_insert.append(c)  # 更新已存在的
+                elif allowed_new > 0:
+                    chunks_to_insert.append(c)  # 新增
+                    allowed_new -= 1
+            chunks = chunks_to_insert
+        
         for c in chunks:
             rec = BM25Record(
                 chunk_id=c["chunk_id"],

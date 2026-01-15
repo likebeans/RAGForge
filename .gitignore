@@ -20,58 +20,68 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual environments
-.env
-.venv
-env/
+# Virtual Environment
+.venv/
 venv/
 ENV/
+env/
 
-# IDE
-.idea/
+# IDEs
 .vscode/
+.idea/
 *.swp
 *.swo
 *~
 
-# Testing
-.tox/
-.nox/
-.coverage
-.coverage.*
-htmlcov/
-.pytest_cache/
-.mypy_cache/
+# Environment files (保留 .env.example 作为模板)
+.env
+.env.local
+.env.*.local
 
-# Docker
+# Logs
 *.log
+logs/
 
 # Database
 *.db
+*.sqlite
 *.sqlite3
 
-# Secrets
-.env.local
-.env.*.local
-secrets/
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Frontend
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# Documentation build
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# uv
-.uv/
-uv.lock
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
 
-# Alembic
-alembic/versions/*.pyc
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Docs (暂不推送)
-docs/
+# Project specific (旧文档已移动，不再需要忽略)
+# 文档已重组到 docs/ 目录
 RAPTOR_REVIEW.md
-
-# Test data (测试文档)
-test/
