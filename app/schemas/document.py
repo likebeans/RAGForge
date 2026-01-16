@@ -154,12 +154,24 @@ class PreviewSummaryResponse(BaseModel):
     summary_length: int = Field(..., description="摘要长度（字符）")
 
 
+class LLMConfigForEnrichment(BaseModel):
+    """Chunk 增强使用的 LLM 配置"""
+    provider: str = Field(..., description="LLM 提供商（如 siliconflow, openai, ollama）")
+    model: str = Field(..., description="模型名称")
+    api_key: str | None = Field(default=None, description="API Key（可选，未传则从环境变量获取）")
+    base_url: str | None = Field(default=None, description="API Base URL（可选）")
+
+
 class PreviewChunkEnrichmentRequest(BaseModel):
     """预览 Chunk 增强请求"""
     chunks: list[str] = Field(..., min_length=1, max_length=5, description="待增强的 chunk 文本列表（最多 5 个）")
     doc_title: str | None = Field(default=None, description="文档标题")
     doc_summary: str | None = Field(default=None, description="文档摘要（可选，用于增强上下文）")
     max_tokens: int = Field(default=512, ge=100, le=1000, description="增强文本最大 token 数")
+    llm_config: LLMConfigForEnrichment | None = Field(
+        default=None,
+        description="LLM 配置（可选，优先级高于环境变量）。使用默认模型设置时必须传此参数。"
+    )
 
 
 class EnrichedChunkResult(BaseModel):

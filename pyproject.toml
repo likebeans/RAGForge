@@ -39,6 +39,8 @@ dependencies = [
     # RAPTOR 原生实现依赖
     "umap-learn>=0.5.0", # UMAP 降维
     "scikit-learn>=1.3.0", # GMM 聚类
+    # Redis 缓存和限流
+    "redis>=5.0.0",
     # 工具
     "python-dotenv>=1.0.1",
     # 避免 jieba 触发 pkg_resources 弃用警告

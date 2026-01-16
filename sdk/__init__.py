@@ -30,7 +30,18 @@
         )
 """
 
-from sdk.client import KBServiceClient
+from sdk.client import (
+    KBServiceClient,
+    ConversationAPI,
+    RaptorAPI,
+    ModelProviderAPI,
+)
 from sdk.kb_client import KBClient  # 保留旧版兼容
 
-__all__ = ["KBServiceClient", "KBClient"]
+__all__ = [
+    "KBServiceClient",
+    "KBClient",
+    "ConversationAPI",
+    "RaptorAPI",
+    "ModelProviderAPI",
+]

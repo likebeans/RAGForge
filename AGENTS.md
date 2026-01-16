@@ -4,39 +4,79 @@
 
 ## 项目概述
 
-Self-RAG Pipeline 是一个多租户知识库检索服务，提供 OpenAI 兼容的 API 接口和完整的 Python SDK。
+**RAGForge** 是一个企业级多租户知识库检索服务，提供 OpenAI 兼容的 API 接口和完整的 Python SDK。
 
 **核心功能**：
-- 租户管理（创建、禁用、配额）
-- 知识库管理（创建、删除）
-- 文档摄取（上传、切分、向量化）
-- 语义检索（向量/BM25/混合/Rerank）
-- RAG 生成（多 LLM 提供商）
-- API Key 认证与限流（角色权限）
-- 可观测性（结构化日志、请求追踪）
-- 审计日志（全链路访问记录）
+- 多租户架构（租户隔离、配额管理、权限控制）
+- 知识库管理（创建、配置、删除）
+- 文档摄取（上传、切分、向量化、索引）
+- 语义检索（Dense/BM25/Hybrid/RAPTOR/HyDE 等）
+- RAG 生成（多 LLM 提供商支持）
+- 三层权限模型（操作权限 + KB 范围 + 文档 ACL）
+- Security Trimming（检索时自动过滤无权限文档）
+- 可观测性（结构化日志、请求追踪、审计日志）
 - **OpenAI 兼容接口**（Embeddings、Chat Completions）
 - **Python SDK**（完整的客户端库）
+- **凭据管理**（主备密钥、自动故障切换、密钥轮换）
+- **凭据扫描**（Pre-commit 钩子检测硬编码密钥）
 
 **技术栈**：
 - Python 3.11+ / FastAPI / SQLAlchemy 2.0 (async)
-- PostgreSQL (元数据) / Qdrant (默认向量库) / 可选 Milvus、Elasticsearch
+- PostgreSQL + pgvector (默认向量库) / 可选 Qdrant、Milvus、Elasticsearch
+- OpenSearch (BM25 稀疏检索)
 - LlamaIndex（chunk/retriever 适配）
 - uv (依赖管理) / Alembic (数据库迁移)
 
-## 开发环境
+## 部署方式
+
+项目提供两种部署配置：
+
+| 配置 | 向量存储 | BM25 存储 | 适用场景 |
+|------|----------|-----------|----------|
+| **默认** (`docker-compose.yml`) | PostgreSQL pgvector | OpenSearch | 生产环境、大规模数据 |
+| **Qdrant** (`docker-compose.qdrant.yml`) | Qdrant | 内存 | 开发环境、轻量部署 |
+
+### 快速启动（推荐）
+
+```bash
+# 生产环境（pg + opensearch）
+./deploy.sh up
+
+# 开发环境（pg + qdrant）
+./deploy.sh up qdrant
+
+# 其他命令
+./deploy.sh status          # 查看状态
+./deploy.sh logs            # 查看日志
+./deploy.sh create-tenant   # 创建租户
+./deploy.sh backup          # 备份数据库
+```
+
+### 手动启动
+
+```bash
+# 生产环境
+docker compose up -d
+docker compose exec api uv run alembic upgrade head
+
+# 开发环境
+docker compose -f docker-compose.qdrant.yml up -d
+docker compose -f docker-compose.qdrant.yml exec api uv run alembic upgrade head
+```
+
+### 本地开发
 
 ```bash
 # 安装依赖
 uv sync
 
-# 启动基础设施（PostgreSQL + Qdrant + API）
-docker compose up -d
+# 仅启动基础服务
+docker compose up -d db redis opensearch
 
 # 运行数据库迁移
 uv run alembic upgrade head
 
-# 开发模式启动（本地端口 8020）
+# 本地启动 API（热重载）
 uv run uvicorn app.main:app --reload --port 8020
 ```
 
@@ -57,54 +97,60 @@ uv run ruff format .
 uv run ruff check --fix .
 
 # Docker 构建（使用宿主机网络加速）
-docker build --network=host -t self_rag_pipeline-api .
+docker build --network=host -t ragforge-api .
 ```
 
 ## 项目结构
 
 ```
-app/
-├── main.py          # FastAPI 应用入口
-├── config.py        # 配置管理（环境变量）
-├── api/             # API 路由层
-│   ├── deps.py      # 依赖注入（认证、数据库会话）
-│   └── routes/      # 各功能路由
-├── auth/            # 认证模块
-│   └── api_key.py   # API Key 认证、限流
-├── models/          # SQLAlchemy ORM 模型
-├── schemas/         # Pydantic 请求/响应模型
-├── pipeline/        # 可插拔算法模块
-│   ├── base.py      # 基础协议定义
-│   ├── registry.py  # 算法注册表
-│   ├── chunkers/    # 切分器（simple/sliding_window/recursive/markdown/code 等）
-│   ├── retrievers/  # 检索器（dense/bm25/hybrid/fusion/hyde 等）
-│   ├── query_transforms/  # 查询变换（HyDE/Router/RAGFusion）
-│   ├── enrichers/   # 文档增强（Summary/ChunkEnricher）
-│   └── postprocessors/    # 后处理（ContextWindow）
-├── middleware/      # 中间件
-│   └── request_trace.py # 请求追踪（X-Request-ID）
-├── infra/           # 基础设施
-│   ├── llm.py           # LLM 客户端（多提供商支持）
-│   ├── embeddings.py    # 向量化（多提供商支持）
-│   ├── rerank.py        # 重排模块（多提供商支持）
-│   ├── logging.py       # 结构化日志（JSON/Console）
-│   ├── vector_store.py  # Qdrant 操作
-│   ├── bm25_store.py    # BM25 内存存储
-│   ├── llamaindex.py    # LlamaIndex 集成（Qdrant/Milvus/ES 构建器）
-│   └── db/              # 异步会话管理
-├── services/
-│   ├── ingestion.py     # 文档摄取
-│   ├── query.py         # 检索服务（含 Rerank 后处理）
-│   ├── rag.py           # RAG 生成服务
-│   ├── audit.py         # 审计日志服务
-│   └── config_validation.py  # KB 配置校验
-└── models/
-    ├── audit_log.py     # 审计日志模型
-    └── ...
-
-sdk/                 # Python SDK
-alembic/             # 数据库迁移脚本
-tests/               # 测试文件
+RAGForge/
+├── app/                      # 应用代码
+│   ├── main.py              # FastAPI 应用入口
+│   ├── config.py            # 配置管理（环境变量）
+│   ├── api/                 # API 路由层
+│   │   ├── deps.py          # 依赖注入（认证、数据库会话）
+│   │   └── routes/          # 各功能路由
+│   ├── auth/                # 认证模块
+│   │   └── api_key.py       # API Key 认证、限流
+│   ├── security/            # 安全模块
+│   │   ├── credential_manager.py   # 凭据管理器
+│   │   └── credential_scanner.py   # 凭据扫描器
+│   ├── models/              # SQLAlchemy ORM 模型
+│   ├── schemas/             # Pydantic 请求/响应模型
+│   ├── services/            # 业务逻辑层
+│   │   ├── ingestion.py     # 文档摄取
+│   │   ├── query.py         # 检索服务
+│   │   ├── rag.py           # RAG 生成服务
+│   │   ├── acl.py           # ACL 权限服务
+│   │   └── audit.py         # 审计日志服务
+│   ├── pipeline/            # 可插拔算法模块
+│   │   ├── base.py          # 基础协议定义
+│   │   ├── registry.py      # 算法注册表
+│   │   ├── chunkers/        # 切分器
+│   │   ├── retrievers/      # 检索器
+│   │   ├── indexers/        # 索引器（RAPTOR）
+│   │   ├── query_transforms/  # 查询变换
+│   │   ├── enrichers/       # 文档增强
+│   │   └── postprocessors/  # 后处理
+│   ├── infra/               # 基础设施
+│   │   ├── llm.py           # LLM 客户端
+│   │   ├── embeddings.py    # 向量化
+│   │   ├── rerank.py        # 重排模块
+│   │   ├── logging.py       # 结构化日志
+│   │   ├── vector_store.py  # Qdrant 操作
+│   │   ├── bm25_store.py    # BM25 存储
+│   │   └── llamaindex.py    # LlamaIndex 集成
+│   ├── middleware/          # 中间件
+│   │   ├── audit.py         # 审计日志
+│   │   └── request_trace.py # 请求追踪
+│   └── db/                  # 数据库配置
+├── frontend/                # Next.js 前端管理界面
+├── sdk/                     # Python SDK
+├── alembic/                 # 数据库迁移脚本
+├── scripts/                 # 运维脚本
+├── tests/                   # 测试文件
+├── docs/                    # VitePress 文档站点
+└── .pre-commit-config.yaml  # Pre-commit 配置
 ```
 
 ## Pipeline 算法框架
@@ -295,6 +341,41 @@ results = await retriever.retrieve(query="问题", tenant_id="xxx", kb_ids=["kb1
 2. 入库和检索必须使用相同的隔离模式
 3. 默认使用 Partition 模式（共享 Collection `kb_shared`）
 
+### PostgreSQL pgvector 索引类型
+
+使用 PostgreSQL pgvector 作为向量存储时，系统使用 **HNSW 索引**，并根据向量维度自动选择合适的类型：
+
+| 向量类型 | 维度限制 | 适用场景 | 操作符类 |
+|----------|----------|----------|----------|
+| `vector` | ≤2,000 | 低维度模型（768/1024 维） | `vector_cosine_ops` |
+| `halfvec` ✅ | ≤4,000 | **高维度模型（2560/3072 维）** | `halfvec_cosine_ops` |
+| `bit` | ≤64,000 | 二进制向量 | `bit_cosine_ops` |
+
+**自动索引策略**：
+- 维度 ≤ 2000：使用 `vector` 类型 + `vector_cosine_ops`
+- 维度 2001-4000：使用 `halfvec` 类型 + `halfvec_cosine_ops`
+- 维度 > 4000：跳过索引（使用精确搜索）
+
+**索引示例**：
+```sql
+-- 低维度向量（≤2000 维）
+CREATE INDEX ON vector_chunks 
+USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
+
+-- 高维度向量（2001-4000 维，如 Qwen3-Embedding-4B 的 2560 维）
+CREATE INDEX ON vector_chunks 
+USING hnsw ((embedding::halfvec(2560)) halfvec_cosine_ops) WITH (m = 16, ef_construction = 64);
+```
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `m` | 每个节点的最大连接数 | 16 |
+| `ef_construction` | 构建时的搜索宽度 | 64 |
+
+**参考文档**：[Supabase HNSW Indexes](https://supabase.com/docs/guides/ai/vector-indexes/hnsw-indexes)
+
+**注意**：更高的 `m` 和 `ef_construction` 值会提高召回率，但增加内存和构建时间。
+
 ## 租户管理 (Admin API)
 
 通过 `X-Admin-Token` 头认证的管理接口：
@@ -387,12 +468,50 @@ EMBEDDING_DIM=1024
 RERANK_PROVIDER=none
 ```
 
-## 安全注意事项
+## 安全特性
 
+### 基础安全
 - API Key 使用 SHA256 哈希存储，不保存明文
 - 所有接口需要 Bearer Token 认证
 - 限流器默认 120 次/分钟，可按 Key 独立配置
 - 生产环境应启用 HTTPS
+
+### 凭据管理器 (CredentialManager)
+
+提供完整的 API 密钥管理能力（`app/security/credential_manager.py`）：
+
+- **主备密钥机制** - 每个提供商可配置主密钥和备用密钥
+- **自动故障切换** - 主密钥失效时自动切换到备用密钥
+- **密钥轮换** - 支持无缝轮换 API 密钥
+- **密钥验证** - 自动验证密钥格式（OpenAI sk-、Gemini AIzaSy 等）
+
+```python
+from app.security.credential_manager import CredentialManager
+
+manager = CredentialManager(settings)
+api_key = manager.get_api_key("openai")  # 自动主备切换
+manager.mark_key_invalid("openai")  # 标记失效，触发切换
+await manager.rotate_key("openai", "new-key")  # 轮换密钥
+```
+
+### 凭据扫描器 (CredentialScanner)
+
+自动检测代码中的硬编码凭据（`app/security/credential_scanner.py`）：
+
+- **检测模式** - API 密钥、通用密码、弱令牌、内网 IP
+- **Pre-commit 集成** - 提交前自动扫描，防止密钥泄露
+- **白名单机制** - 支持 `.secrets.baseline` 配置已知安全例外
+
+```bash
+# 安装并启用 pre-commit
+pip install pre-commit
+pre-commit install
+
+# 手动运行扫描
+python scripts/pre-commit-security-check.py --all
+```
+
+详细信息参见 `docs/SECURITY.md`。
 
 ## 检索响应格式
 
@@ -488,10 +607,9 @@ for r in results:
 
 项目提供完整的 OpenAI 兼容 API 和 Python SDK，详见：
 
-- **详细文档**: `AGENTS_OPENAI_SDK.md`
+- **使用指南**: `docs/guides/openai-sdk.md`
 - **SDK 文档**: `sdk/README.md`
-- **测试脚本**: `test_openai_sdk.py`
-- **测试总结**: `docs/OpenAI接口和SDK测试总结.md`
+- **测试报告**: `docs/reports/openai-sdk-testing.md`
 
 ### 快速示例
 
@@ -539,3 +657,25 @@ response = client.openai.chat_completions(
 
 4. **SDK 扩展** (`sdk/kb_service_sdk/`)
    - 添加 Playground 相关方法
+
+---
+
+## 文档资源
+
+项目提供完整的 VitePress 文档站点（`docs/` 目录）：
+
+| 分类 | 说明 | 路径 |
+|------|------|------|
+| **快速开始** | 安装、配置、第一个 API 调用 | `docs/getting-started/` |
+| **使用指南** | 环境配置、部署、SDK 使用 | `docs/guides/` |
+| **架构设计** | 系统设计、Pipeline 架构、API 规范 | `docs/architecture/` |
+| **开发文档** | 贡献指南、测试、故障排查 | `docs/development/` |
+| **运维文档** | 部署、监控、安全 | `docs/operations/` |
+| **安全指南** | 凭据管理、威胁模型、审计 | `docs/SECURITY.md` |
+
+### 关键文档
+
+- **[docs/documentation.md](docs/documentation.md)** - 完整文档索引
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - 系统架构概览
+- **[docs/SECURITY.md](docs/SECURITY.md)** - 安全基线与加固建议
+- **[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)** - 贡献指南

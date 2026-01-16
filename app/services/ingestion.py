@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.infra.vector_store import vector_store
+from app.infra.vector_store_factory import get_cached_vector_store, is_using_pgvector
 from app.infra.bm25_store import bm25_store
 from app.infra.bm25_cache import get_bm25_cache
 from app.infra.llamaindex import build_index_by_store, nodes_from_chunks
@@ -508,7 +508,9 @@ async def _index_to_vector_stores(
         ]
         
         try:
-            ctx.add_log(f"向量化并写入 {len(chunk_data)} 个 chunks 到 Qdrant...")
+            store_name = "pgvector" if is_using_pgvector() else "Qdrant"
+            ctx.add_log(f"向量化并写入 {len(chunk_data)} 个 chunks 到 {store_name}...")
+            vector_store = get_cached_vector_store()
             await vector_store.upsert_chunks(
                 tenant_id=ctx.tenant_id,
                 chunks=chunk_data,
@@ -770,6 +772,7 @@ async def retry_failed_chunks(
         ]
         
         try:
+            vector_store = get_cached_vector_store()
             await vector_store.upsert_chunks(tenant_id=tenant_id, chunks=chunk_data)
             # 成功
             for chunk in chunks:

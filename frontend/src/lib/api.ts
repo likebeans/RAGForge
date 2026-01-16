@@ -872,18 +872,26 @@ class APIClient {
 
   /**
    * 预览 Chunk 增强
+   * @param llmConfig 可选的 LLM 配置，优先级高于环境变量
    */
   async previewChunkEnrichment(
     chunks: string[],
     docTitle?: string,
     docSummary?: string,
-    maxTokens: number = 512
+    maxTokens: number = 512,
+    llmConfig?: {
+      provider: string;
+      model: string;
+      api_key?: string;
+      base_url?: string;
+    }
   ): Promise<PreviewChunkEnrichmentResponse> {
     return this.request("POST", "/v1/enrichment/preview-chunk-enrichment", {
       chunks,
       doc_title: docTitle,
       doc_summary: docSummary,
       max_tokens: maxTokens,
+      llm_config: llmConfig,
     });
   }
 

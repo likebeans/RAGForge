@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:15
+    image: pgvector/pgvector:pg15
     container_name: rag_kb_postgres
     restart: unless-stopped
     environment:
@@ -31,6 +31,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://kb:kb@db:5432/kb}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      VECTOR_STORE: ${VECTOR_STORE:-postgresql}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
       SILICONFLOW_API_BASE: ${SILICONFLOW_API_BASE:-https://api.siliconflow.cn/v1}
@@ -66,4 +67,6 @@ services:
 
 volumes:
   pgdata:
+    name: ragforge_pgdata_shared  # 固定名称，防止切换 compose 文件丢数据
   redis_data:
+    name: ragforge_redis_shared   # 固定名称

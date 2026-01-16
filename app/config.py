@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     # 配置缓存配置
     redis_config_cache_ttl: int = 600  # KB 配置缓存 TTL（秒），默认 10 分钟
     
+    # ==================== 向量存储配置 ====================
+    # 向量存储类型：qdrant / postgresql (pgvector)
+    vector_store: str = "qdrant"
+    
     # ==================== 向量数据库配置 (Qdrant) ====================
     qdrant_url: str = "http://localhost:6333"  # Qdrant 服务地址
     qdrant_api_key: str | None = None          # Qdrant API Key（云服务需要）

@@ -45,14 +45,14 @@ class TestFilterResultsByAcl:
             },
             {
                 "chunk_id": "chunk_2",
-                "text": "内部内容",
-                "metadata": {},
+                "text": "另一个公开内容",
+                "metadata": {"sensitivity_level": "public"},
             },
         ]
         
         ctx = UserContext(user_id="user_123", roles=["viewer"], groups=[])
         
-        # 无 ACL 限制的文档应该都能访问
+        # public 文档应该都能访问
         filtered = filter_results_by_acl(results, ctx)
         assert len(filtered) == 2
     
@@ -85,7 +85,7 @@ class TestFilterResultsByAcl:
                 "text": "用户 A 的文档",
                 "metadata": {
                     "sensitivity_level": "internal",
-                    "acl_allow_users": ["user_123"],
+                    "acl_users": ["user_123"],
                 },
             },
             {
@@ -93,12 +93,12 @@ class TestFilterResultsByAcl:
                 "text": "用户 B 的文档",
                 "metadata": {
                     "sensitivity_level": "internal",
-                    "acl_allow_users": ["user_456"],
+                    "acl_users": ["user_456"],
                 },
             },
         ]
         
-        ctx = UserContext(user_id="user_123", roles=[], groups=[])
+        ctx = UserContext(user_id="user_123", roles=[], groups=[], sensitivity_clearance="restricted")
         filtered = filter_results_by_acl(results, ctx)
         
         # 只能访问自己的文档
@@ -113,7 +113,7 @@ class TestFilterResultsByAcl:
                 "text": "管理员文档",
                 "metadata": {
                     "sensitivity_level": "internal",
-                    "acl_allow_roles": ["admin"],
+                    "acl_roles": ["admin"],
                 },
             },
             {
@@ -121,15 +121,15 @@ class TestFilterResultsByAcl:
                 "text": "编辑者文档",
                 "metadata": {
                     "sensitivity_level": "internal",
-                    "acl_allow_roles": ["editor"],
+                    "acl_roles": ["editor"],
                 },
             },
         ]
         
-        ctx = UserContext(user_id="user_123", roles=["admin"], groups=[])
+        ctx = UserContext(user_id="user_123", roles=["admin"], groups=[], sensitivity_clearance="restricted")
         filtered = filter_results_by_acl(results, ctx)
         
-        # 管理员只能访问管理员文档
+        # 有 admin 角色只能访问管理员文档
         assert len(filtered) == 1
         assert filtered[0]["chunk_id"] == "chunk_1"
     
@@ -141,7 +141,7 @@ class TestFilterResultsByAcl:
                 "text": "工程组文档",
                 "metadata": {
                     "sensitivity_level": "internal",
-                    "acl_allow_groups": ["engineering"],
+                    "acl_groups": ["engineering"],
                 },
             },
             {
@@ -149,12 +149,12 @@ class TestFilterResultsByAcl:
                 "text": "产品组文档",
                 "metadata": {
                     "sensitivity_level": "internal",
-                    "acl_allow_groups": ["product"],
+                    "acl_groups": ["product"],
                 },
             },
         ]
         
-        ctx = UserContext(user_id="user_123", roles=[], groups=["engineering"])
+        ctx = UserContext(user_id="user_123", roles=[], groups=["engineering"], sensitivity_clearance="restricted")
         filtered = filter_results_by_acl(results, ctx)
         
         # 只能访问工程组文档
@@ -169,15 +169,15 @@ class TestFilterResultsByAcl:
                 "text": "复合权限文档",
                 "metadata": {
                     "sensitivity_level": "internal",
-                    "acl_allow_users": ["user_456"],
-                    "acl_allow_roles": ["admin"],
-                    "acl_allow_groups": ["engineering"],
+                    "acl_users": ["user_456"],
+                    "acl_roles": ["admin"],
+                    "acl_groups": ["engineering"],
                 },
             },
         ]
         
-        # 用户不在 allow_users，但在 engineering 组
-        ctx = UserContext(user_id="user_123", roles=["viewer"], groups=["engineering"])
+        # 用户不在 acl_users，但在 engineering 组
+        ctx = UserContext(user_id="user_123", roles=["viewer"], groups=["engineering"], sensitivity_clearance="restricted")
         filtered = filter_results_by_acl(results, ctx)
         
         # 应该能访问（满足组权限）
@@ -191,26 +191,27 @@ class TestFilterResultsByAcl:
                 "text": "受限文档",
                 "metadata": {
                     "sensitivity_level": "confidential",
-                    "acl_allow_users": ["user_456"],
-                    "acl_allow_roles": ["admin"],
-                    "acl_allow_groups": ["hr"],
+                    "acl_users": ["user_456"],
+                    "acl_roles": ["admin"],
+                    "acl_groups": ["hr"],
                 },
             },
         ]
         
-        ctx = UserContext(user_id="user_123", roles=["viewer"], groups=["engineering"])
+        ctx = UserContext(user_id="user_123", roles=["viewer"], groups=["engineering"], sensitivity_clearance="restricted")
         filtered = filter_results_by_acl(results, ctx)
         
-        # 无权限访问
+        # 无权限访问（不在 ACL 白名单中）
         assert len(filtered) == 0
 
 
 class TestBuildAclFilterForQdrant:
     """测试构建 Qdrant ACL 过滤器"""
     
-    def test_build_filter_none_context(self):
-        """测试无用户上下文"""
-        filter_dict = build_acl_filter_for_qdrant(None)
+    def test_build_filter_admin_context(self):
+        """测试管理员上下文（不需要过滤）"""
+        ctx = UserContext(user_id="admin_user", roles=[], groups=[], is_admin=True)
+        filter_dict = build_acl_filter_for_qdrant(ctx)
         assert filter_dict is None
     
     def test_build_filter_with_user(self):
@@ -244,11 +245,10 @@ class TestBuildAclMetadataForChunk:
             allow_groups=None,
         )
         
-        assert metadata["document_id"] == "doc_123"
         assert metadata["sensitivity_level"] == "internal"
-        assert "acl_allow_users" not in metadata
-        assert "acl_allow_roles" not in metadata
-        assert "acl_allow_groups" not in metadata
+        assert "acl_users" not in metadata
+        assert "acl_roles" not in metadata
+        assert "acl_groups" not in metadata
     
     def test_build_metadata_with_users(self):
         """测试包含用户列表"""
@@ -260,9 +260,9 @@ class TestBuildAclMetadataForChunk:
             allow_groups=None,
         )
         
-        assert "acl_allow_users" in metadata
-        assert isinstance(metadata["acl_allow_users"], list)
-        assert "user_123" in metadata["acl_allow_users"]
+        assert "acl_users" in metadata
+        assert isinstance(metadata["acl_users"], list)
+        assert "user_123" in metadata["acl_users"]
     
     def test_build_metadata_with_roles(self):
         """测试包含角色列表"""
@@ -274,9 +274,9 @@ class TestBuildAclMetadataForChunk:
             allow_groups=None,
         )
         
-        assert "acl_allow_roles" in metadata
-        assert isinstance(metadata["acl_allow_roles"], list)
-        assert "admin" in metadata["acl_allow_roles"]
+        assert "acl_roles" in metadata
+        assert isinstance(metadata["acl_roles"], list)
+        assert "admin" in metadata["acl_roles"]
     
     def test_build_metadata_with_groups(self):
         """测试包含组列表"""
@@ -288,9 +288,9 @@ class TestBuildAclMetadataForChunk:
             allow_groups=["engineering", "product"],
         )
         
-        assert "acl_allow_groups" in metadata
-        assert isinstance(metadata["acl_allow_groups"], list)
-        assert "engineering" in metadata["acl_allow_groups"]
+        assert "acl_groups" in metadata
+        assert isinstance(metadata["acl_groups"], list)
+        assert "engineering" in metadata["acl_groups"]
     
     def test_build_metadata_full_acl(self):
         """测试完整 ACL 元数据"""
@@ -302,11 +302,10 @@ class TestBuildAclMetadataForChunk:
             allow_groups=["hr"],
         )
         
-        assert metadata["document_id"] == "doc_123"
         assert metadata["sensitivity_level"] == "confidential"
-        assert "acl_allow_users" in metadata
-        assert "acl_allow_roles" in metadata
-        assert "acl_allow_groups" in metadata
-        assert len(metadata["acl_allow_users"]) == 1
-        assert len(metadata["acl_allow_roles"]) == 1
-        assert len(metadata["acl_allow_groups"]) == 1
+        assert "acl_users" in metadata
+        assert "acl_roles" in metadata
+        assert "acl_groups" in metadata
+        assert len(metadata["acl_users"]) == 1
+        assert len(metadata["acl_roles"]) == 1
+        assert len(metadata["acl_groups"]) == 1

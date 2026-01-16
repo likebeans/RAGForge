@@ -37,10 +37,22 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_admin_tokens_prefix'), 'admin_tokens', ['prefix'], unique=False)
     op.create_index(op.f('ix_admin_tokens_revoked'), 'admin_tokens', ['revoked'], unique=False)
-    op.alter_column('tenants', 'llm_settings',
-               existing_type=postgresql.JSONB(astext_type=sa.Text()),
-               type_=sa.JSON(),
-               existing_nullable=True)
+    
+    # 检查 llm_settings 列是否存在，如果不存在则创建
+    conn = op.get_bind()
+    result = conn.execute(sa.text(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'tenants' AND column_name = 'llm_settings'"
+    ))
+    if result.fetchone() is None:
+        # 列不存在，先创建
+        op.add_column('tenants', sa.Column('llm_settings', sa.JSON(), nullable=True))
+    else:
+        # 列存在，修改类型
+        op.alter_column('tenants', 'llm_settings',
+                   existing_type=postgresql.JSONB(astext_type=sa.Text()),
+                   type_=sa.JSON(),
+                   existing_nullable=True)
     # ### end Alembic commands ###
 
 

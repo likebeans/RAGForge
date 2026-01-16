@@ -113,9 +113,23 @@ async def preview_chunk_enrichment(
     - 不会持久化存储
     """
     try:
+        # 构建 LLM 配置（前端传入优先级高于环境变量）
+        llm_config = None
+        if payload.llm_config:
+            llm_config = {
+                "provider": payload.llm_config.provider,
+                "model": payload.llm_config.model,
+                "api_key": payload.llm_config.api_key,
+                "base_url": payload.llm_config.base_url,
+            }
+            logger.info(f"使用前端传入的 LLM 配置: {payload.llm_config.provider}/{payload.llm_config.model}")
+        else:
+            logger.warning("未传入 llm_config，将使用环境变量中的默认 LLM 配置")
+        
         enricher = ChunkEnricher(
             max_tokens=payload.max_tokens,
             context_chunks=1,
+            llm_config=llm_config,
         )
         
         results: list[EnrichedChunkResult] = []

@@ -1,69 +1,89 @@
-# Self-RAG Pipeline
+# RAGForge
 
-多租户知识库检索服务，提供 OpenAI 兼容的 API 接口和完整的 Python SDK。
+<p align="center">
+  <strong>Multi-tenant Knowledge Base Retrieval Service with OpenAI-compatible API</strong>
+</p>
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+<p align="center">
+  Enterprise-grade multi-tenant knowledge base retrieval service with OpenAI-compatible API and complete Python SDK.
+</p>
 
-## 目录
+<p align="center">
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python 3.11+"></a>
+  <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-0.100+-green.svg" alt="FastAPI"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="./docs/"><img src="https://img.shields.io/badge/docs-VitePress-646cff.svg" alt="Documentation"></a>
+</p>
 
-- [功能特性](#功能特性)
-- [技术架构](#技术架构)
-- [快速开始](#快速开始)
-- [API 文档](#api-文档)
-- [配置说明](#配置说明)
-- [算法框架](#算法框架)
-- [项目结构](#项目结构)
-- [开发指南](#开发指南)
-- [部署指南](#部署指南)
+<p align="center">
+  English | <a href="README.zh-CN.md">中文</a> | <a href="./docs/">Docs</a> | <a href="./docs/architecture/api-specification.md">API Reference</a>
+</p>
 
----
+## Table of Contents
 
-## 功能特性
+- [Features](#features)
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+- [API Documentation](#api-documentation)
+- [Configuration](#configuration)
+- [Permission System](#permission-system)
+- [Security Features](#security-features)
+- [Pipeline Framework](#pipeline-framework)
+- [Project Structure](#project-structure)
+- [Development Guide](#development-guide)
+- [Deployment](#deployment)
+- [Documentation](#documentation)
 
-### 核心功能
-- **👥 租户管理** - 创建、禁用、配额控制（Admin API）
-- **🗂️ 知识库管理** - 创建、配置、删除知识库
-- **📄 文档摄取** - 上传文档，自动切分、向量化、索引
-- **🔍 语义检索** - 支持稠密向量、BM25、混合检索、Rerank
-- **🤖 RAG 生成** - 多 LLM 提供商支持，检索增强生成
-- **🔑 企业权限系统** - 三层权限模型（操作权限 + KB范围 + 文档ACL）
-- **🔒 Security Trimming** - 检索时自动过滤无权限文档
-- **🏢 多租户存储隔离** - Partition/Collection/Auto 三种策略
-- **📊 可观测性** - 结构化日志、请求追踪、指标收集
-- **📝 审计日志** - 全链路 API 访问记录，支持查询统计
-- **🛠️ 运维接口** - 健康检查、就绪检查、系统指标
-- **🔌 OpenAI 兼容接口** - Embeddings、Chat Completions（RAG 模式）
-- **📦 Python SDK** - 完整的客户端库，支持所有功能
-
-### 技术亮点
-- **可插拔算法框架** - 切分器、检索器、查询变换可配置替换
-- **多向量存储后端** - 支持 Qdrant（默认）、Milvus、Elasticsearch
-- **LlamaIndex 集成** - 可选使用 LlamaIndex 的切分和检索能力
-- **异步架构** - 基于 FastAPI + asyncpg，高并发性能
-- **高级 RAG 功能**:
-  - **HyDE** - LLM 生成假设文档，提升语义检索效果
-  - **Multi-Query** - LLM 生成查询变体，RRF 融合
-  - **RAPTOR** - 递归聚类 + LLM 摘要构建多层次索引树
-  - **Parent-Child Chunking** - 父子分块，大块上下文 + 小块精确匹配
-  - **Rerank** - 支持多种重排模型（bge-reranker、Cohere 等）
-  - **文档摘要** - 摄取时自动生成文档摘要
-  - **Chunk Enrichment** - LLM 增强 Chunk 上下文语义
-  - **上下文窗口** - 检索结果自动扩展前后文
+> 📚 **Full Documentation**: Visit [docs/](./docs/) for the VitePress documentation site with detailed guides, architecture design, and development docs.
 
 ---
 
-## 权限过滤流程（重要）
+## Features
 
-- 检索会先完成向量/BM25 等搜索，再做 ACL Security Trimming；不会提前拒绝。
-- ACL 过滤依据 API Key 的 identity（user/roles/groups/clearance）与文档的 `sensitivity_level`/ACL 白名单。
-- 命中结果但被 ACL 全部过滤时，接口返回 `403`，`code=NO_PERMISSION`（检索日志仍会记录命中数量）。
-- 解决办法：使用具备更高 clearance 的 Key、调整文档 `sensitivity_level` 为 `public`，或在文档 ACL 白名单中加入该 Key 的用户/角色/用户组并重新索引。
+### Core Features
+- **🏢 Multi-tenant Architecture** - Complete tenant isolation, quota management, and permission control
+- **🔌 OpenAI-compatible API** - Embeddings, Chat Completions API for seamless integration
+- **🧠 Advanced Retrieval Algorithms** - Dense/BM25/Hybrid/RAPTOR and more
+- **🔄 Pluggable Architecture** - Modular design with custom chunkers, retrievers, and enrichers
+- **🌐 Multi-LLM Providers** - OpenAI, Ollama, Qwen, Zhipu AI, and more
+- **📊 Full Observability** - Structured logging, request tracing, audit logs, and metrics
+- **🐍 Python SDK** - Complete client library supporting all features
+- **🚀 Production Ready** - Docker deployment, database migrations, configuration management
+
+### Security Features
+- **🔑 Three-layer Permission Model** - Operation permissions + KB scope + Document ACL
+- **🔒 Security Trimming** - Automatic filtering of unauthorized documents during retrieval
+- **🔐 Credential Manager** - Primary/fallback keys, auto-failover, key rotation
+- **🛡️ Credential Scanner** - Pre-commit hooks to detect hardcoded secrets
+- **📝 Audit Logs** - Full API access logging with query statistics
+
+### Technical Highlights
+- **Pluggable Algorithm Framework** - Configurable chunkers, retrievers, query transforms
+- **Multiple Vector Store Backends** - Qdrant (default), Milvus, Elasticsearch
+- **LlamaIndex Integration** - Optional LlamaIndex chunking and retrieval
+- **Async Architecture** - FastAPI + asyncpg for high concurrency
+- **Advanced RAG Features**:
+  - **HyDE** - LLM-generated hypothetical documents for better semantic retrieval
+  - **Multi-Query** - LLM-generated query variants with RRF fusion
+  - **RAPTOR** - Recursive clustering + LLM summarization for hierarchical indexing
+  - **Parent-Child Chunking** - Large context + small precise matching
+  - **Rerank** - Multiple reranking models (bge-reranker, Cohere, etc.)
+  - **Document Summarization** - Auto-generate summaries during ingestion
+  - **Chunk Enrichment** - LLM-enhanced chunk context semantics
+  - **Context Window** - Auto-expand surrounding context in results
 
 ---
 
-## 技术架构
+## Permission Filtering Process (Important)
+
+- Retrieval completes vector/BM25 search first, then applies ACL Security Trimming; requests are not rejected early.
+- ACL filtering uses API Key identity (user/roles/groups/clearance) against document `sensitivity_level` and ACL whitelist.
+- When all results are filtered by ACL, the API returns `403` with `code=NO_PERMISSION` (retrieval logs still record hit counts).
+- Solutions: Use a Key with higher clearance, set document `sensitivity_level` to `public`, or add the Key's user/roles/groups to the document ACL whitelist and re-index.
+
+---
+
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -94,76 +114,76 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 技术栈
+### Tech Stack
 
-| 组件 | 技术选型 |
-|------|----------|
-| Web 框架 | FastAPI |
-| 数据库 ORM | SQLAlchemy 2.0 (async) |
-| 数据库 | PostgreSQL 15 |
-| 向量存储 | Qdrant / Milvus / Elasticsearch |
-| 依赖管理 | uv |
-| 数据库迁移 | Alembic |
-| 容器化 | Docker + Docker Compose |
+| Component | Technology |
+|-----------|------------|
+| Web Framework | FastAPI |
+| Database ORM | SQLAlchemy 2.0 (async) |
+| Database | PostgreSQL 15 |
+| Vector Store | Qdrant / Milvus / Elasticsearch |
+| Package Manager | uv |
+| DB Migrations | Alembic |
+| Containerization | Docker + Docker Compose |
 
 ---
 
-## 快速开始
+## Quick Start
 
-### 环境要求
+### Requirements
 
 - Python 3.11+
 - Docker & Docker Compose
-- uv（推荐）或 pip
+- uv (recommended) or pip
 
-### 方式一：Docker Compose（推荐）
+### Option 1: Docker Compose (Recommended)
 
 ```bash
-# 1. 克隆项目
+# 1. Clone the project
 git clone <repo-url>
-cd self_rag_pipeline
+cd RAGForge
 
-# 2. 配置环境变量
+# 2. Configure environment variables
 cp .env.example .env
 
-# 3. 启动所有服务
+# 3. Start all services
 docker compose up -d
 
-# 4. 执行数据库迁移
+# 4. Run database migrations
 docker compose exec api uv run alembic upgrade head
 
-# 5. 检查服务状态
+# 5. Check service status
 curl http://localhost:8020/health
-# 前端控制台
-# 浏览器访问 http://localhost:3003
+# Frontend console
+# Visit http://localhost:3003 in browser
 ```
 
-### 方式二：本地开发
+### Option 2: Local Development
 
 ```bash
-# 1. 安装依赖
+# 1. Install dependencies
 uv sync
 
-# 2. 启动基础设施（PostgreSQL + Qdrant）
+# 2. Start infrastructure (PostgreSQL + Qdrant)
 docker compose up -d db qdrant
 
-# 3. 配置环境变量
+# 3. Configure environment variables
 cp .env.example .env
-# 编辑 .env，设置 DATABASE_URL=postgresql+asyncpg://kb:kb@localhost:5435/kb
+# Edit .env, set DATABASE_URL=postgresql+asyncpg://kb:kb@localhost:5435/kb
 
-# 4. 执行数据库迁移
+# 4. Run database migrations
 uv run alembic upgrade head
 
-# 5. 启动开发服务器
+# 5. Start development server
 uv run uvicorn app.main:app --reload --port 8020
 ```
 
-### 本地验证 OpenSearch 稀疏检索（可选）
+### Local OpenSearch Sparse Retrieval (Optional)
 ```bash
-# 启动带 OpenSearch 的组合（包含 API + Postgres + OpenSearch）
+# Start with OpenSearch (includes API + Postgres + OpenSearch)
 docker compose -f docker-compose.opensearch.yml up -d
 
-# 切换稀疏检索为 ES/OpenSearch
+# Switch sparse retrieval to ES/OpenSearch
 export BM25_ENABLED=true
 export BM25_BACKEND=es
 export ES_HOSTS=http://localhost:9200
@@ -171,33 +191,33 @@ uv run alembic upgrade head
 uv run uvicorn app.main:app --reload --port 8020
 ```
 
-### 生成 API Key
+### Generate API Key
 
-**方式一：使用 Admin API（推荐）**
+**Option 1: Using Admin API (Recommended)**
 
 ```bash
-# 1. 确保设置了 ADMIN_TOKEN 环境变量（在 docker-compose.yml 或 .env 中）
+# 1. Ensure ADMIN_TOKEN is set (in docker-compose.yml or .env)
 export ADMIN_TOKEN="your-secure-admin-token"
 
-# 2. 创建租户（自动返回初始 admin API Key）
+# 2. Create tenant (returns initial admin API Key)
 curl -X POST "http://localhost:8020/admin/tenants" \
   -H "X-Admin-Token: $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name": "demo-tenant"}'
 
-# 响应示例:
+# Response example:
 # {
 #   "id": "xxx-xxx-xxx",
 #   "name": "demo-tenant",
 #   "status": "active",
-#   "initial_api_key": "kb_sk_xxxxx..."  # 保存此 Key！
+#   "initial_api_key": "kb_sk_xxxxx..."  # Save this Key!
 # }
 ```
 
-**方式二：脚本生成（兼容旧方式）**
+**Option 2: Script Generation (Legacy)**
 
 ```bash
-# 在容器内执行
+# Execute inside container
 cat <<'PY' | docker compose exec -T api uv run python -
 import asyncio
 from app.db.session import async_session_maker, init_models
@@ -229,80 +249,80 @@ asyncio.run(main())
 PY
 ```
 
-### 验证安装
+### Verify Installation
 
 ```bash
-# 设置环境变量
-export API_KEY="上面生成的 Key"
+# Set environment variables
+export API_KEY="your-generated-key"
 export API_BASE="http://localhost:8020"
 
-# 创建知识库
+# Create knowledge base
 curl -X POST "$API_BASE/v1/knowledge-bases" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"name": "test-kb", "description": "测试知识库"}'
+  -d '{"name": "test-kb", "description": "Test knowledge base"}'
 
-# 运行端到端测试
+# Run end-to-end tests
 uv run pytest test/test_live_e2e.py -v
 ```
 
 ---
 
-## API 文档
+## API Documentation
 
-启动服务后访问：
+After starting the service, visit:
 - **Swagger UI**: http://localhost:8020/docs
 - **ReDoc**: http://localhost:8020/redoc
 
-### API 端点一览
+### API Endpoints Overview
 
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| `GET` | `/health` | 存活检查（Liveness） |
-| `GET` | `/ready` | 就绪检查（Readiness，检查 DB/Qdrant） |
-| `GET` | `/metrics` | 系统指标（运行时间、调用统计） |
-| **管理员接口** (需要 `X-Admin-Token` 头) |
-| `POST` | `/admin/tenants` | 创建租户（返回初始 API Key） |
-| `GET` | `/admin/tenants` | 列出租户 |
-| `GET` | `/admin/tenants/{id}` | 租户详情 |
-| `PATCH` | `/admin/tenants/{id}` | 更新租户 |
-| `POST` | `/admin/tenants/{id}/disable` | 禁用租户 |
-| `POST` | `/admin/tenants/{id}/enable` | 启用租户 |
-| `DELETE` | `/admin/tenants/{id}` | 删除租户 |
-| `GET` | `/admin/tenants/{id}/api-keys` | 列出租户 API Keys |
-| `POST` | `/admin/tenants/{id}/api-keys` | 创建 API Key |
-| **API Key 管理** (租户自管理) |
-| `POST` | `/v1/api-keys` | 创建 API Key |
-| `GET` | `/v1/api-keys` | 列出 API Keys |
-| `DELETE` | `/v1/api-keys/{id}` | 删除 API Key |
-| **知识库管理** |
-| `POST` | `/v1/knowledge-bases` | 创建知识库 |
-| `GET` | `/v1/knowledge-bases` | 列出知识库 |
-| `GET` | `/v1/knowledge-bases/{id}` | 获取知识库详情 |
-| `PATCH` | `/v1/knowledge-bases/{id}` | 更新知识库配置 |
-| `DELETE` | `/v1/knowledge-bases/{id}` | 删除知识库 |
-| **文档管理** |
-| `POST` | `/v1/knowledge-bases/{kb_id}/documents` | 上传文档 |
-| `GET` | `/v1/knowledge-bases/{kb_id}/documents` | 列出文档 |
-| `DELETE` | `/v1/documents/{id}` | 删除文档 |
-| **检索** |
-| `POST` | `/v1/retrieve` | 执行检索（返回模型信息） |
-| **RAG 生成** |
-| `POST` | `/v1/rag` | RAG 生成（检索 + LLM 生成） |
-| **OpenAI 兼容接口** |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Liveness check |
+| `GET` | `/ready` | Readiness check (DB/Qdrant) |
+| `GET` | `/metrics` | System metrics (uptime, call stats) |
+| **Admin Endpoints** (requires `X-Admin-Token` header) |
+| `POST` | `/admin/tenants` | Create tenant (returns initial API Key) |
+| `GET` | `/admin/tenants` | List tenants |
+| `GET` | `/admin/tenants/{id}` | Tenant details |
+| `PATCH` | `/admin/tenants/{id}` | Update tenant |
+| `POST` | `/admin/tenants/{id}/disable` | Disable tenant |
+| `POST` | `/admin/tenants/{id}/enable` | Enable tenant |
+| `DELETE` | `/admin/tenants/{id}` | Delete tenant |
+| `GET` | `/admin/tenants/{id}/api-keys` | List tenant API Keys |
+| `POST` | `/admin/tenants/{id}/api-keys` | Create API Key |
+| **API Key Management** (tenant self-service) |
+| `POST` | `/v1/api-keys` | Create API Key |
+| `GET` | `/v1/api-keys` | List API Keys |
+| `DELETE` | `/v1/api-keys/{id}` | Delete API Key |
+| **Knowledge Base Management** |
+| `POST` | `/v1/knowledge-bases` | Create knowledge base |
+| `GET` | `/v1/knowledge-bases` | List knowledge bases |
+| `GET` | `/v1/knowledge-bases/{id}` | Get knowledge base details |
+| `PATCH` | `/v1/knowledge-bases/{id}` | Update knowledge base config |
+| `DELETE` | `/v1/knowledge-bases/{id}` | Delete knowledge base |
+| **Document Management** |
+| `POST` | `/v1/knowledge-bases/{kb_id}/documents` | Upload document |
+| `GET` | `/v1/knowledge-bases/{kb_id}/documents` | List documents |
+| `DELETE` | `/v1/documents/{id}` | Delete document |
+| **Retrieval** |
+| `POST` | `/v1/retrieve` | Execute retrieval (returns model info) |
+| **RAG Generation** |
+| `POST` | `/v1/rag` | RAG generation (retrieval + LLM) |
+| **OpenAI-compatible Endpoints** |
 | `POST` | `/v1/embeddings` | OpenAI Embeddings API |
-| `POST` | `/v1/chat/completions` | OpenAI Chat Completions API（RAG 模式） |
+| `POST` | `/v1/chat/completions` | OpenAI Chat Completions API (RAG mode) |
 
-### 请求示例
+### Request Examples
 
-#### 创建知识库
+#### Create Knowledge Base
 ```bash
 curl -X POST "http://localhost:8020/v1/knowledge-bases" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "tech-docs",
-    "description": "技术文档知识库",
+    "description": "Technical documentation KB",
     "config": {
       "chunker": "sliding_window",
       "chunker_params": {"window": 512, "overlap": 50},
@@ -312,78 +332,78 @@ curl -X POST "http://localhost:8020/v1/knowledge-bases" \
   }'
 ```
 
-#### 上传文档
+#### Upload Document
 ```bash
 curl -X POST "http://localhost:8020/v1/documents" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "knowledge_base_id": "<kb_id>",
-    "title": "API 设计指南",
-    "content": "这是一份详细的 API 设计指南文档内容..."
+    "title": "API Design Guide",
+    "content": "This is a detailed API design guide document..."
   }'
 ```
 
-#### 执行检索
+#### Execute Retrieval
 ```bash
 curl -X POST "http://localhost:8020/v1/retrieve" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "knowledge_base_ids": ["<kb_id>"],
-    "query": "如何设计 RESTful API？",
+    "query": "How to design RESTful API?",
     "top_k": 5
   }'
 ```
 
-#### 检索响应示例
+#### Retrieval Response Example
 ```json
 {
   "results": [
     {
       "chunk_id": "xxx",
-      "text": "检索到的文本...",
+      "text": "Retrieved text...",
       "score": 0.85,
       "metadata": {...},
       "knowledge_base_id": "kb_id",
-      "hyde_queries": ["LLM生成的假设文档..."],      // HyDE 检索器返回
-      "generated_queries": ["查询变体1", "查询变体2"],  // multi_query 检索器返回
-      "retrieval_details": [...]                     // multi_query 每个查询的完整检索结果
+      "hyde_queries": ["LLM-generated hypothetical doc..."],  // HyDE retriever returns
+      "generated_queries": ["query variant 1", "query variant 2"],  // multi_query retriever returns
+      "retrieval_details": [...]                     // multi_query full retrieval results
     }
   ],
   "model": {
     "embedding_provider": "ollama",
     "embedding_model": "bge-m3",
-    "llm_provider": "ollama",      // 使用 LLM 的检索器返回（hyde/multi_query）
+    "llm_provider": "ollama",      // LLM-based retrievers return (hyde/multi_query)
     "llm_model": "qwen3:14b",
-    "rerank_provider": null,       // fusion + rerank 时返回
+    "rerank_provider": null,       // fusion + rerank returns
     "rerank_model": null,
-    "retriever": "hyde"            // 使用的检索器名称
+    "retriever": "hyde"            // retriever name used
   }
 }
 ```
 
-#### RAG 生成
+#### RAG Generation
 ```bash
 curl -X POST "http://localhost:8020/v1/rag" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "Python 有什么特点？",
+    "query": "What are Python's features?",
     "knowledge_base_ids": ["<kb_id>"],
     "top_k": 5,
     "temperature": 0.7
   }'
 ```
 
-#### RAG 响应示例
+#### RAG Response Example
 ```json
 {
-  "answer": "Python 是一种解释型、面向对象的高级编程语言...",
+  "answer": "Python is an interpreted, object-oriented high-level programming language...",
   "sources": [
     {
       "chunk_id": "xxx",
-      "text": "检索到的文本...",
+      "text": "Retrieved text...",
       "score": 0.85,
       "document_id": "doc_xxx",
       "knowledge_base_id": "kb_xxx"
@@ -401,125 +421,125 @@ curl -X POST "http://localhost:8020/v1/rag" \
 
 ---
 
-## 配置说明
+## Configuration
 
-### 模型提供商
+### Model Providers
 
-支持多种 LLM/Embedding/Rerank 提供商：
+Supports multiple LLM/Embedding/Rerank providers:
 
-| 提供商 | LLM | Embedding | Rerank | 说明 |
-|--------|-----|-----------|--------|------|
-| **Ollama** | ✅ | ✅ | ✅ | 本地部署，免费（推荐开发） |
+| Provider | LLM | Embedding | Rerank | Notes |
+|----------|-----|-----------|--------|-------|
+| **Ollama** | ✅ | ✅ | ✅ | Local deployment, free (recommended for dev) |
 | **OpenAI** | ✅ | ✅ | - | GPT-4, text-embedding-3 |
 | **Gemini** | ✅ | ✅ | - | Google AI |
-| **Qwen** | ✅ | ✅ | - | 阿里云 DashScope |
-| **Kimi** | ✅ | - | - | 月之暗面 Moonshot |
+| **Qwen** | ✅ | ✅ | - | Alibaba DashScope |
+| **Kimi** | ✅ | - | - | Moonshot AI |
 | **DeepSeek** | ✅ | ✅ | - | DeepSeek |
-| **智谱 AI** | ✅ | ✅ | ✅ | GLM 系列 |
-| **SiliconFlow** | ✅ | ✅ | ✅ | 聚合多种开源模型 |
-| **Cohere** | - | - | ✅ | 专业 Rerank 服务 |
+| **Zhipu AI** | ✅ | ✅ | ✅ | GLM series |
+| **SiliconFlow** | ✅ | ✅ | ✅ | Aggregates open-source models |
+| **Cohere** | - | - | ✅ | Professional Rerank service |
 
-### 环境变量
+### Environment Variables
 
-| 变量名 | 默认值 | 说明 |
-|--------|--------|------|
-| **应用配置** |
-| `ENVIRONMENT` | `dev` | 运行环境：dev/staging/prod |
-| **数据库** |
-| `DATABASE_URL` | `postgresql+asyncpg://kb:kb@localhost:5432/kb` | PostgreSQL 连接字符串 |
-| **认证** |
-| `API_KEY_PREFIX` | `kb_sk_` | API Key 前缀 |
-| `API_RATE_LIMIT_PER_MINUTE` | `120` | 每分钟请求限制 |
-| **模型提供商 API Keys** |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 服务地址 |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| **Application** |
+| `ENVIRONMENT` | `dev` | Runtime environment: dev/staging/prod |
+| **Database** |
+| `DATABASE_URL` | `postgresql+asyncpg://kb:kb@localhost:5432/kb` | PostgreSQL connection string |
+| **Authentication** |
+| `API_KEY_PREFIX` | `kb_sk_` | API Key prefix |
+| `API_RATE_LIMIT_PER_MINUTE` | `120` | Request rate limit per minute |
+| **Model Provider API Keys** |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama service URL |
 | `OPENAI_API_KEY` | - | OpenAI API Key |
 | `GEMINI_API_KEY` | - | Google Gemini API Key |
-| `QWEN_API_KEY` | - | 阿里云 DashScope API Key |
-| `KIMI_API_KEY` | - | 月之暗面 Moonshot API Key |
+| `QWEN_API_KEY` | - | Alibaba DashScope API Key |
+| `KIMI_API_KEY` | - | Moonshot API Key |
 | `DEEPSEEK_API_KEY` | - | DeepSeek API Key |
-| `ZHIPU_API_KEY` | - | 智谱 AI API Key |
+| `ZHIPU_API_KEY` | - | Zhipu AI API Key |
 | `SILICONFLOW_API_KEY` | - | SiliconFlow API Key |
 | `COHERE_API_KEY` | - | Cohere API Key (Rerank) |
-| **LLM 配置** |
-| `LLM_PROVIDER` | `ollama` | LLM 提供商 |
-| `LLM_MODEL` | `qwen3:14b` | LLM 模型名称 |
-| `LLM_TEMPERATURE` | `0.7` | 温度参数 |
-| `LLM_MAX_TOKENS` | `2048` | 最大生成 token |
-| **Embedding 配置** |
-| `EMBEDDING_PROVIDER` | `ollama` | Embedding 提供商 |
-| `EMBEDDING_MODEL` | `bge-m3` | Embedding 模型名称 |
-| `EMBEDDING_DIM` | `1024` | 向量维度 |
-| **Rerank 配置** |
-| `RERANK_PROVIDER` | `none` | Rerank 提供商（none 禁用） |
-| `RERANK_MODEL` | - | Rerank 模型名称 |
-| `RERANK_TOP_K` | `10` | 重排返回数量 |
-| **Rerank 请求覆盖说明** | - | 前端/接口传入的 `rerank_override` 只需指定 `provider`、`model`；若未传 `api_key`/`base_url`，会自动回落到环境/系统配置（如 `SILICONFLOW_API_KEY`、`COHERE_API_KEY` 等） |
+| **LLM Configuration** |
+| `LLM_PROVIDER` | `ollama` | LLM provider |
+| `LLM_MODEL` | `qwen3:14b` | LLM model name |
+| `LLM_TEMPERATURE` | `0.7` | Temperature parameter |
+| `LLM_MAX_TOKENS` | `2048` | Max generation tokens |
+| **Embedding Configuration** |
+| `EMBEDDING_PROVIDER` | `ollama` | Embedding provider |
+| `EMBEDDING_MODEL` | `bge-m3` | Embedding model name |
+| `EMBEDDING_DIM` | `1024` | Vector dimension |
+| **Rerank Configuration** |
+| `RERANK_PROVIDER` | `none` | Rerank provider (none to disable) |
+| `RERANK_MODEL` | - | Rerank model name |
+| `RERANK_TOP_K` | `10` | Rerank return count |
+| **Rerank Override** | - | Frontend/API `rerank_override` only needs `provider`, `model`; if `api_key`/`base_url` not provided, falls back to environment config |
 | **Qdrant** |
-| `QDRANT_URL` | `http://localhost:6333` | Qdrant 服务地址 |
-| `QDRANT_API_KEY` | - | Qdrant API Key（云服务） |
-| `QDRANT_COLLECTION_PREFIX` | `kb_` | Collection 前缀 |
-| **BM25/稀疏检索** |
-| `BM25_ENABLED` | `true` | 是否启用稀疏检索 |
-| `BM25_BACKEND` | `memory` | `memory` / `es`（OpenSearch/ES） |
-| **Milvus（可选）** |
-| `MILVUS_HOST` | - | Milvus 主机 |
-| `MILVUS_PORT` | - | Milvus 端口 |
-| **Elasticsearch（可选）** |
-| `ES_HOSTS` | - | ES 主机（逗号分隔） |
-| `ES_USERNAME` / `ES_PASSWORD` | - | 认证信息（可选） |
-| `ES_INDEX_PREFIX` | `kb_` | 索引前缀 |
-| `ES_INDEX_MODE` | `shared` | `shared` 单索引或 `per_kb` 每 KB 一索引 |
-| `ES_REQUEST_TIMEOUT` | `10` | 请求超时时间（秒） |
-| `ES_BULK_BATCH_SIZE` | `500` | bulk 写入批大小 |
-| `ES_ANALYZER` | `standard` | 索引 analyzer，中文可换 IK 等 |
-| `ES_REFRESH` | `false` | bulk 写入刷新策略 |
+| `QDRANT_URL` | `http://localhost:6333` | Qdrant service URL |
+| `QDRANT_API_KEY` | - | Qdrant API Key (cloud) |
+| `QDRANT_COLLECTION_PREFIX` | `kb_` | Collection prefix |
+| **BM25/Sparse Retrieval** |
+| `BM25_ENABLED` | `true` | Enable sparse retrieval |
+| `BM25_BACKEND` | `memory` | `memory` / `es` (OpenSearch/ES) |
+| **Milvus (Optional)** |
+| `MILVUS_HOST` | - | Milvus host |
+| `MILVUS_PORT` | - | Milvus port |
+| **Elasticsearch (Optional)** |
+| `ES_HOSTS` | - | ES hosts (comma-separated) |
+| `ES_USERNAME` / `ES_PASSWORD` | - | Auth credentials (optional) |
+| `ES_INDEX_PREFIX` | `kb_` | Index prefix |
+| `ES_INDEX_MODE` | `shared` | `shared` single index or `per_kb` per KB |
+| `ES_REQUEST_TIMEOUT` | `10` | Request timeout (seconds) |
+| `ES_BULK_BATCH_SIZE` | `500` | Bulk write batch size |
+| `ES_ANALYZER` | `standard` | Index analyzer |
+| `ES_REFRESH` | `false` | Bulk write refresh policy |
 
-> 稀疏检索运维脚本：
-> - `scripts/migrate_bm25_to_es.py`：DB → ES/OpenSearch 迁移/双写。
-> - `scripts/manage_es_indices.py`：列出/删除/刷新索引。
-> - `scripts/rebuild_bm25.py`：从 DB 重建内存 BM25（回滚时用）。
-> 更多迁移细节见 `docs/MIGRATION_SPARSE_ES.md`。
+> Sparse retrieval scripts:
+> - `scripts/migrate_bm25_to_es.py`: DB → ES/OpenSearch migration/dual-write.
+> - `scripts/manage_es_indices.py`: List/delete/refresh indices.
+> - `scripts/rebuild_bm25.py`: Rebuild in-memory BM25 from DB (for rollback).
+> See `docs/MIGRATION_SPARSE_ES.md` for migration details.
 
-> Qdrant 多向量字段：同一 Collection 支持多模型/多维度的向量字段，字段名自动由模型+维度生成（如 `vec_qwen_embedding_4096`）。保持入库与检索的模型一致即可避免维度错误。
+> Qdrant multi-vector fields: Same Collection supports multiple model/dimension vector fields, field names auto-generated from model+dimension (e.g., `vec_qwen_embedding_4096`). Keep ingestion and retrieval models consistent to avoid dimension errors.
 
-### 端口配置
+### Port Configuration
 
-| 服务 | 容器端口 | 宿主机端口 |
-|------|----------|------------|
+| Service | Container Port | Host Port |
+|---------|----------------|-----------|
 | API | 8020 | 8020 |
 | PostgreSQL | 5432 | 5435 |
 | Qdrant | 6333 | 6333 |
 
 ---
 
-## 权限系统
+## Permission System
 
-### 三层权限模型
+### Three-layer Permission Model
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ 第一层：操作权限 (APIKey.role)                               │
-│   admin → 全部权限 + 管理 API Key                           │
-│   write → 创建 KB、上传文档、检索                            │
-│   read  → 仅检索和列表                                      │
+│ Layer 1: Operation Permissions (APIKey.role)               │
+│   admin → Full access + manage API Keys                    │
+│   write → Create KB, upload docs, retrieve                 │
+│   read  → Retrieve and list only                           │
 ├─────────────────────────────────────────────────────────────┤
-│ 第二层：KB 范围 (APIKey.scope_kb_ids)                       │
-│   白名单模式，null 表示不限制                                │
+│ Layer 2: KB Scope (APIKey.scope_kb_ids)                     │
+│   Whitelist mode, null means no restriction                 │
 ├─────────────────────────────────────────────────────────────┤
-│ 第三层：文档过滤 (sensitivity + ACL)                         │
-│   public     → 租户内所有 Key 可访问                         │
-│   restricted → 需要 ACL 白名单匹配                           │
+│ Layer 3: Document Filter (sensitivity + ACL)                │
+│   public     → All Keys in tenant can access               │
+│   restricted → Requires ACL whitelist match                │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 创建带身份的 API Key
+### Create API Key with Identity
 
 ```bash
 curl -X POST "http://localhost:8020/admin/tenants/{id}/api-keys" \
   -H "X-Admin-Token: $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "销售部专用 Key",
+    "name": "Sales Department Key",
     "role": "read",
     "scope_kb_ids": ["kb_sales", "kb_products"],
     "identity": {
@@ -531,17 +551,17 @@ curl -X POST "http://localhost:8020/admin/tenants/{id}/api-keys" \
   }'
 ```
 
-### 文档敏感度设置
+### Document Sensitivity Settings
 
 ```bash
-# 上传受限文档（需要 ACL 匹配）
+# Upload restricted document (requires ACL match)
 curl -X POST "http://localhost:8020/v1/documents" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "knowledge_base_id": "<kb_id>",
-    "title": "销售策略文档",
-    "content": "机密内容...",
+    "title": "Sales Strategy Document",
+    "content": "Confidential content...",
     "sensitivity_level": "restricted",
     "acl_allow_roles": ["sales", "manager"],
     "acl_allow_groups": ["dept_sales"]
@@ -550,50 +570,91 @@ curl -X POST "http://localhost:8020/v1/documents" \
 
 ---
 
-## 算法框架
+## Security Features
 
-### 切分器 (Chunkers)
+### Credential Manager
 
-| 名称 | 说明 | 适用场景 |
-|------|------|----------|
-| `simple` | 按段落切分（双换行符） | 简单场景 |
-| `sliding_window` | 滑动窗口切分，支持重叠 | 通用文档 |
-| `recursive` | 递归字符切分 | 通用文档（推荐） |
-| `markdown` | Markdown 感知切分 | 技术文档 |
-| `code` | 代码感知切分（按语法结构） | 代码库 |
-| `parent_child` | 父子分块，大块索引+小块检索 | 长篇文章 |
-| `llama_sentence` | LlamaIndex 句子级切分 | 精确问答 |
-| `llama_token` | LlamaIndex Token 级切分 | Token 敏感场景 |
+Complete API key management capabilities:
 
-### 检索器 (Retrievers)
+- **Primary/Fallback Keys** - Each provider can have primary and fallback keys
+- **Auto Failover** - Automatically switch to fallback when primary fails
+- **Key Rotation** - Seamless key rotation, old primary auto-demotes to fallback
+- **Key Validation** - Auto-validate key formats (OpenAI sk- prefix, Gemini AIzaSy prefix, etc.)
+- **Expiry Detection** - Detect if keys need rotation based on last validation time
 
-| 名称 | 说明 | 适用场景 |
-|------|------|----------|
-| `dense` | 稠密向量检索 | 语义相似 |
-| `bm25` | BM25 稀疏检索（从 DB 加载，支持持久化） | 精确匹配 |
-| `hybrid` | Dense + BM25 混合检索 | 通用问答（推荐） |
-| `fusion` | 融合检索（RRF + Rerank） | 高质量召回 |
-| `hyde` | HyDE 检索器（LLM 生成假设文档） | 复杂语义问题 |
-| `multi_query` | 多查询扩展检索（LLM 生成查询变体） | 提高召回率 |
-| `self_query` | 自查询检索（LLM 解析元数据过滤） | 结构化过滤 |
-| `parent_document` | 父文档检索（小块检索返回父块） | 长文档上下文 |
-| `ensemble` | 集成检索（任意组合多检索器） | 灵活多路召回 |
-| `llama_dense` | LlamaIndex 稠密检索（真实 Embedding） | 多后端切换 |
-| `llama_bm25` | LlamaIndex BM25 检索 | 大规模数据（带缓存） |
-| `llama_hybrid` | LlamaIndex 混合检索 | 多后端 + 混合 |
+```python
+from app.security.credential_manager import CredentialManager
 
-### 高级功能
+manager = CredentialManager(settings)
+api_key = manager.get_api_key("openai")  # Auto primary/fallback switch
+await manager.rotate_key("openai", "new-key")  # Rotate key
+```
 
-| 功能 | 说明 |
-|------|------|
-| **查询路由** | 根据查询类型自动选择检索策略 |
-| **RAG Fusion** | 多查询扩展，提高召回覆盖率 |
-| **HyDE** | 假设文档嵌入，提升语义匹配 |
-| **上下文窗口** | 检索后扩展前后 chunk 上下文 |
-| **文档摘要** | 自动生成文档摘要 |
-| **Chunk Enrichment** | LLM 增强 chunk 语义（可选） |
+### Credential Scanner
 
-### 知识库配置示例
+Automatically detect hardcoded credentials and sensitive information:
+
+- **Detection Patterns** - API keys, generic passwords, weak tokens, internal IPs
+- **Pre-commit Integration** - Auto-scan before commit to prevent key leakage
+- **Whitelist Mechanism** - Support `.secrets.baseline` for known safe exceptions
+
+```bash
+# Install and enable pre-commit hooks
+pip install pre-commit
+pre-commit install
+
+# Manual scan
+python scripts/pre-commit-security-check.py --all
+```
+
+See [docs/SECURITY.md](./docs/SECURITY.md) for details.
+
+---
+
+## Pipeline Framework
+
+### Chunkers
+
+| Name | Description | Use Case |
+|------|-------------|----------|
+| `simple` | Split by paragraph (double newline) | Simple cases |
+| `sliding_window` | Sliding window with overlap | General documents |
+| `recursive` | Recursive character splitting | General documents (recommended) |
+| `markdown` | Markdown-aware splitting | Technical docs |
+| `code` | Code-aware splitting (by syntax) | Codebases |
+| `parent_child` | Parent-child chunking | Long articles |
+| `llama_sentence` | LlamaIndex sentence-level | Precise Q&A |
+| `llama_token` | LlamaIndex token-level | Token-sensitive cases |
+
+### Retrievers
+
+| Name | Description | Use Case |
+|------|-------------|----------|
+| `dense` | Dense vector retrieval | Semantic similarity |
+| `bm25` | BM25 sparse retrieval (DB-loaded, persistent) | Exact matching |
+| `hybrid` | Dense + BM25 hybrid | General Q&A (recommended) |
+| `fusion` | Fusion retrieval (RRF + Rerank) | High-quality recall |
+| `hyde` | HyDE retriever (LLM hypothetical docs) | Complex semantic queries |
+| `multi_query` | Multi-query expansion (LLM variants) | Improve recall |
+| `self_query` | Self-query (LLM metadata parsing) | Structured filtering |
+| `parent_document` | Parent document retrieval | Long document context |
+| `ensemble` | Ensemble retrieval (combine multiple) | Flexible multi-path recall |
+| `llama_dense` | LlamaIndex dense retrieval | Multi-backend switching |
+| `llama_bm25` | LlamaIndex BM25 retrieval | Large-scale data (cached) |
+| `llama_hybrid` | LlamaIndex hybrid retrieval | Multi-backend + hybrid |
+
+### Advanced Features
+
+| Feature | Description |
+|---------|-------------|
+| **Query Routing** | Auto-select retrieval strategy by query type |
+| **RAG Fusion** | Multi-query expansion for better recall coverage |
+| **HyDE** | Hypothetical document embedding for semantic matching |
+| **Context Window** | Expand surrounding chunk context after retrieval |
+| **Document Summarization** | Auto-generate document summaries |
+| **Chunk Enrichment** | LLM-enhanced chunk semantics (optional) |
+
+### Knowledge Base Configuration Example
 
 ```json
 {
@@ -613,147 +674,180 @@ curl -X POST "http://localhost:8020/v1/documents" \
 }
 ```
 
-更多配置示例参见 `docs/phase2.md`。
+See `docs/phase2.md` for more configuration examples.
 
 ---
 
-## 项目结构
+## Project Structure
 
 ```
-self_rag_pipeline/
-├── app/                      # 应用代码
-│   ├── main.py              # FastAPI 入口
-│   ├── config.py            # 配置管理
-│   ├── api/                 # API 路由层
-│   │   ├── deps.py          # 依赖注入
-│   │   └── routes/          # 各功能路由
-│   ├── auth/                # 认证模块
-│   │   └── api_key.py       # API Key 认证
-│   ├── models/              # SQLAlchemy ORM 模型
-│   ├── schemas/             # Pydantic 数据模型
-│   │   └── internal.py      # 服务层内部参数模型
-│   ├── services/            # 业务逻辑层
-│   │   ├── ingestion.py     # 文档摄取
-│   │   ├── query.py         # 检索服务
-│   │   └── rag.py           # RAG 生成服务
-│   ├── pipeline/            # 算法框架
-│   │   ├── base.py          # 基础协议
-│   │   ├── registry.py      # 算法注册表
-│   │   ├── chunkers/        # 切分器（simple/sliding/recursive/markdown/code 等）
-│   │   ├── retrievers/      # 检索器（dense/bm25/hybrid/fusion/hyde 等）
-│   │   ├── query_transforms/ # 查询变换（HyDE/Router/RAGFusion）
-│   │   ├── enrichers/       # 文档增强（Summary/ChunkEnricher）
-│   │   └── postprocessors/  # 后处理（ContextWindow）
-│   ├── infra/               # 基础设施
-│   │   ├── llm.py           # LLM 客户端（多提供商）
-│   │   ├── embeddings.py    # 向量化（多提供商）
-│   │   ├── rerank.py        # 重排模块（多提供商）
-│   │   ├── vector_store.py  # Qdrant 操作
-│   │   ├── bm25_store.py    # BM25 存储
-│   │   └── llamaindex.py    # LlamaIndex 集成
-│   └── db/                  # 数据库配置
-├── alembic/                 # 数据库迁移
+RAGForge/
+├── app/                      # Application code
+│   ├── main.py              # FastAPI entry
+│   ├── config.py            # Configuration management
+│   ├── api/                 # API routes
+│   │   ├── deps.py          # Dependency injection
+│   │   └── routes/          # Feature routes
+│   ├── auth/                # Authentication
+│   │   └── api_key.py       # API Key auth & rate limiting
+│   ├── security/            # Security module
+│   │   ├── credential_manager.py   # Credential manager
+│   │   └── credential_scanner.py   # Credential scanner
+│   ├── models/              # SQLAlchemy ORM models
+│   ├── schemas/             # Pydantic schemas
+│   ├── services/            # Business logic
+│   │   ├── ingestion.py     # Document ingestion
+│   │   ├── query.py         # Retrieval service
+│   │   ├── rag.py           # RAG generation
+│   │   └── acl.py           # ACL permission service
+│   ├── pipeline/            # Algorithm framework
+│   │   ├── base.py          # Base protocols
+│   │   ├── registry.py      # Algorithm registry
+│   │   ├── chunkers/        # Chunkers
+│   │   ├── retrievers/      # Retrievers
+│   │   ├── indexers/        # Indexers (RAPTOR)
+│   │   ├── query_transforms/ # Query transforms
+│   │   ├── enrichers/       # Document enrichers
+│   │   └── postprocessors/  # Postprocessors
+│   ├── infra/               # Infrastructure
+│   │   ├── llm.py           # LLM client
+│   │   ├── embeddings.py    # Embeddings
+│   │   ├── rerank.py        # Reranking module
+│   │   ├── vector_store.py  # Qdrant operations
+│   │   ├── bm25_store.py    # BM25 storage
+│   │   └── llamaindex.py    # LlamaIndex integration
+│   ├── middleware/          # Middleware
+│   │   ├── audit.py         # Audit logging
+│   │   └── request_trace.py # Request tracing
+│   └── db/                  # Database config
+├── frontend/                # Next.js frontend
 ├── sdk/                     # Python SDK
-├── tests/                   # 测试文件
-├── docs/                    # 项目文档
-├── docker-compose.yml       # Docker 编排
-├── Dockerfile               # 镜像构建
-├── pyproject.toml           # 项目配置
-└── AGENTS.md                # AI 助手指南
+├── alembic/                 # Database migrations
+├── scripts/                 # Utility scripts
+├── tests/                   # Test files
+├── docs/                    # VitePress documentation
+├── docker-compose.yml       # Docker compose
+├── Dockerfile               # Docker image
+├── pyproject.toml           # Project config
+└── AGENTS.md                # AI assistant guide
 ```
 
 ---
 
-## 开发指南
+## Development Guide
 
-### 运行测试
+### Running Tests
 
 ```bash
-# 单元测试
+# Unit tests
 uv run pytest tests/ -v
 
-# 端到端测试（需要启动服务）
+# End-to-end tests (requires running service)
 API_KEY="your_key" API_BASE="http://localhost:8020" uv run pytest test/test_live_e2e.py -v
 
-# 类型检查
+# Type checking
 uv run mypy app/
 
-# 代码格式化
+# Code formatting
 uv run ruff format .
 uv run ruff check --fix .
 ```
 
-### 数据库迁移
+### Database Migrations
 
 ```bash
-# 创建迁移
-uv run alembic revision --autogenerate -m "描述"
+# Create migration
+uv run alembic revision --autogenerate -m "description"
 
-# 执行迁移
+# Run migrations
 uv run alembic upgrade head
 
-# 回滚迁移
+# Rollback migration
 uv run alembic downgrade -1
 ```
 
-### 添加新功能
+### Adding New Features
 
-1. **添加新切分器**: 参见 `app/pipeline/chunkers/AGENTS.md`
-2. **添加新检索器**: 参见 `app/pipeline/retrievers/AGENTS.md`
-3. **添加新 API**: 参见 `app/api/AGENTS.md`
-4. **添加新模型**: 参见 `app/models/AGENTS.md`
+1. **Add new chunker**: See `app/pipeline/chunkers/AGENTS.md`
+2. **Add new retriever**: See `app/pipeline/retrievers/AGENTS.md`
+3. **Add new API**: See `app/api/AGENTS.md`
+4. **Add new model**: See `app/models/AGENTS.md`
 
 ---
 
-## 部署指南
+## Deployment
 
-### Docker 部署
+### Docker Deployment
 
 ```bash
-# 构建镜像（使用宿主机网络加速）
-docker build --network=host -t self_rag_pipeline-api .
+# Build image (use host network for speed)
+docker build --network=host -t ragforge-api .
 
-# 启动服务
+# Start services
 docker compose up -d
 
-# 查看日志
+# View logs
 docker compose logs -f api
 ```
 
-### 生产环境建议
+### Production Recommendations
 
-1. **安全**
-   - 启用 HTTPS（使用 Nginx 反向代理）
-   - 定期轮换 API Key
-   - 配置防火墙规则
+1. **Security**
+   - Enable HTTPS (use Nginx reverse proxy)
+   - Rotate API Keys regularly
+   - Configure firewall rules
 
-2. **性能**
-   - 调整 `API_RATE_LIMIT_PER_MINUTE` 限流配置
-   - 使用 Redis 替换内存限流器
-   - 配置连接池大小
+2. **Performance**
+   - Adjust `API_RATE_LIMIT_PER_MINUTE` rate limiting
+   - Use Redis for rate limiting
+   - Configure connection pool size
 
-3. **高可用**
-   - PostgreSQL 主从复制
-   - Qdrant 集群模式
-   - 多实例部署 + 负载均衡
+3. **High Availability**
+   - PostgreSQL primary-replica replication
+   - Qdrant cluster mode
+   - Multi-instance deployment + load balancing
 
-4. **监控**
-   - 接入 Prometheus + Grafana
-   - 配置日志收集（ELK）
-   - 设置告警规则
+4. **Monitoring**
+   - Integrate Prometheus + Grafana
+   - Configure log collection (ELK)
+   - Set up alerting rules
 
 ---
 
-## 许可证
+## Documentation
+
+Complete VitePress documentation site:
+
+| Category | Description | Link |
+|----------|-------------|------|
+| **Getting Started** | Installation, configuration, first API call | [docs/getting-started/](./docs/getting-started/) |
+| **Guides** | Environment config, deployment, SDK usage | [docs/guides/](./docs/guides/) |
+| **Architecture** | System design, Pipeline architecture, API specs | [docs/architecture/](./docs/architecture/) |
+| **Development** | Contributing guide, testing, troubleshooting | [docs/development/](./docs/development/) |
+| **Operations** | Deployment, monitoring, security | [docs/operations/](./docs/operations/) |
+| **Security Guide** | Credential management, threat model, auditing | [docs/SECURITY.md](./docs/SECURITY.md) |
+
+### Quick Links
+
+- 📖 **[Documentation Index](./docs/documentation.md)** - Complete doc navigation
+- 🚀 **[Quick Start](./docs/getting-started/quick-start.md)** - Get started in 5 minutes
+- 🔌 **[OpenAI SDK Guide](./docs/guides/openai-sdk.md)** - OpenAI-compatible API
+- 🐍 **[Python SDK](./sdk/README.md)** - SDK documentation
+- 🏗️ **[Architecture](./docs/ARCHITECTURE.md)** - System architecture overview
+
+---
+
+## License
 
 MIT License
 
 ---
 
-## 贡献
+## Contributing
 
-欢迎提交 Issue 和 Pull Request！
+Welcome to submit Issues and Pull Requests!
 
-开发前请阅读：
-- `AGENTS.md` - 项目概述和开发指南
-- `app/*/AGENTS.md` - 各模块详细文档
+Please read before contributing:
+- **[CONTRIBUTING.md](./docs/CONTRIBUTING.md)** - Contribution guide
+- **[AGENTS.md](./AGENTS.md)** - AI assistant development guide
+- **[docs/development/](./docs/development/)** - Development docs

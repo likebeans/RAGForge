@@ -1,12 +1,23 @@
-# Self-RAG Pipeline
+# RAGForge
 
-多租户知识库检索服务，提供 OpenAI 兼容的 API 接口和完整的 Python SDK。
+<p align="center">
+  <strong>Multi-tenant Knowledge Base Retrieval Service with OpenAI-compatible API</strong>
+</p>
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+<p align="center">
+  企业级多租户知识库检索服务，提供 OpenAI 兼容的 API 接口和完整的 Python SDK。
+</p>
 
-[English](README.md) | [文档](docs/) | [API 参考](docs/architecture/api-specification.md)
+<p align="center">
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python 3.11+"></a>
+  <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-0.100+-green.svg" alt="FastAPI"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="./docs/"><img src="https://img.shields.io/badge/docs-VitePress-646cff.svg" alt="Documentation"></a>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> | 中文 | <a href="./docs/">文档</a> | <a href="./docs/architecture/api-specification.md">API 参考</a>
+</p>
 
 ## 目录
 
@@ -15,6 +26,8 @@
 - [快速开始](#快速开始)
 - [API 文档](#api-文档)
 - [配置说明](#配置说明)
+- [权限系统](#权限系统)
+- [安全特性](#安全特性)
 - [算法框架](#算法框架)
 - [项目结构](#项目结构)
 - [开发指南](#开发指南)
@@ -25,19 +38,21 @@
 ## 功能特性
 
 ### 核心功能
-- **👥 租户管理** - 创建、禁用、配额控制（Admin API）
-- **🗂️ 知识库管理** - 创建、配置、删除知识库
-- **📄 文档摄取** - 上传文档，自动切分、向量化、索引
-- **🔍 语义检索** - 支持稠密向量、BM25、混合检索、Rerank
-- **🤖 RAG 生成** - 多 LLM 提供商支持，检索增强生成
-- **🔑 企业权限系统** - 三层权限模型（操作权限 + KB范围 + 文档ACL）
+- **🏢 多租户架构** - 完整的租户隔离、配额管理和权限控制
+- **🔌 OpenAI 兼容接口** - Embeddings、Chat Completions API，无缝集成现有应用
+- **🧠 先进检索算法** - 支持 Dense/BM25/Hybrid/RAPTOR 等多种算法
+- **🔄 可插拔架构** - 模块化设计，支持自定义切分器、检索器、增强器
+- **🌐 多 LLM 提供商** - 支持 OpenAI、Ollama、Qwen、智谱 AI 等多种模型
+- **📊 完整可观测性** - 结构化日志、请求追踪、审计日志和性能监控
+- **🐍 Python SDK** - 完整的客户端库，支持所有功能
+- **🚀 生产就绪** - Docker 部署、数据库迁移、配置管理等开箱即用
+
+### 安全特性
+- **🔑 三层权限模型** - 操作权限 + KB 范围 + 文档 ACL
 - **🔒 Security Trimming** - 检索时自动过滤无权限文档
-- **🏢 多租户存储隔离** - Partition/Collection/Auto 三种策略
-- **📊 可观测性** - 结构化日志、请求追踪、指标收集
+- **🔐 凭据管理器** - 主备密钥、自动故障切换、密钥轮换
+- **🛡️ 凭据扫描器** - Pre-commit 钩子检测硬编码密钥
 - **📝 审计日志** - 全链路 API 访问记录，支持查询统计
-- **🛠️ 运维接口** - 健康检查、就绪检查、系统指标
-- **🔌 OpenAI 兼容接口** - Embeddings、Chat Completions（RAG 模式）
-- **📦 Python SDK** - 完整的客户端库，支持所有功能
 
 ### 技术亮点
 - **可插拔算法框架** - 切分器、检索器、查询变换可配置替换
@@ -625,6 +640,47 @@ curl -X POST "http://localhost:8020/v1/documents" \
 
 ---
 
+## 安全特性
+
+### 凭据管理器 (CredentialManager)
+
+提供完整的 API 密钥管理能力：
+
+- **主备密钥机制** - 每个提供商可配置主密钥和备用密钥
+- **自动故障切换** - 主密钥失效时自动切换到备用密钥
+- **密钥轮换** - 支持无缝轮换 API 密钥，旧主密钥自动降级为备用
+- **密钥验证** - 自动验证密钥格式（OpenAI sk-前缀、Gemini AIzaSy前缀等）
+- **过期检测** - 基于最后验证时间判断密钥是否需要轮换
+
+```python
+from app.security.credential_manager import CredentialManager
+
+manager = CredentialManager(settings)
+api_key = manager.get_api_key("openai")  # 自动主备切换
+await manager.rotate_key("openai", "new-key")  # 轮换密钥
+```
+
+### 凭据扫描器 (CredentialScanner)
+
+自动检测代码中的硬编码凭据和敏感信息：
+
+- **检测模式** - API 密钥、通用密码、弱令牌、内网 IP 等
+- **Pre-commit 集成** - 提交前自动扫描，防止密钥泄露
+- **白名单机制** - 支持 `.secrets.baseline` 配置已知安全例外
+
+```bash
+# 安装并启用 pre-commit 钩子
+pip install pre-commit
+pre-commit install
+
+# 手动运行扫描
+python scripts/pre-commit-security-check.py --all
+```
+
+详细信息参见 [docs/SECURITY.md](./docs/SECURITY.md)。
+
+---
+
 ## 算法框架
 
 ### 切分器 (Chunkers)
@@ -695,7 +751,7 @@ curl -X POST "http://localhost:8020/v1/documents" \
 ## 项目结构
 
 ```
-self_rag_pipeline/
+RAGForge/
 ├── app/                      # 应用代码
 │   ├── main.py              # FastAPI 入口
 │   ├── config.py            # 配置管理
@@ -786,7 +842,7 @@ uv run alembic downgrade -1
 
 ```bash
 # 构建镜像（使用宿主机网络加速）
-docker build --network=host -t self_rag_pipeline-api .
+docker build --network=host -t ragforge-api .
 
 # 启动服务
 docker compose up -d
@@ -819,6 +875,29 @@ docker compose logs -f api
 
 ---
 
+## 文档
+
+项目提供完整的 VitePress 文档站点：
+
+| 分类 | 说明 | 链接 |
+|------|------|------|
+| **快速开始** | 安装、配置、第一个 API 调用 | [docs/getting-started/](./docs/getting-started/) |
+| **使用指南** | 环境配置、部署、SDK 使用 | [docs/guides/](./docs/guides/) |
+| **架构设计** | 系统设计、Pipeline 架构、API 规范 | [docs/architecture/](./docs/architecture/) |
+| **开发文档** | 贡献指南、测试、故障排查 | [docs/development/](./docs/development/) |
+| **运维文档** | 部署、监控、安全 | [docs/operations/](./docs/operations/) |
+| **安全指南** | 凭据管理、威胁模型、审计 | [docs/SECURITY.md](./docs/SECURITY.md) |
+
+### 快速链接
+
+- 📖 **[文档索引](./docs/documentation.md)** - 完整文档导航
+- 🚀 **[快速开始](./docs/getting-started/quick-start.md)** - 5 分钟上手
+- 🔌 **[OpenAI SDK 指南](./docs/guides/openai-sdk.md)** - OpenAI 兼容 API
+- 🐍 **[Python SDK](./sdk/README.md)** - SDK 使用文档
+- 🏗️ **[架构说明](./docs/ARCHITECTURE.md)** - 系统架构概览
+
+---
+
 ## 许可证
 
 MIT License
@@ -830,9 +909,6 @@ MIT License
 欢迎提交 Issue 和 Pull Request！
 
 开发前请阅读：
-- `AGENTS.md` - 项目概述和开发指南
-- `app/*/AGENTS.md` - 各模块详细文档
-
----
-
-**For English documentation, see [README.md](README.md)**
+- **[CONTRIBUTING.md](./docs/CONTRIBUTING.md)** - 贡献指南
+- **[AGENTS.md](./AGENTS.md)** - AI 助手开发指南
+- **[docs/development/](./docs/development/)** - 开发文档

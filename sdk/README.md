@@ -269,6 +269,127 @@ for i, emb in enumerate(response["data"]):
     print(f"文本{i+1} 向量维度: {len(emb['embedding'])}")
 ```
 
+### 7. 流式 RAG 生成
+
+```python
+# 流式 RAG 生成（SSE）
+for event in client.rag_stream(
+    query="什么是 Python",
+    knowledge_base_ids=["kb1"],
+    retriever="hybrid",
+    top_k=5
+):
+    if event["event"] == "sources":
+        print("引用来源:", len(event["data"]), "条")
+    elif event["event"] == "content":
+        print(event["data"], end="", flush=True)
+    elif event["event"] == "done":
+        print("\n生成完成")
+    elif event["event"] == "error":
+        print("错误:", event["data"])
+```
+
+### 8. 对话管理
+
+```python
+# 创建对话
+conv = client.conversations.create(
+    title="Python 问答",
+    knowledge_base_ids=["kb1"]
+)
+print(f"对话 ID: {conv['id']}")
+
+# 添加用户消息
+client.conversations.add_message(
+    conversation_id=conv["id"],
+    role="user",
+    content="什么是 Python？"
+)
+
+# 添加 AI 回复（含引用来源）
+client.conversations.add_message(
+    conversation_id=conv["id"],
+    role="assistant",
+    content="Python 是一种高级编程语言...",
+    retriever="hybrid",
+    sources=[{"text": "...", "score": 0.95}]
+)
+
+# 列出对话
+convs = client.conversations.list(page=1, page_size=20)
+for c in convs["items"]:
+    print(f"{c['title']} ({c['message_count']} 条消息)")
+
+# 获取对话详情（含消息列表）
+detail = client.conversations.get(conversation_id=conv["id"])
+for msg in detail["messages"]:
+    print(f"[{msg['role']}] {msg['content'][:50]}...")
+
+# 更新对话
+client.conversations.update(
+    conversation_id=conv["id"],
+    title="新标题"
+)
+
+# 删除对话
+client.conversations.delete(conversation_id=conv["id"])
+```
+
+### 9. RAPTOR 索引管理
+
+```python
+# 获取 RAPTOR 索引状态
+status = client.raptor.get_status(kb_id="kb1")
+print(f"是否有索引: {status['has_index']}")
+print(f"总节点数: {status['total_nodes']}")
+print(f"索引状态: {status['indexing_status']}")
+
+# 构建 RAPTOR 索引
+result = client.raptor.build(
+    kb_id="kb1",
+    max_layers=3,           # 最大层数（1-5）
+    cluster_method="gmm",   # 聚类方法（gmm/kmeans）
+    min_cluster_size=3,     # 最小聚类大小
+    force_rebuild=False     # 是否强制重建
+)
+print(f"状态: {result['status']}")
+print(f"任务 ID: {result['task_id']}")
+
+# 删除 RAPTOR 索引
+result = client.raptor.delete(kb_id="kb1")
+print(f"已删除 {result['deleted_nodes']} 个节点")
+```
+
+### 10. 模型提供商管理
+
+```python
+# 获取所有支持的提供商
+providers = client.model_providers.list()
+for name, config in providers.items():
+    print(f"{name}: {config['description']}")
+    print(f"  - 支持 LLM: {config['supports']['llm']}")
+    print(f"  - 支持 Embedding: {config['supports']['embedding']}")
+
+# 验证提供商配置
+result = client.model_providers.validate(
+    provider="ollama",
+    base_url="http://localhost:11434"
+)
+print(f"验证结果: {result['valid']}")
+print(f"消息: {result['message']}")
+if result['valid']:
+    print(f"可用模型: {result['models']}")
+
+# 获取指定提供商的模型列表
+models = client.model_providers.get_models(
+    provider="qwen",
+    api_key="sk-xxx"
+)
+print(f"LLM 模型: {models['llm']}")
+print(f"Embedding 模型: {models['embedding']}")
+print(f"Rerank 模型: {models['rerank']}")
+```
+
 ## 错误处理
 
 ```python

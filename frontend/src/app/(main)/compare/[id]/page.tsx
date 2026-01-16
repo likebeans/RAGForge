@@ -1579,10 +1579,29 @@ export default function GroundDetailPage() {
             ? (await client.previewSummary(fullContent, docTitle, { summaryLength })).summary
             : "");
         
+        // 构建 LLM 配置（使用默认模型设置）
+        const llmConfig = defaultModels.llm?.provider && defaultModels.llm?.model
+          ? {
+              provider: defaultModels.llm.provider,
+              model: defaultModels.llm.model,
+              api_key: providerConfigs[defaultModels.llm.provider]?.apiKey,
+              base_url: providerConfigs[defaultModels.llm.provider]?.baseUrl,
+            }
+          : undefined;
+        
+        if (!llmConfig) {
+          toast.error("请先在设置中配置默认 LLM 模型");
+          setEnrichPreviewStep("");
+          setIsPreviewingEnrich(false);
+          return;
+        }
+        
         const enrichResult = await client.previewChunkEnrichment(
           chunksToEnrich,
           docTitle,
-          docSummary
+          docSummary,
+          512,  // maxTokens
+          llmConfig
         );
         
         setChunkEnrichPreview(

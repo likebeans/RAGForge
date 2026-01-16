@@ -28,7 +28,7 @@ class KBClient:
             client.close()
     """
     
-    def __init__(self, api_key: str, base_url: str = "http://localhost:8000"):
+    def __init__(self, api_key: str, base_url: str = "http://localhost:8020"):
         """
         初始化客户端
         

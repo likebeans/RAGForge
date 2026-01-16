@@ -1,0 +1,147 @@
+# =============================================================================
+# Docker Compose - Qdrant 向量库版本
+# =============================================================================
+# 架构：PostgreSQL (元数据) + Qdrant (向量) + Redis (缓存)
+# 适用：开发环境、轻量部署、资源受限场景
+#
+# 启动方式：
+#   ./deploy.sh up qdrant           # 推荐（含迁移）
+#   docker compose -f docker-compose.qdrant.yml up -d
+#
+# 特点：
+#   - 使用 Qdrant 专用向量数据库（更快的向量检索）
+#   - BM25 使用内存存储（适合中小规模数据）
+#   - 资源占用较低
+# =============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # PostgreSQL - 仅存储元数据
+  # --------------------------------------------------------------------------
+  db:
+    image: postgres:15
+    container_name: rag_kb_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kb
+      POSTGRES_PASSWORD: kb
+      POSTGRES_DB: kb
+    ports:
+      - "5435:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kb -d kb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --------------------------------------------------------------------------
+  # Redis - 缓存 + 限流
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: rag_kb_redis
+    restart: unless-stopped
+    ports:
+      - "6389:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --------------------------------------------------------------------------
+  # Qdrant - 向量数据库
+  # --------------------------------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: rag_kb_qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/readyz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --------------------------------------------------------------------------
+  # API 服务
+  # --------------------------------------------------------------------------
+  api:
+    build: .
+    container_name: rag_kb_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # 数据库配置
+      DATABASE_URL: \${DATABASE_URL:-postgresql+asyncpg://kb:kb@db:5432/kb}
+      REDIS_URL: \${REDIS_URL:-redis://redis:6379/0}
+      
+      # 向量存储：使用 Qdrant
+      VECTOR_STORE: qdrant
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      
+      # BM25 配置：使用内存存储
+      BM25_BACKEND: memory
+      
+      # 其他配置从 .env 读取
+      ADMIN_TOKEN: \${ADMIN_TOKEN:-ragforge-admin-2024}
+      SILICONFLOW_API_KEY: \${SILICONFLOW_API_KEY:-}
+      SILICONFLOW_API_BASE: \${SILICONFLOW_API_BASE:-https://api.siliconflow.cn/v1}
+      
+      # 清除代理
+      http_proxy: ""
+      https_proxy: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8020:8020"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+
+  # --------------------------------------------------------------------------
+  # 前端
+  # --------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE: \${NEXT_PUBLIC_API_BASE:-http://localhost:8020}
+    container_name: rag_kb_frontend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_BASE: \${NEXT_PUBLIC_API_BASE:-http://localhost:8020}
+    ports:
+      - "3003:3000"
+    depends_on:
+      - api
+
+# =============================================================================
+# 数据卷 - 使用固定名称
+# =============================================================================
+volumes:
+  pgdata:
+    name: ragforge_pgdata_shared
+  redis_data:
+    name: ragforge_redis_shared
+  qdrant_data:
+    name: ragforge_qdrant_shared

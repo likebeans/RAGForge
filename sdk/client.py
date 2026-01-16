@@ -85,6 +85,9 @@ class KBServiceClient:
         self.documents = DocumentAPI(self)
         self.api_keys = APIKeyAPI(self)
         self.openai = OpenAICompatAPI(self)
+        self.conversations = ConversationAPI(self)
+        self.raptor = RaptorAPI(self)
+        self.model_providers = ModelProviderAPI(self)
     
     def retrieve(
         self,
@@ -187,6 +190,78 @@ class KBServiceClient:
         resp = self._client.post(f"{self.base_url}/v1/rag", json=payload)
         resp.raise_for_status()
         return resp.json()
+    
+    def rag_stream(
+        self,
+        query: str,
+        knowledge_base_ids: list[str],
+        retriever: str = "dense",
+        top_k: int = 5,
+    ):
+        """
+        流式 RAG 生成（SSE）
+        
+        Args:
+            query: 查询文本
+            knowledge_base_ids: 知识库 ID 列表
+            retriever: 检索器名称（dense/hybrid/fusion 等）
+            top_k: 检索结果数量
+        
+        Yields:
+            SSE 事件字典，包含：
+            - event: 事件类型（sources/content/done/error）
+            - data: 事件数据
+        
+        使用示例：
+            for event in client.rag_stream("问题", ["kb_id"]):
+                if event["event"] == "sources":
+                    print("来源:", event["data"])
+                elif event["event"] == "content":
+                    print(event["data"], end="", flush=True)
+                elif event["event"] == "done":
+                    print("\n生成完成")
+        """
+        payload = {
+            "query": query,
+            "knowledge_base_ids": knowledge_base_ids,
+            "retriever": retriever,
+            "top_k": top_k,
+        }
+        
+        import json as json_module
+        
+        with self._client.stream(
+            "POST",
+            f"{self.base_url}/v1/rag/stream",
+            json=payload,
+        ) as response:
+            response.raise_for_status()
+            
+            current_event = None
+            for line in response.iter_lines():
+                line = line.strip()
+                if not line:
+                    continue
+                
+                if line.startswith("event:"):
+                    current_event = line[6:].strip()
+                elif line.startswith("data:"):
+                    data = line[5:].strip()
+                    if current_event == "sources":
+                        try:
+                            data = json_module.loads(data)
+                        except Exception:
+                            pass
+                    elif current_event == "content":
+                        # 还原转义的换行符
+                        data = data.replace("\\n", "\n").replace("\\r", "\r")
+                    elif current_event == "error":
+                        try:
+                            data = json_module.loads(data)
+                        except Exception:
+                            pass
+                    
+                    yield {"event": current_event, "data": data}
     
     def close(self) -> None:
         """关闭客户端连接"""
@@ -655,6 +730,323 @@ class OpenAICompatAPI:
         resp = self._client._client.post(
             f"{self._client.base_url}/v1/embeddings",
             json=payload,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+class ConversationAPI:
+    """对话管理 API"""
+    
+    def __init__(self, client: KBServiceClient):
+        self._client = client
+    
+    def create(
+        self,
+        title: str | None = None,
+        knowledge_base_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        创建对话
+        
+        Args:
+            title: 对话标题（可选）
+            knowledge_base_ids: 关联的知识库 ID 列表
+        
+        Returns:
+            对话信息字典
+        """
+        payload: dict[str, Any] = {}
+        if title:
+            payload["title"] = title
+        if knowledge_base_ids:
+            payload["knowledge_base_ids"] = knowledge_base_ids
+        
+        resp = self._client._client.post(
+            f"{self._client.base_url}/v1/conversations",
+            json=payload,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    
+    def list(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict[str, Any]:
+        """
+        列出对话
+        
+        Args:
+            page: 页码
+            page_size: 每页数量
+        
+        Returns:
+            包含 items、total、page、page_size 的字典
+        """
+        resp = self._client._client.get(
+            f"{self._client.base_url}/v1/conversations",
+            params={"page": page, "page_size": page_size},
+        )
+        resp.raise_for_status()
+        return resp.json()
+    
+    def get(self, conversation_id: str) -> dict[str, Any]:
+        """
+        获取对话详情（含消息列表）
+        
+        Args:
+            conversation_id: 对话 ID
+        
+        Returns:
+            对话详情字典，包含 messages 列表
+        """
+        resp = self._client._client.get(
+            f"{self._client.base_url}/v1/conversations/{conversation_id}"
+        )
+        resp.raise_for_status()
+        return resp.json()
+    
+    def update(
+        self,
+        conversation_id: str,
+        title: str | None = None,
+        knowledge_base_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        更新对话
+        
+        Args:
+            conversation_id: 对话 ID
+            title: 新标题
+            knowledge_base_ids: 新的知识库 ID 列表
+        
+        Returns:
+            更新后的对话信息
+        """
+        payload: dict[str, Any] = {}
+        if title is not None:
+            payload["title"] = title
+        if knowledge_base_ids is not None:
+            payload["knowledge_base_ids"] = knowledge_base_ids
+        
+        resp = self._client._client.patch(
+            f"{self._client.base_url}/v1/conversations/{conversation_id}",
+            json=payload,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    
+    def delete(self, conversation_id: str) -> None:
+        """
+        删除对话
+        
+        Args:
+            conversation_id: 对话 ID
+        """
+        resp = self._client._client.delete(
+            f"{self._client.base_url}/v1/conversations/{conversation_id}"
+        )
+        resp.raise_for_status()
+    
+    def add_message(
+        self,
+        conversation_id: str,
+        role: str,
+        content: str,
+        retriever: str | None = None,
+        sources: list[dict[str, Any]] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """
+        添加消息到对话
+        
+        Args:
+            conversation_id: 对话 ID
+            role: 角色（user/assistant）
+            content: 消息内容
+            retriever: 检索器名称（assistant 消息）
+            sources: 引用来源列表（assistant 消息）
+            metadata: 额外元数据
+        
+        Returns:
+            消息信息字典
+        """
+        payload: dict[str, Any] = {
+            "role": role,
+            "content": content,
+        }
+        if retriever:
+            payload["retriever"] = retriever
+        if sources:
+            payload["sources"] = sources
+        if metadata:
+            payload["metadata"] = metadata
+        
+        resp = self._client._client.post(
+            f"{self._client.base_url}/v1/conversations/{conversation_id}/messages",
+            json=payload,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+class RaptorAPI:
+    """RAPTOR 索引管理 API"""
+    
+    def __init__(self, client: KBServiceClient):
+        self._client = client
+    
+    def get_status(self, kb_id: str) -> dict[str, Any]:
+        """
+        获取 RAPTOR 索引状态
+        
+        Args:
+            kb_id: 知识库 ID
+        
+        Returns:
+            索引状态字典，包含：
+            - has_index: 是否有索引
+            - total_nodes: 总节点数
+            - leaf_nodes: 叶子节点数
+            - summary_nodes: 摘要节点数
+            - max_level: 最大层级
+            - nodes_by_level: 各层级节点统计
+            - indexing_status: 索引状态（none/building/indexed/error）
+        """
+        resp = self._client._client.get(
+            f"{self._client.base_url}/v1/knowledge-bases/{kb_id}/raptor/status"
+        )
+        resp.raise_for_status()
+        return resp.json()
+    
+    def build(
+        self,
+        kb_id: str,
+        max_layers: int = 3,
+        cluster_method: str = "gmm",
+        min_cluster_size: int = 3,
+        force_rebuild: bool = False,
+    ) -> dict[str, Any]:
+        """
+        触发 RAPTOR 索引构建
+        
+        Args:
+            kb_id: 知识库 ID
+            max_layers: 最大层数（1-5）
+            cluster_method: 聚类方法（gmm/kmeans）
+            min_cluster_size: 最小聚类大小
+            force_rebuild: 是否强制重建
+        
+        Returns:
+            构建状态字典，包含 status、message、task_id
+        """
+        payload = {
+            "max_layers": max_layers,
+            "cluster_method": cluster_method,
+            "min_cluster_size": min_cluster_size,
+            "force_rebuild": force_rebuild,
+        }
+        
+        resp = self._client._client.post(
+            f"{self._client.base_url}/v1/knowledge-bases/{kb_id}/raptor/build",
+            json=payload,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    
+    def delete(self, kb_id: str) -> dict[str, Any]:
+        """
+        删除 RAPTOR 索引
+        
+        Args:
+            kb_id: 知识库 ID
+        
+        Returns:
+            删除结果字典，包含 deleted_nodes、message
+        """
+        resp = self._client._client.delete(
+            f"{self._client.base_url}/v1/knowledge-bases/{kb_id}/raptor"
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+class ModelProviderAPI:
+    """模型提供商管理 API"""
+    
+    def __init__(self, client: KBServiceClient):
+        self._client = client
+    
+    def list(self) -> dict[str, Any]:
+        """
+        获取所有支持的模型提供商
+        
+        Returns:
+            提供商配置字典，key 为提供商名称
+        """
+        resp = self._client._client.get(
+            f"{self._client.base_url}/v1/model-providers/"
+        )
+        resp.raise_for_status()
+        return resp.json()
+    
+    def validate(
+        self,
+        provider: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        验证提供商配置
+        
+        Args:
+            provider: 提供商名称（ollama/openai/qwen/deepseek/zhipu/siliconflow 等）
+            api_key: API Key
+            base_url: 自定义 Base URL
+        
+        Returns:
+            验证结果字典，包含 valid、message、models
+        """
+        payload: dict[str, Any] = {"provider": provider}
+        if api_key:
+            payload["api_key"] = api_key
+        if base_url:
+            payload["base_url"] = base_url
+        
+        resp = self._client._client.post(
+            f"{self._client.base_url}/v1/model-providers/validate",
+            json=payload,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    
+    def get_models(
+        self,
+        provider: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        获取指定提供商的模型列表
+        
+        Args:
+            provider: 提供商名称
+            api_key: API Key
+            base_url: 自定义 Base URL
+        
+        Returns:
+            模型列表字典，包含 llm、embedding、rerank 列表
+        """
+        params: dict[str, Any] = {}
+        if api_key:
+            params["api_key"] = api_key
+        if base_url:
+            params["base_url"] = base_url
+        
+        resp = self._client._client.get(
+            f"{self._client.base_url}/v1/model-providers/{provider}/models",
+            params=params if params else None,
         )
         resp.raise_for_status()
         return resp.json()
