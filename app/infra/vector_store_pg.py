@@ -168,31 +168,50 @@ class AsyncPgVectorStore:
             # 检查现有表的维度
             existing_dim = await self._get_table_dim(session)
             if existing_dim and existing_dim != dim:
-                logger.warning(f"向量维度变更: {existing_dim} -> {dim}，正在调整表结构...")
-                # 删除旧索引
-                await session.execute(text(f"""
-                    DROP INDEX IF EXISTS idx_{self._table_name}_embedding
+                # 检查表中是否有数据
+                count_result = await session.execute(text(f"""
+                    SELECT COUNT(*) FROM {self._table_name}
                 """))
-                # 修改列维度
-                await session.execute(text(f"""
-                    ALTER TABLE {self._table_name} 
-                    ALTER COLUMN embedding TYPE vector({dim})
-                """))
-                # 重建 HNSW 索引
-                if dim <= 2000:
+                row_count = count_result.scalar() or 0
+                
+                if row_count > 0:
+                    # 表中有数据，不能改变维度，使用现有维度
+                    logger.error(
+                        f"向量维度冲突: 表中已有 {row_count} 条 {existing_dim} 维向量，"
+                        f"但当前 Embedding 模型生成 {dim} 维向量。"
+                        f"请确保知识库配置的 Embedding 模型与已有数据一致。"
+                    )
+                    raise ValueError(
+                        f"向量维度冲突: 表中已有 {existing_dim} 维向量，当前生成 {dim} 维。"
+                        f"请在知识库配置中指定正确的 embedding 模型，或清空知识库后重新入库。"
+                    )
+                else:
+                    # 表为空，可以安全地调整维度
+                    logger.warning(f"向量维度变更: {existing_dim} -> {dim}，正在调整表结构...")
+                    # 删除旧索引
                     await session.execute(text(f"""
-                        CREATE INDEX idx_{self._table_name}_embedding 
-                        ON {self._table_name} 
-                        USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)
+                        DROP INDEX IF EXISTS idx_{self._table_name}_embedding
                     """))
-                elif dim <= 4000:
+                    # 修改列维度
                     await session.execute(text(f"""
-                        CREATE INDEX idx_{self._table_name}_embedding 
-                        ON {self._table_name} 
-                        USING hnsw ((embedding::halfvec({dim})) halfvec_cosine_ops) WITH (m = 16, ef_construction = 64)
+                        ALTER TABLE {self._table_name} 
+                        ALTER COLUMN embedding TYPE vector({dim})
                     """))
-                await session.commit()
-                logger.info(f"向量表维度已调整为 {dim}")
+                    # 重建 HNSW 索引
+                    if dim <= 2000:
+                        await session.execute(text(f"""
+                            CREATE INDEX idx_{self._table_name}_embedding 
+                            ON {self._table_name} 
+                            USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)
+                        """))
+                    elif dim <= 4000:
+                        await session.execute(text(f"""
+                            CREATE INDEX idx_{self._table_name}_embedding 
+                            ON {self._table_name} 
+                            USING hnsw ((embedding::halfvec({dim})) halfvec_cosine_ops) WITH (m = 16, ef_construction = 64)
+                        """))
+                    await session.commit()
+                    logger.info(f"向量表维度已调整为 {dim}")
         
         self._table_created = True
         self._current_dim = dim

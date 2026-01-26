@@ -820,13 +820,17 @@ def _maybe_upsert_llamaindex(
     写入 LlamaIndex 多后端存储（Milvus/ES）
     
     返回结构化的写入结果，失败时不抛异常而是返回错误信息。
-    Qdrant 已通过 vector_store 写入，此函数跳过。
+    主向量库（Qdrant/pgvector）已通过 vector_store 写入，此函数仅处理额外配置的后端。
     """
-    store_type = store_config.get("type", "qdrant").lower()
+    # 如果没有显式配置多后端存储类型，直接跳过
+    if not store_config.get("type"):
+        return None
+    
+    store_type = store_config.get("type", "").lower()
     params = store_config.get("params", {}) if isinstance(store_config.get("params"), dict) else {}
     
-    # qdrant 已通过 vector_store 写入，可跳过
-    if store_type == "qdrant":
+    # qdrant/pgvector/postgresql 已通过主 vector_store 写入，跳过
+    if store_type in ("qdrant", "pgvector", "postgresql", "pg", ""):
         return None
     
     # 构建索引

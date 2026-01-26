@@ -34,6 +34,7 @@ from app.schemas.document import (
 )
 from app.schemas.internal import IngestionParams
 from app.services.ingestion import ensure_kb_belongs_to_tenant, ingest_document
+from app.services.model_config import model_config_resolver
 from app.pipeline import operator_registry
 from app.config import get_settings
 
@@ -100,12 +101,42 @@ async def ingest_document_endpoint(
         acl_groups=payload.acl_groups,
     )
     
+    # 使用 ModelConfigResolver 获取 Embedding 配置
+    # 文档入库时，优先使用 KB 配置的 embedding（保持向量维度一致），其次租户默认
+    embedding_config = None
+    try:
+        embed_config = await model_config_resolver.get_embedding_config(
+            session=db, 
+            kb=kb, 
+            tenant=tenant,
+        )
+        logger.info(f"[DEBUG] embed_config={embed_config}")
+        if embed_config.get("embedding_provider"):
+            # 构建带有租户 API Key 的 provider 配置
+            provider_config = model_config_resolver.build_provider_config(
+                embed_config, "embedding", tenant=tenant
+            )
+            logger.info(f"[DEBUG] provider_config={provider_config}")
+            embedding_config = {
+                "provider": provider_config.get("provider"),
+                "model": provider_config.get("model"),
+                "api_key": provider_config.get("api_key"),
+                "base_url": provider_config.get("base_url"),
+                "dim": embed_config.get("embedding_dim"),
+            }
+            logger.info(f"文档入库使用 Embedding 配置: {embedding_config.get('provider')}/{embedding_config.get('model')} (dim={embedding_config.get('dim')})")
+        else:
+            logger.warning(f"[DEBUG] embed_config 中无 embedding_provider，将回退到环境变量")
+    except Exception as e:
+        logger.warning(f"获取 Embedding 配置失败，将回退到知识库配置: {type(e).__name__}: {e}")
+    
     # 执行文档摄取（切分、向量化、存储）
     result = await ingest_document(
         db,
         tenant_id=tenant.id,
         kb=kb,
         params=params,
+        embedding_config=embedding_config,
     )
     await db.commit()
     
@@ -468,12 +499,33 @@ async def upload_file_endpoint(
         source=doc_source,
     )
     
+    # 使用 ModelConfigResolver 获取 Embedding 配置
+    embedding_config = None
+    try:
+        embed_config = await model_config_resolver.get_embedding_config(
+            session=db, kb=kb, tenant=tenant
+        )
+        if embed_config.get("embedding_provider"):
+            provider_config = model_config_resolver.build_provider_config(
+                embed_config, "embedding", tenant=tenant
+            )
+            embedding_config = {
+                "provider": provider_config.get("provider"),
+                "model": provider_config.get("model"),
+                "api_key": provider_config.get("api_key"),
+                "base_url": provider_config.get("base_url"),
+                "dim": embed_config.get("embedding_dim"),
+            }
+    except ValueError:
+        pass  # 回退到知识库/环境变量配置
+    
     # 执行文档摄取
     result = await ingest_document(
         db,
         tenant_id=tenant.id,
         kb=kb,
         params=params,
+        embedding_config=embedding_config,
     )
     await db.commit()
     
@@ -510,6 +562,26 @@ async def batch_ingest_endpoint(
     succeeded = 0
     failed = 0
 
+    # 使用 ModelConfigResolver 获取 Embedding 配置（批量入库时只获取一次）
+    embedding_config = None
+    try:
+        embed_config = await model_config_resolver.get_embedding_config(
+            session=db, kb=kb, tenant=tenant
+        )
+        if embed_config.get("embedding_provider"):
+            provider_config = model_config_resolver.build_provider_config(
+                embed_config, "embedding", tenant=tenant
+            )
+            embedding_config = {
+                "provider": provider_config.get("provider"),
+                "model": provider_config.get("model"),
+                "api_key": provider_config.get("api_key"),
+                "base_url": provider_config.get("base_url"),
+                "dim": embed_config.get("embedding_dim"),
+            }
+    except ValueError:
+        pass  # 回退到知识库/环境变量配置
+
     for item in payload.documents:
         try:
             params = IngestionParams(
@@ -523,6 +595,7 @@ async def batch_ingest_endpoint(
                 tenant_id=tenant.id,
                 kb=kb,
                 params=params,
+                embedding_config=embedding_config,
             )
             await db.commit()
             
@@ -615,7 +688,7 @@ async def advanced_batch_ingest_endpoint(
     original_config = kb.config
     kb.config = temp_kb_config
     
-    # 构建 embedding 配置（优先使用 API 传入的配置）
+    # 构建 embedding 配置（优先使用 API 传入的配置，其次租户配置）
     embedding_config: dict | None = None
     if payload.embedding_provider and payload.embedding_model:
         settings = get_settings()
@@ -630,6 +703,25 @@ async def advanced_batch_ingest_endpoint(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"code": "INVALID_EMBEDDING_CONFIG", "detail": str(e)}
             )
+    else:
+        # 回退到租户配置
+        try:
+            embed_config = await model_config_resolver.get_embedding_config(
+                session=db, kb=kb, tenant=tenant
+            )
+            if embed_config.get("embedding_provider"):
+                provider_config = model_config_resolver.build_provider_config(
+                    embed_config, "embedding", tenant=tenant
+                )
+                embedding_config = {
+                    "provider": provider_config.get("provider"),
+                    "model": provider_config.get("model"),
+                    "api_key": provider_config.get("api_key"),
+                    "base_url": provider_config.get("base_url"),
+                    "dim": embed_config.get("embedding_dim"),
+                }
+        except ValueError:
+            pass  # 回退到知识库/环境变量配置
 
     results: list[BatchIngestResult] = []
     succeeded = 0

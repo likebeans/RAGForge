@@ -22,6 +22,85 @@ RAGForge 提供以下核心 API 接口供 Agent 服务对接：
 Authorization: Bearer kb_sk_xxxxxxxxxxxxxxxx
 ```
 
+### API Key 创建与 Identity 配置
+
+创建 API Key 时可以指定 `identity` 信息，用于 ACL 权限控制：
+
+```bash
+curl -X POST "http://192.168.168.105:8020/v1/api-keys" \
+  -H "Authorization: Bearer kb_sk_admin_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "财务部门Key",
+    "role": "read",
+    "identity": {
+      "user_id": "finance_user_001",
+      "roles": ["finance"],
+      "clearance": "restricted"
+    }
+  }'
+```
+
+**Identity 字段说明**：
+
+| 字段 | 类型 | 说明 | 示例 |
+|------|------|------|------|
+| `user_id` | string | 用户唯一标识 | `"finance_user_001"` |
+| `roles` | string[] | 用户角色列表 | `["finance", "admin"]` |
+| `groups` | string[] | 用户组列表（可选） | `["sales", "engineering"]` |
+| `clearance` | string | 安全许可级别 | `public` / `internal` / `restricted` |
+
+**Clearance 级别**：
+- `public`: 只能访问公开文档
+- `internal`: 可访问公开和内部文档
+- `restricted`: 可访问所有级别文档（需匹配 ACL 规则）
+
+**完整示例**：
+
+```bash
+# 普通用户（只能看 public）
+curl -X POST "$BASE_URL/v1/api-keys" \
+  -H "Authorization: Bearer $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "普通用户Key",
+    "role": "read",
+    "identity": {
+      "user_id": "public_user_001",
+      "roles": [],
+      "clearance": "public"
+    }
+  }'
+
+# 财务人员（可访问 finance 机密）
+curl -X POST "$BASE_URL/v1/api-keys" \
+  -H "Authorization: Bearer $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "财务Key",
+    "role": "read",
+    "identity": {
+      "user_id": "finance_user_001",
+      "roles": ["finance"],
+      "clearance": "restricted"
+    }
+  }'
+
+# 技术人员（可访问 tech/engineering 机密）
+curl -X POST "$BASE_URL/v1/api-keys" \
+  -H "Authorization: Bearer $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "技术Key",
+    "role": "read",
+    "identity": {
+      "user_id": "tech_user_001",
+      "roles": ["tech", "engineering"],
+      "clearance": "restricted"
+    }
+  }'
+```
+
 ## Base URL
 
 ```
@@ -113,13 +192,129 @@ curl -H "Authorization: Bearer kb_sk_xxx" \
 
 ### 0.4 上传文档
 
+RAGForge 提供两种文档上传方式：
+
+#### 方式1：文件直传（推荐）
+
+使用 `multipart/form-data` 上传文件流：
+
 ```bash
-curl -X POST -H "Authorization: Bearer kb_sk_xxx" \
-  -F "file=@document.md" \
-  "http://192.168.168.105:8020/v1/knowledge-bases/{kb_id}/documents"
+curl -X POST "http://192.168.168.105:8020/v1/knowledge-bases/{kb_id}/documents/upload" \
+  -H "Authorization: Bearer kb_sk_xxx" \
+  -F "file=@document.txt" \
+  -F "title=我的文档"
 ```
 
-**支持的文件类型**: `.md`, `.txt`, `.pdf`, `.docx`
+**支持的文件类型**: `.txt`, `.md`, `.markdown`, `.json`  
+**文件大小限制**: 10MB  
+**编码要求**: UTF-8
+
+#### 方式2：JSON 上传（传入文本内容）
+
+```bash
+curl -X POST "http://192.168.168.105:8020/v1/knowledge-bases/{kb_id}/documents" \
+  -H "Authorization: Bearer kb_sk_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "测试文档",
+    "content": "这是文档内容...",
+    "source": "api"
+  }'
+```
+
+或从 URL 拉取内容：
+
+```bash
+curl -X POST "http://192.168.168.105:8020/v1/knowledge-bases/{kb_id}/documents" \
+  -H "Authorization: Bearer kb_sk_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "远程文档",
+    "source_url": "https://example.com/doc.txt"
+  }'
+```
+
+#### 方式3：带 ACL 权限控制的文档上传
+
+RAGForge 支持文档级访问控制（ACL），可以限制不同身份的用户访问特定文档：
+
+```bash
+curl -X POST "http://192.168.168.105:8020/v1/knowledge-bases/{kb_id}/documents" \
+  -H "Authorization: Bearer kb_sk_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "财务机密文档",
+    "content": "这是财务部门的机密预算报告...",
+    "sensitivity_level": "restricted",
+    "acl_roles": ["finance", "admin"]
+  }'
+```
+
+**ACL 字段说明**：
+
+| 字段 | 类型 | 说明 | 示例 |
+|------|------|------|------|
+| `sensitivity_level` | string | 敏感度级别 | `public` / `internal` / `restricted` |
+| `acl_roles` | string[] | 允许访问的角色列表 | `["finance", "admin"]` |
+| `acl_users` | string[] | 允许访问的用户 ID 列表 | `["user_001", "user_002"]` |
+| `acl_groups` | string[] | 允许访问的用户组列表 | `["sales", "engineering"]` |
+
+**敏感度级别**：
+- `public`: 公开文档，所有人可见
+- `internal`: 内部文档，需要 `clearance >= internal`
+- `restricted`: 机密文档，需要 `clearance >= restricted` 且匹配 ACL 规则
+
+**完整示例**：
+
+```bash
+# 公开文档
+curl -X POST "$BASE_URL/v1/knowledge-bases/$KB_ID/documents" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "公司简介",
+    "content": "这是公开的公司介绍...",
+    "sensitivity_level": "public"
+  }'
+
+# 财务机密（只允许 finance 角色）
+curl -X POST "$BASE_URL/v1/knowledge-bases/$KB_ID/documents" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "年度预算报告",
+    "content": "2025年财务预算...",
+    "sensitivity_level": "restricted",
+    "acl_roles": ["finance"]
+  }'
+
+# 技术文档（允许多个角色）
+curl -X POST "$BASE_URL/v1/knowledge-bases/$KB_ID/documents" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "系统架构文档",
+    "content": "核心架构设计...",
+    "sensitivity_level": "restricted",
+    "acl_roles": ["tech", "engineering", "admin"]
+  }'
+
+# 指定用户访问
+curl -X POST "$BASE_URL/v1/knowledge-bases/$KB_ID/documents" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "个人绩效报告",
+    "content": "员工绩效评估...",
+    "sensitivity_level": "restricted",
+    "acl_users": ["user_zhang_san", "user_manager_001"]
+  }'
+```
+
+> ⚠️ **重要提示**：
+> - 字段名是 `acl_roles`、`acl_users`、`acl_groups`，不是 `acl_allow_*`
+> - ACL 过滤在检索时自动生效，无需额外配置
+> - API Key 需要包含 `identity` 信息才能进行 ACL 匹配
 
 ---
 
@@ -325,6 +520,41 @@ curl -X POST "http://localhost:8020/v1/rag" \
 }
 ```
 
+### ACL 权限过滤说明
+
+当使用带 `identity` 的 API Key 检索时，系统会自动进行 ACL 过滤：
+
+**过滤规则**：
+1. **Public 文档**：所有人可见
+2. **Internal 文档**：需要 `clearance >= internal`
+3. **Restricted 文档**：需要 `clearance >= restricted` 且满足以下任一条件：
+   - 用户 ID 在 `acl_users` 列表中
+   - 用户角色在 `acl_roles` 列表中
+   - 用户组在 `acl_groups` 列表中
+
+**示例场景**：
+
+```bash
+# 场景1：财务人员检索（可看到 finance 机密）
+curl -X POST "$BASE_URL/v1/retrieve" \
+  -H "Authorization: Bearer kb_sk_finance_xxx" \
+  -d '{"query":"预算","knowledge_base_ids":["kb1"]}'
+
+# 返回：public 文档 + finance 机密文档
+
+# 场景2：普通用户检索（只能看 public）
+curl -X POST "$BASE_URL/v1/retrieve" \
+  -H "Authorization: Bearer kb_sk_public_xxx" \
+  -d '{"query":"预算","knowledge_base_ids":["kb1"]}'
+
+# 返回：仅 public 文档
+```
+
+**注意事项**：
+- ACL 过滤在向量检索之后进行，可能导致返回结果少于 `top_k`
+- 如果所有检索结果都被 ACL 过滤，返回 `403 NO_PERMISSION`
+- Admin 角色的 API Key 可以绕过 ACL 限制
+
 ---
 
 ## 4. Python 快速接入代码
@@ -516,6 +746,60 @@ All connection attempts failed
 2. 确保 API Key 有效
 3. 检查 base_url 是否可访问
 
+#### 问题4：文档入库时报 API Key 未配置
+
+```
+[ERROR] 向量库写入失败: SILICONFLOW_API_KEY 未配置，无法生成真实 Embedding
+```
+
+**原因**：文档入库接口未正确获取租户的 Embedding 配置
+
+**解决方案**：
+1. 确保在前端设置页面配置了 Embedding 提供商的 API Key
+2. 点击"同步到服务器"保存配置
+3. 验证配置已保存：`GET /v1/settings/models`
+4. 如问题仍存在，检查 `app/api/routes/documents.py` 是否使用了 `model_config_resolver`
+
+**配置优先级（文档入库）**：
+```
+1. 高级批量入库 API 传入的 embedding_provider/model
+   ↓
+2. 租户 model_settings 中的 embedding 配置
+   ↓
+3. 知识库 config 中的 embedding 配置
+   ↓
+4. 环境变量（EMBEDDING_PROVIDER、SILICONFLOW_API_KEY 等）
+```
+
+#### 问题5：文档入库时报 Qdrant 连接失败（使用 pgvector 时）
+
+```
+[ERROR] 向量库写入失败: All connection attempts failed
+文档 xxx 多后端写入失败: [qdrant] All connection attempts failed
+```
+
+**原因**：多后端写入功能默认尝试同时写入 Qdrant，但当前部署未启动 Qdrant 服务
+
+**说明**：
+- 主向量库（pgvector）写入**已成功**
+- 错误来自 `_maybe_upsert_llamaindex` 的多后端写入逻辑
+- 当 `VECTOR_STORE=postgresql` 时，不应再尝试写入 Qdrant
+
+**解决方案**：
+1. 确认使用最新代码（已修复此问题）
+2. 重启 Docker：`docker compose restart api`
+3. 如需同时写入多个向量库，在知识库配置中显式指定：
+   ```json
+   {
+     "ingestion": {
+       "store": {
+         "type": "milvus",
+         "params": { "host": "localhost", "port": 19530 }
+       }
+     }
+   }
+   ```
+
 ### 7.5 相关代码位置
 
 如需调试或修改配置获取逻辑，参考以下文件：
@@ -526,5 +810,7 @@ All connection attempts failed
 | `app/api/routes/rag.py` | RAG 接口，获取 LLM/Embedding/Rerank 配置 |
 | `app/api/routes/rag_stream.py` | 流式 RAG 接口 |
 | `app/api/routes/query.py` | 检索接口，获取 Embedding 配置 |
+| `app/api/routes/documents.py` | 文档入库接口，获取 Embedding 配置 |
 | `app/services/rag.py` | `_build_response` 构建响应的 model 信息 |
+| `app/services/ingestion.py` | 文档摄取服务，使用 Embedding 配置生成向量 |
 | `app/schemas/internal.py` | `RAGParams` 内部参数模型定义 |
