@@ -30,6 +30,7 @@ class VectorRecord:
     text: str
     score: float
     metadata: dict
+    knowledge_base_id: str | None = None
 
 
 class AsyncPgVectorStore:
@@ -295,7 +296,7 @@ class AsyncPgVectorStore:
         async with self.session_factory() as session:
             result = await session.execute(text(f"""
                 SELECT 
-                    id, text, metadata,
+                    id, text, metadata, kb_id,
                     1 - (embedding <=> :embedding) as score
                 FROM {self._table_name}
                 WHERE tenant_id = :tenant_id 
@@ -314,8 +315,9 @@ class AsyncPgVectorStore:
                 records.append(VectorRecord(
                     chunk_id=row[0],
                     text=row[1],
-                    score=float(row[3]),
+                    score=float(row[4]),
                     metadata=metadata,
+                    knowledge_base_id=row[3],
                 ))
             
             return records

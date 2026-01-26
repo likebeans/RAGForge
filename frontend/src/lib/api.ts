@@ -325,6 +325,36 @@ export interface BatchIngestResponse {
   failed: number;
 }
 
+// ============================================================
+// 模型设置 API 类型
+// ============================================================
+
+export interface ModelProviderConfig {
+  api_key?: string | null;
+  base_url?: string | null;
+}
+
+export interface ModelChoice {
+  provider: string;
+  model: string;
+}
+
+export interface DefaultModels {
+  llm?: ModelChoice | null;
+  embedding?: ModelChoice | null;
+  rerank?: ModelChoice | null;
+}
+
+export interface ModelSettingsResponse {
+  providers: Record<string, ModelProviderConfig>;
+  defaults?: DefaultModels | null;
+}
+
+export interface ModelSettingsUpdate {
+  providers?: Record<string, ModelProviderConfig> | null;
+  defaults?: DefaultModels | null;
+}
+
 // Playground 配置类型
 export interface RetrieverConfig {
   name: string;
@@ -922,6 +952,22 @@ class APIClient {
       embedding_provider: options?.embeddingProvider,
       embedding_model: options?.embeddingModel,
     });
+  }
+
+  // ==================== 模型设置 ====================
+
+  /**
+   * 获取当前租户的模型配置
+   */
+  async getModelSettings(): Promise<ModelSettingsResponse> {
+    return this.request("GET", "/v1/settings/models");
+  }
+
+  /**
+   * 更新当前租户的模型配置
+   */
+  async updateModelSettings(settings: ModelSettingsUpdate): Promise<ModelSettingsResponse> {
+    return this.request("PUT", "/v1/settings/models", settings);
   }
 }
 

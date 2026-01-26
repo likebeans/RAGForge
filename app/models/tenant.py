@@ -19,7 +19,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy import DateTime, Integer, JSON, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.models.mixins import TIMESTAMP_PK, TimestampMixin
@@ -28,10 +28,10 @@ from app.models.mixins import TIMESTAMP_PK, TimestampMixin
 class Tenant(TimestampMixin, Base):
     """
     租户表
-    
+
     存储企业/组织的基本信息。
     作为数据隔离的根节点，其他所有业务数据都关联到租户。
-    
+
     字段说明：
     - id: 租户唯一标识（UUID 格式）
     - name: 租户名称，全局唯一
@@ -47,41 +47,41 @@ class Tenant(TimestampMixin, Base):
         primary_key=True,
         default=lambda: str(uuid4()),  # 自动生成 UUID
     )
-    
+
     # 租户名称：用于展示和识别，必须全局唯一
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    
+
     # 订阅计划：决定租户的功能权限和资源限制
     # 可选值：free（免费）、standard（标准）、enterprise（企业）
     plan: Mapped[str] = mapped_column(String(50), default="standard", nullable=False)
-    
+
     # ==================== 新增字段 ====================
-    
+
     # 租户状态：active/disabled/pending（Pydantic 层验证）
     status: Mapped[str] = mapped_column(
-        String(20), 
-        default="active", 
+        String(20),
+        default="active",
         nullable=False,
         index=True,
     )
-    
+
     # 资源配额：知识库数量限制（-1 表示无限制）
     quota_kb_count: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
-    
+
     # 资源配额：文档数量限制（-1 表示无限制）
     quota_doc_count: Mapped[int] = mapped_column(Integer, default=1000, nullable=False)
-    
+
     # 资源配额：存储空间限制（MB，-1 表示无限制）
     quota_storage_mb: Mapped[int] = mapped_column(Integer, default=1024, nullable=False)
-    
+
     # 禁用时间：记录租户被禁用的时间
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    
+
     # 禁用原因：记录禁用原因，便于审计
     disabled_reason: Mapped[str | None] = mapped_column(Text)
-    
+
     # ==================== 存储隔离配置 ====================
-    
+
     # 向量库隔离策略：
     # - partition: 共享 Collection，按 tenant_id 过滤（适合小客户，节省资源）
     # - collection: 独立 Collection（适合中大客户，性能更好）
@@ -91,16 +91,40 @@ class Tenant(TimestampMixin, Base):
         default="auto",
         nullable=False,
     )
-    
+
     # ==================== 模型配置（租户级别覆盖） ====================
-    
+
     # 租户专属模型配置（JSON 格式）
     # 可覆盖系统默认配置，优先级：请求级 > 租户级 > 系统级 > 环境变量
-    # 示例：
+    #
+    # 新格式（推荐）：
+    # {
+    #     "providers": {
+    #         "siliconflow": {"api_key": "sk-xxx", "base_url": "https://api.siliconflow.cn/v1"},
+    #         "openai": {"api_key": "sk-xxx"}
+    #     },
+    #     "defaults": {
+    #         "llm": {"provider": "siliconflow", "model": "Qwen/Qwen2.5-72B-Instruct"},
+    #         "embedding": {"provider": "siliconflow", "model": "BAAI/bge-m3"},
+    #         "rerank": {"provider": "siliconflow", "model": "BAAI/bge-reranker-v2-m3"}
+    #     }
+    # }
+    #
+    # 旧格式（向后兼容）：
     # {
     #     "llm_provider": "openai",
     #     "llm_model": "gpt-4",
     #     "rerank_provider": "cohere",
     #     "rerank_model": "rerank-v3"
     # }
-    llm_settings: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    model_settings: Mapped[dict | None] = mapped_column(JSON, default=dict)
+
+    # ==================== 关联关系 ====================
+
+    # 租户级模型配置（新增）
+    model_configs: Mapped[list["TenantModelConfig"]] = relationship(
+        "TenantModelConfig",
+        back_populates="tenant",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )

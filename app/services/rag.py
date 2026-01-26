@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.infra.llm import chat_completion, chat_completion_with_config
-from app.models import KnowledgeBase
+from app.models import KnowledgeBase, Tenant
 from app.schemas.internal import RAGParams, RetrieveParams
 from app.schemas.config import LLMConfig
 from app.schemas.query import ChunkHit
@@ -57,6 +57,7 @@ async def generate_rag_response(
     tenant_id: str,
     params: RAGParams,
     user_context: UserContext | None = None,
+    tenant: "Tenant | None" = None,
 ) -> RAGResponse:
     """
     执行 RAG 生成
@@ -97,6 +98,8 @@ async def generate_rag_response(
             retriever_name="none",
             settings=settings,
             llm_override=params.llm_override,
+            embedding_override=params.embedding_override.model_dump() if params.embedding_override else None,
+            rerank_override=params.rerank_override.model_dump() if params.rerank_override else None,
         )
     
     # 2. 检索相关片段
@@ -113,6 +116,7 @@ async def generate_rag_response(
         params=retrieve_params,
         session=session,
         user_context=user_context,  # 传入用户上下文用于 Security Trimming
+        tenant=tenant,  # 传入 tenant 用于获取 model_settings 中的 API key
     )
     if acl_blocked:
         raise PermissionError("检索结果因 ACL 权限控制被过滤，请检查文档敏感度或 API Key 权限")
@@ -160,6 +164,8 @@ async def generate_rag_response(
         retriever_name=retriever_name,
         settings=settings,
         llm_override=params.llm_override,
+        embedding_override=params.embedding_override.model_dump() if params.embedding_override else None,
+        rerank_override=params.rerank_override.model_dump() if params.rerank_override else None,
         retrieval_count=len(chunks),
     )
 
@@ -249,24 +255,49 @@ def _build_response(
     retriever_name: str,
     settings,
     llm_override: LLMConfig | None = None,
+    embedding_override: dict | None = None,
+    rerank_override: dict | None = None,
     retrieval_count: int = 0,
 ) -> RAGResponse:
     """构建 RAG 响应"""
-    # 获取模型配置
-    embedding_config = settings.get_embedding_config()
+    # 获取模型配置（优先使用实际使用的配置）
+    env_embedding_config = settings.get_embedding_config()
     llm_config = settings.get_llm_config()
-    rerank_config = settings.get_rerank_config()
+    env_rerank_config = settings.get_rerank_config()
+    
+    # Embedding 配置：优先使用 embedding_override
+    if embedding_override:
+        embedding_provider = embedding_override.get("provider") or env_embedding_config["provider"]
+        embedding_model = embedding_override.get("model") or env_embedding_config["model"]
+    else:
+        embedding_provider = env_embedding_config["provider"]
+        embedding_model = env_embedding_config["model"]
+    
+    # LLM 配置
     llm_provider = llm_override.provider if llm_override else llm_config["provider"]
     llm_model = llm_override.model if llm_override else llm_config["model"]
     
+    # Rerank 配置：优先使用 rerank_override
+    if rerank_override:
+        rerank_provider = rerank_override.get("provider") or env_rerank_config.get("provider")
+        rerank_model = rerank_override.get("model") or env_rerank_config.get("model")
+    else:
+        rerank_provider = env_rerank_config.get("provider")
+        rerank_model = env_rerank_config.get("model")
+    
+    # 如果 rerank_provider 是 "none" 则设为 None
+    if rerank_provider == "none":
+        rerank_provider = None
+        rerank_model = None
+    
     model_info = RAGModelInfo(
-        embedding_provider=embedding_config["provider"],
-        embedding_model=embedding_config["model"],
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
         llm_provider=llm_provider,
         llm_model=llm_model,
         retriever=retriever_name,
-        rerank_provider=rerank_config.get("provider") if rerank_config.get("provider") != "none" else None,
-        rerank_model=rerank_config.get("model") if rerank_config.get("provider") != "none" else None,
+        rerank_provider=rerank_provider,
+        rerank_model=rerank_model,
     )
     
     return RAGResponse(

@@ -152,6 +152,7 @@ async def chat_completions(
             tenant_id=tenant.id,
             params=rag_params,
             user_context=user_context,  # 传入用户上下文用于 ACL 过滤
+            tenant=tenant,  # 传入 tenant 用于获取 model_settings 中的 API key
         )
     except PermissionError as e:
         # ACL 权限拒绝时返回 403

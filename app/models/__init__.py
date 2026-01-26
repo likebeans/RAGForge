@@ -23,6 +23,8 @@
 - Chunk: 文档片段，切分后的文本块（用于向量检索）
 """
 
+from app.models.provider_config import TenantModelConfig
+
 from app.models.admin_token import AdminToken
 from app.models.api_key import APIKey
 from app.models.audit_log import AuditLog
@@ -49,6 +51,7 @@ __all__ = [
     "RaptorNode",
     "SystemConfig",
     "Tenant",
+    "TenantModelConfig",
     "UsageLog",
     "User",
 ]

@@ -466,12 +466,13 @@ def hash_embed(text: str, dim: int = 256) -> list[float]:
 
 async def get_embedding_with_config(
     text: str,
-    provider_config: dict[str, Any],
+    provider_config: dict[str, Any] | None,
 ) -> list[float]:
     """
     使用指定配置获取单个文本的 Embedding 向量
     
     此函数支持动态配置，配置来自 ModelConfigResolver 解析的结果。
+    如果 provider_config 为 None，则回退到使用环境变量配置。
     
     Args:
         text: 输入文本
@@ -489,8 +490,21 @@ async def get_embedding_with_config(
         )
         vec = await get_embedding_with_config(text, provider_config)
     """
-    provider = provider_config.get("provider")
+    # 如果配置为 None，回退到环境变量
+    if provider_config is None:
+        logger.debug("embedding_config 为 None，使用环境变量配置")
+        return await get_embedding(text)
     
+    provider = provider_config.get("provider")
+    if provider:
+        provider = provider.lower()  # 标准化为小写
+        provider_config = {**provider_config, "provider": provider}  # 更新配置中的provider
+
+    # 如果 provider 为 None，回退到环境变量配置
+    if provider is None:
+        logger.debug("embedding_config.provider 为 None，使用环境变量配置")
+        return await get_embedding(text)
+
     try:
         if provider == "ollama":
             logger.debug(f"使用 Ollama Embedding: {provider_config['model']}")
@@ -501,8 +515,14 @@ async def get_embedding_with_config(
                 raise RuntimeError("GEMINI_API_KEY 未配置，无法生成真实 Embedding")
             logger.debug(f"使用 Gemini Embedding: {provider_config['model']}")
             return await _gemini_embedding(text, provider_config)
-        
-        elif provider in ("openai", "qwen", "zhipu", "siliconflow", "deepseek", "kimi"):
+
+        elif provider == "siliconflow":
+            if not provider_config.get("api_key"):
+                raise RuntimeError("SILICONFLOW_API_KEY 未配置，无法生成真实 Embedding")
+            logger.debug(f"使用 siliconflow Embedding: {provider_config['model']}")
+            return await _siliconflow_embedding(text, provider_config)
+
+        elif provider in ("openai", "qwen", "zhipu", "deepseek", "kimi"):
             if not provider_config.get("api_key"):
                 raise RuntimeError(f"{provider.upper()}_API_KEY 未配置，无法生成真实 Embedding")
             logger.debug(f"使用 {provider} Embedding: {provider_config['model']}")
@@ -518,11 +538,13 @@ async def get_embedding_with_config(
 
 async def get_embeddings_with_config(
     texts: list[str],
-    provider_config: dict[str, Any],
+    provider_config: dict[str, Any] | None,
     batch_size: int | None = None,
 ) -> list[list[float]]:
     """
     使用指定配置批量获取文本的 Embedding 向量
+    
+    如果 provider_config 为 None，则回退到使用环境变量配置。
     
     Args:
         texts: 文本列表
@@ -535,8 +557,16 @@ async def get_embeddings_with_config(
     if not texts:
         return []
     
-    provider = provider_config.get("provider")
+    # 如果配置为 None，回退到环境变量
+    if provider_config is None:
+        logger.debug("embedding_config 为 None，使用环境变量配置")
+        return await get_embeddings(texts)
     
+    provider = provider_config.get("provider")
+    if provider:
+        provider = provider.lower()  # 标准化为小写
+        provider_config = {**provider_config, "provider": provider}  # 更新配置中的provider
+
     # 使用统一的批次限制逻辑（取用户配置和提供商限制的较小值）
     actual_batch_size = get_provider_batch_limit(provider, batch_size)
     
@@ -550,8 +580,14 @@ async def get_embeddings_with_config(
                 raise RuntimeError("GEMINI_API_KEY 未配置，无法生成真实 Embedding")
             logger.debug(f"使用 Gemini 批量 Embedding: {provider_config['model']} (batch_size={actual_batch_size})")
             return await _gemini_embeddings_batch(texts, provider_config)
-        
-        elif provider in ("openai", "qwen", "zhipu", "siliconflow", "deepseek", "kimi"):
+
+        elif provider == "siliconflow":
+            if not provider_config.get("api_key"):
+                raise RuntimeError("SILICONFLOW_API_KEY 未配置，无法生成真实 Embedding")
+            logger.debug(f"使用 siliconflow 批量 Embedding: {provider_config['model']} (batch_size={actual_batch_size})")
+            return await _siliconflow_embeddings_batch(texts, provider_config, actual_batch_size)
+
+        elif provider in ("openai", "qwen", "zhipu", "deepseek", "kimi"):
             if not provider_config.get("api_key"):
                 raise RuntimeError(f"{provider.upper()}_API_KEY 未配置，无法生成真实 Embedding")
             logger.debug(f"使用 {provider} 批量 Embedding: {provider_config['model']} (batch_size={actual_batch_size})")

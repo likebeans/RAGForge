@@ -44,6 +44,15 @@ from app.schemas.tenant import (
     TenantUpdate,
 )
 
+from app.schemas.provider_config import (
+    ModelConfigCreate,
+    ModelConfigUpdate,
+    ModelConfigResponse,
+    ModelConfigResponseWithKey,
+    ModelConfigListResponse,
+    TenantModelConfigCheck,
+)
+
 __all__ = [
     # Config schemas
     "ChunkerConfig",
@@ -86,4 +95,11 @@ __all__ = [
     "ModelInfo",
     "RetrieveRequest",
     "RetrieveResponse",
+    # Provider Config schemas
+    "ModelConfigCreate",
+    "ModelConfigUpdate",
+    "ModelConfigResponse",
+    "ModelConfigResponseWithKey",
+    "ModelConfigListResponse",
+    "TenantModelConfigCheck",
 ]

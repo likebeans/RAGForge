@@ -180,6 +180,7 @@ async def run_playground(
         params=retrieve_params,
         session=db,
         user_context=user_context,
+        tenant=tenant,  # 传入 tenant 用于获取 model_settings 中的 API key
     )
     retrieve_latency = (time.perf_counter() - start_retrieve) * 1000
 
@@ -206,6 +207,7 @@ async def run_playground(
         tenant_id=tenant.id,
         params=rag_params,
         user_context=user_context,
+        tenant=tenant,  # 传入 tenant 用于获取 model_settings 中的 API key
     )
     rag_latency = (time.perf_counter() - start_rag) * 1000
 

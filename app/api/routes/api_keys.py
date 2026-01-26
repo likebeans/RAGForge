@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db_session, get_tenant, require_role
+from app.api.deps import get_db_session, get_tenant, require_role, get_current_api_key
 from app.auth.api_key import APIKeyContext, generate_api_key, hash_api_key
 from app.config import get_settings
 from app.models import APIKey
@@ -54,6 +54,22 @@ async def create_api_key(
         api_key=display,
         **APIKeyInfo.model_validate(api_key).model_dump(),
     )
+
+
+@router.get("/v1/me")
+async def get_current_key_info(
+    tenant=Depends(get_tenant),
+    api_key_ctx: APIKeyContext = Depends(get_current_api_key),
+):
+    """
+    获取当前 API Key 的信息（角色、租户等）
+    
+    用于前端判断当前 Key 的权限
+    """
+    return {
+        "role": api_key_ctx.api_key.role,
+        "tenant_id": tenant.id,
+    }
 
 
 @router.get("/v1/api-keys", response_model=list[APIKeyInfo])

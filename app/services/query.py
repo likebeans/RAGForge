@@ -25,7 +25,7 @@ from app.pipeline.postprocessors.context_window import (
     ContextWindowPostprocessor,
     ContextWindowConfig,
 )
-from app.models import Chunk, KnowledgeBase
+from app.models import Chunk, KnowledgeBase, TenantModelConfig, Tenant
 from app.schemas.internal import RetrieveParams
 from app.schemas.query import ChunkHit
 from app.db.session import SessionLocal
@@ -121,37 +121,80 @@ async def retrieve_chunks(
     params: RetrieveParams,
     session: AsyncSession | None = None,
     user_context: UserContext | None = None,
+    tenant: "Tenant | None" = None,
 ) -> tuple[list[ChunkHit], str, bool]:
     """
     检索文档片段
-    
+
     核心检索流程：
     1. 将查询语句向量化
     2. 在向量数据库中搜索最相似的片段
     3. （可选）Context Window 上下文扩展
     4. Security Trimming（ACL 权限过滤）
     5. 按相似度分数排序返回
-    
+
+    配置优先级：
+    1. 请求级 embedding_override（Playground 等传入）
+    2. TenantModelConfig 数据库配置（用户自定义）
+    3. 知识库配置（provider/model）
+    4. 环境变量（fallback）
+
     Args:
         tenant_id: 租户 ID（用于数据隔离）
         kbs: 要搜索的知识库列表（已验证）
         params: 检索参数对象，包含查询、检索器、过滤等配置
         session: 数据库会话（用于 Context Window）
         user_context: 用户上下文（用于 ACL 权限过滤）
-    
+
     Returns:
         (list[ChunkHit], retriever_name, acl_blocked): 检索结果列表、使用的检索器名称、是否因 ACL 过滤导致无结果
     """
+    # 从 TenantModelConfig 数据库加载配置
+    db_embedding_config: dict | None = None
+    if session:
+        query = select(TenantModelConfig).where(
+            TenantModelConfig.tenant_id == tenant_id,
+            TenantModelConfig.config_type == "embedding",
+            TenantModelConfig.is_active == True,
+        )
+        result = await session.execute(query)
+        db_config = result.scalar_one_or_none()
+        if db_config:
+            db_embedding_config = {
+                "provider": db_config.provider,
+                "model": db_config.model,
+                "api_key": db_config.api_key,
+                "base_url": db_config.base_url,
+            }
+            logger.info(f"从 TenantModelConfig 加载 embedding 配置: provider={db_config.provider}, model={db_config.model}")
+
+    # 如果有租户对象，从 model_settings 中获取 API key（优先级更高）
+    if tenant and tenant.model_settings:
+        providers = tenant.model_settings.get("providers", {})
+        if db_embedding_config and db_embedding_config.get("provider"):
+            provider_lower = db_embedding_config["provider"].lower()
+            provider_cfg = providers.get(provider_lower, {})
+            if provider_cfg.get("api_key"):
+                db_embedding_config["api_key"] = provider_cfg["api_key"]
+                logger.info(f"从租户 model_settings 覆盖 embedding API key: provider={db_embedding_config['provider']}")
+            if provider_cfg.get("base_url"):
+                db_embedding_config["base_url"] = provider_cfg["base_url"]
+
     retriever_override = params.to_retriever_override_dict()
-    # 构建 embedding_override dict（如果有）
+    # 构建 embedding_override dict（请求级配置优先级最高）
     embedding_override_dict = None
     if params.embedding_override:
+        # 请求级配置覆盖所有其他配置
         embedding_override_dict = {
             "provider": params.embedding_override.provider,
             "model": params.embedding_override.model,
             "api_key": params.embedding_override.api_key,
             "base_url": params.embedding_override.base_url,
         }
+    elif db_embedding_config:
+        # 数据库配置覆盖知识库配置和环境变量
+        embedding_override_dict = db_embedding_config
+
     retriever, retriever_name = _resolve_retriever(kbs, retriever_override, embedding_override_dict)
     
     # 查询缓存（仅对无 ACL 过滤且无 rerank 的查询启用缓存，避免缓存污染）
@@ -305,6 +348,7 @@ def _resolve_retriever(
     kbs: list[KnowledgeBase],
     override: dict | None = None,
     embedding_override: dict | None = None,
+    tenant_model_settings: dict | None = None,
 ) -> tuple:
     """
     选择检索算子：优先使用 override，否则使用 KB 配置，默认 dense。
@@ -326,18 +370,27 @@ def _resolve_retriever(
     if kbs:
         embedding_config = _extract_embedding_config(kbs)
     
-    # 如果有 embedding_override，只使用其中的 api_key 和 base_url
-    # 注意：检索时 provider/model 必须与入库时一致，否则向量空间不匹配
-    # 因此这里只接受 api_key/base_url 覆盖，不接受 provider/model 覆盖
+    # 如果有 embedding_override（来自数据库或请求级配置），合并到 embedding_config
+    # embedding_override 优先级最高，包含完整的 provider/model/api_key/base_url
     if embedding_override:
-        if embedding_config is None:
-            embedding_config = {}
-        # 只覆盖 api_key 和 base_url，不覆盖 provider/model（保持与入库一致）
-        if embedding_override.get("api_key"):
-            embedding_config["api_key"] = embedding_override["api_key"]
-            logger.info(f"检索使用请求级 Embedding api_key")
-        if embedding_override.get("base_url"):
-            embedding_config["base_url"] = embedding_override["base_url"]
+        if embedding_override.get("provider") and embedding_override.get("model"):
+            # embedding_override 包含完整配置，直接使用
+            embedding_config = {
+                "provider": embedding_override.get("provider"),
+                "model": embedding_override.get("model"),
+            }
+            if embedding_override.get("api_key"):
+                embedding_config["api_key"] = embedding_override["api_key"]
+            if embedding_override.get("base_url"):
+                embedding_config["base_url"] = embedding_override["base_url"]
+            logger.info(f"检索使用覆盖配置: provider={embedding_config['provider']}, model={embedding_config['model']}")
+        elif embedding_config:
+            # embedding_override 只有部分字段，合并到现有配置
+            if embedding_override.get("api_key"):
+                embedding_config["api_key"] = embedding_override["api_key"]
+                logger.info(f"检索使用请求级 Embedding api_key")
+            if embedding_override.get("base_url"):
+                embedding_config["base_url"] = embedding_override["base_url"]
     
     # 优先使用 override
     if override:
@@ -391,16 +444,19 @@ def _resolve_retriever(
 
         params["retrievers"] = normalized_retrievers
 
+    # 根据检索器类型，构建正确的初始化参数
+    init_params = {}
+
     # 将 embedding_config 传递给检索器
     if embedding_config:
         if name in ("dense", "hybrid", "fusion", "llama_dense", "raptor"):
             # 这些检索器直接接受 embedding_config 参数
-            params["embedding_config"] = embedding_config
+            init_params["embedding_config"] = embedding_config
         elif name in ("hyde", "multi_query"):
             # 这些检索器通过 base_retriever_params 传递给底层检索器
             base_params = params.get("base_retriever_params", {}) or {}
             base_params["embedding_config"] = embedding_config
-            params["base_retriever_params"] = base_params
+            init_params["base_retriever_params"] = base_params
         elif name == "ensemble":
             # 将 embedding_config 下传给 ensemble 中的子检索器
             retr_cfgs = params.get("retrievers") or []
@@ -419,25 +475,70 @@ def _resolve_retriever(
                         sub_params["base_retriever_params"] = base_params
 
                     cfg["params"] = sub_params
-                params["retrievers"] = retr_cfgs
+                init_params["retrievers"] = retr_cfgs
+
+    # 为不同检索器添加特定的初始化参数
+    if name == "dense":
+        # DenseRetriever 只接受 embedding_config
+        pass  # embedding_config 已在上方处理
+    elif name == "hybrid":
+        # HybridRetriever 接受 dense_weight, sparse_weight, embedding_config
+        if "dense_weight" in params:
+            init_params["dense_weight"] = params["dense_weight"]
+        if "sparse_weight" in params:
+            init_params["sparse_weight"] = params["sparse_weight"]
+    elif name == "fusion":
+        # FusionRetriever 接受更多参数
+        for param in ["mode", "dense_weight", "bm25_weight", "rrf_k", "rerank", "rerank_model"]:
+            if param in params:
+                init_params[param] = params[param]
+    elif name == "hyde":
+        # HyDERetriever 接受 base_retriever, num_queries, include_original, max_tokens, base_retriever_params
+        for param in ["base_retriever", "num_queries", "include_original", "max_tokens", "base_retriever_params"]:
+            if param in params:
+                init_params[param] = params[param]
+    elif name == "multi_query":
+        # MultiQueryRetriever 接受 base_retriever, num_queries, include_original, rrf_k, base_retriever_params
+        for param in ["base_retriever", "num_queries", "include_original", "rrf_k", "base_retriever_params"]:
+            if param in params:
+                init_params[param] = params[param]
+    elif name == "ensemble":
+        # EnsembleRetriever 接受 retrievers 参数
+        if "retrievers" in params:
+            init_params["retrievers"] = params["retrievers"]
+    elif name in ("llama_dense", "llama_bm25", "llama_hybrid"):
+        # LlamaIndex 检索器接受 top_k, store_type, store_params, embedding_config
+        for param in ["top_k", "store_type", "store_params", "embedding_config"]:
+            if param in params:
+                init_params[param] = params[param]
+    elif name == "raptor":
+        # RaptorRetriever 接受 mode, base_retriever, top_k, embedding_config
+        for param in ["mode", "base_retriever", "top_k", "embedding_config"]:
+            if param in params:
+                init_params[param] = params[param]
+    # 对于其他检索器，使用默认参数处理
 
     # 日志记录使用的 embedding 配置
     if embedding_config:
         provider = embedding_config.get("provider", "unknown")
         model = embedding_config.get("model", "unknown")
         logger.info(f"检索使用知识库配置: {provider}/{model}")
-    
+
     factory = operator_registry.get("retriever", name)
     if not factory:
         return DenseRetriever(embedding_config=embedding_config), "dense"
-    retriever = factory(**params)
+    retriever = factory(**init_params)
     retriever.allow_mixed = allow_mixed if hasattr(retriever, "allow_mixed") else allow_mixed
     return retriever, name
 
 
-def _extract_embedding_config(kbs: list[KnowledgeBase]) -> dict | None:
+def _extract_embedding_config(kbs: list[KnowledgeBase], tenant_model_settings: dict | None = None) -> dict | None:
     """
-    从知识库配置中提取 embedding 配置。
+    从知识库配置和租户配置中提取 embedding 配置。
+    
+    优先级：
+    1. 租户 model_settings.providers 中的 API Key（如果 provider 匹配）
+    2. 知识库配置中的 embedding 配置（provider/model）
     
     知识库配置中的 embedding 配置格式：
     {
@@ -463,12 +564,34 @@ def _extract_embedding_config(kbs: list[KnowledgeBase]) -> dict | None:
     if not provider or not model:
         return None
     
-    try:
-        settings = get_settings()
-        return settings._get_provider_config(provider, model)
-    except ValueError:
-        # 配置不存在，回退到默认配置
-        return None
+    # 构建配置
+    config: dict = {
+        "provider": provider,
+        "model": model,
+    }
+    
+    # 优先从租户 model_settings.providers 中获取 API Key
+    if tenant_model_settings:
+        providers = tenant_model_settings.get("providers", {})
+        provider_config = providers.get(provider.lower())
+        if provider_config:
+            if provider_config.get("api_key"):
+                config["api_key"] = provider_config["api_key"]
+            if provider_config.get("base_url"):
+                config["base_url"] = provider_config["base_url"]
+            logger.info(f"从租户 model_settings 读取 {provider} API Key")
+    
+    # 如果租户配置中没有，从环境变量获取
+    if "api_key" not in config:
+        try:
+            settings = get_settings()
+            provider_config = settings._get_provider_config(provider, model)
+            config.update(provider_config)
+        except ValueError:
+            # 配置不存在，回退到默认配置
+            return None
+    
+    return config
 
 
 def _validate_retriever_config(kbs: list[KnowledgeBase]) -> tuple[str, dict, bool]:

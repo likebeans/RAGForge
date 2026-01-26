@@ -164,6 +164,10 @@ class RAGParams(BaseModel):
         default=None,
         description="临时覆盖 Embedding 配置（仅 api_key/base_url 用于检索认证）"
     )
+    rerank_override: RerankConfig | None = Field(
+        default=None,
+        description="临时覆盖 Rerank 配置（provider/model/api_key/base_url）"
+    )
     
     # 控制选项
     include_sources: bool = Field(

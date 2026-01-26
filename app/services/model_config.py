@@ -6,9 +6,22 @@
 配置层级说明：
 - 环境变量：最低优先级，用于设置系统默认值
 - 系统配置表（SystemConfig）：可通过 Admin API 动态修改
-- 租户配置（Tenant.llm_settings）：租户专属配置
+- 租户配置（Tenant.model_settings）：租户专属配置（含 Provider API Keys）
 - 知识库配置（KnowledgeBase.config）：仅用于 Embedding（创建时固定）
 - 请求级覆盖：API 请求中临时指定
+
+Tenant.model_settings 格式：
+{
+    "providers": {
+        "siliconflow": {"api_key": "sk-xxx", "base_url": "https://api.siliconflow.cn/v1"},
+        "openai": {"api_key": "sk-xxx"}
+    },
+    "defaults": {
+        "llm": {"provider": "siliconflow", "model": "Qwen/Qwen2.5-72B-Instruct"},
+        "embedding": {"provider": "siliconflow", "model": "BAAI/bge-m3"},
+        "rerank": {"provider": "siliconflow", "model": "BAAI/bge-reranker-v2-m3"}
+    }
+}
 
 使用示例：
     from app.services.model_config import model_config_resolver
@@ -17,7 +30,12 @@
     config = await model_config_resolver.get_llm_config(session, tenant=tenant)
     
     # 获取 Embedding 配置（从 KB）
-    config = await model_config_resolver.get_embedding_config(session, kb=kb)
+    config = await model_config_resolver.get_embedding_config(session, kb=kb, tenant=tenant)
+    
+    # 构建 Provider 配置（含 API Key）
+    provider_config = model_config_resolver.build_provider_config(
+        config, "embedding", tenant=tenant
+    )
 """
 
 import json
@@ -110,6 +128,50 @@ class ModelConfigResolver:
                         result[k] = v
         return result
     
+    def _extract_tenant_config(
+        self, 
+        tenant: Tenant | None, 
+        config_type: str,
+        keys: list[str],
+    ) -> dict[str, Any]:
+        """
+        从租户配置中提取指定类型的配置
+        
+        支持新格式（defaults）和旧格式（扁平字段）
+        
+        Args:
+            tenant: 租户对象
+            config_type: 配置类型 ("llm", "embedding", "rerank")
+            keys: 配置键列表
+        
+        Returns:
+            提取的配置字典
+        """
+        if not tenant or not tenant.model_settings:
+            return {}
+        
+        settings = tenant.model_settings
+        result = {}
+        
+        # 新格式：从 defaults 中提取
+        defaults = settings.get("defaults", {})
+        if config_type in defaults:
+            type_config = defaults[config_type]
+            if isinstance(type_config, dict):
+                provider = type_config.get("provider")
+                model = type_config.get("model")
+                if provider:
+                    result[f"{config_type}_provider"] = provider
+                if model:
+                    result[f"{config_type}_model"] = model
+        
+        # 旧格式兼容：扁平字段
+        for key in keys:
+            if key not in result and settings.get(key) is not None:
+                result[key] = settings[key]
+        
+        return result
+    
     async def get_llm_config(
         self,
         session: AsyncSession,
@@ -139,13 +201,8 @@ class ModelConfigResolver:
         # 2. 系统配置表
         system_config = await self._get_system_configs(session, self.LLM_KEYS)
         
-        # 3. 租户配置
-        tenant_config = {}
-        if tenant and tenant.llm_settings:
-            tenant_config = {
-                k: v for k, v in tenant.llm_settings.items() 
-                if k in self.LLM_KEYS
-            }
+        # 3. 租户配置（支持新格式和旧格式）
+        tenant_config = self._extract_tenant_config(tenant, "llm", self.LLM_KEYS)
         
         # 4. 请求级覆盖
         request_config = {}
@@ -174,7 +231,7 @@ class ModelConfigResolver:
         """
         获取 Embedding 配置
         
-        优先级：知识库级（固定）> 系统级 > 环境变量
+        优先级：知识库级（固定）> 租户默认 > 系统级 > 环境变量
         
         注意：Embedding 模型通常与知识库绑定，不支持请求级覆盖。
         因为向量维度必须与知识库一致。
@@ -193,7 +250,10 @@ class ModelConfigResolver:
         # 2. 系统配置表
         system_config = await self._get_system_configs(session, self.EMBEDDING_KEYS)
         
-        # 3. 知识库配置（最高优先级，不可覆盖）
+        # 3. 租户默认 Embedding 配置
+        tenant_config = self._extract_tenant_config(tenant, "embedding", self.EMBEDDING_KEYS)
+        
+        # 4. 知识库配置（最高优先级，不可覆盖）
         kb_config = {}
         if kb and kb.config and isinstance(kb.config, dict):
             embedding_cfg = kb.config.get("embedding")
@@ -213,7 +273,7 @@ class ModelConfigResolver:
                     kb_config[key] = kb.config.get(key)
         
         # 合并配置
-        merged = self._merge_configs(env_config, system_config, kb_config)
+        merged = self._merge_configs(env_config, system_config, tenant_config, kb_config)
         
         logger.debug(
             f"Embedding config resolved: provider={merged.get('embedding_provider')}, "
@@ -247,13 +307,8 @@ class ModelConfigResolver:
         # 2. 系统配置表
         system_config = await self._get_system_configs(session, self.RERANK_KEYS)
         
-        # 3. 租户配置
-        tenant_config = {}
-        if tenant and tenant.llm_settings:
-            tenant_config = {
-                k: v for k, v in tenant.llm_settings.items() 
-                if k in self.RERANK_KEYS
-            }
+        # 3. 租户配置（支持新格式和旧格式）
+        tenant_config = self._extract_tenant_config(tenant, "rerank", self.RERANK_KEYS)
         
         # 4. 请求级覆盖
         request_config = {}
@@ -302,15 +357,21 @@ class ModelConfigResolver:
             **rerank_config,
         }
     
-    def build_provider_config(self, config: dict[str, Any], config_type: str) -> dict[str, Any]:
+    def build_provider_config(
+        self, 
+        config: dict[str, Any], 
+        config_type: str,
+        tenant: Tenant | None = None,
+    ) -> dict[str, Any]:
         """
         构建提供商配置（用于 infra 层调用）
         
-        根据 provider 类型，获取对应的 API Key 和 Base URL。
+        优先级：租户 Provider 配置 > 环境变量
         
         Args:
             config: 模型配置字典
             config_type: 配置类型 ("llm", "embedding", "rerank")
+            tenant: 租户对象（可选，用于获取 Provider API Key）
         
         Returns:
             提供商配置字典，包含 provider, model, api_key, base_url 等
@@ -326,8 +387,26 @@ class ModelConfigResolver:
         if not provider:
             raise ValueError(f"未配置 {config_type} 提供商")
         
-        # 使用 Settings 的方法获取提供商配置
-        return settings._get_provider_config(provider, model)
+        # 从环境变量获取基础配置
+        base_config = settings._get_provider_config(provider, model)
+        
+        # 从租户配置中覆盖 API Key 和 Base URL
+        if tenant and tenant.model_settings:
+            providers = tenant.model_settings.get("providers", {})
+            logger.info(f"租户 model_settings: {tenant.model_settings}")
+            logger.info(f"providers: {providers}")
+            provider_lower = provider.lower() if provider else None
+            provider_cfg = providers.get(provider_lower, {})
+            logger.info(f"查找 provider={provider}, provider_cfg: {provider_cfg}")
+            
+            if provider_cfg.get("api_key"):
+                base_config["api_key"] = provider_cfg["api_key"]
+                logger.info(f"使用租户 Provider 配置: provider={provider}")
+            
+            if provider_cfg.get("base_url"):
+                base_config["base_url"] = provider_cfg["base_url"]
+        
+        return base_config
 
 
 # 全局单例

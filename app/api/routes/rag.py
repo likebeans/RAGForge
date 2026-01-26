@@ -12,8 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_api_key, get_db_session, get_tenant
 from app.auth.api_key import APIKeyContext
+from app.schemas.config import EmbeddingOverrideConfig, LLMConfig, RerankConfig
 from app.schemas.internal import RAGParams
 from app.schemas.rag import RAGRequest, RAGResponse
+from app.services.model_config import model_config_resolver
 from app.services.query import get_tenant_kbs
 from app.services.rag import generate_rag_response
 
@@ -91,6 +93,66 @@ async def rag_generate(
     # 从 API Key 构建用户上下文（用于 ACL 权限过滤）
     user_context = api_key_ctx.get_user_context()
     
+    # 使用 ModelConfigResolver 获取 Embedding 配置（优先使用租户/知识库配置）
+    embed_config = await model_config_resolver.get_embedding_config(
+        session=db, 
+        kb=kbs[0] if kbs else None, 
+        tenant=tenant,
+    )
+    
+    # 构建带有租户 API Key 的 Embedding 配置
+    embedding_override = None
+    try:
+        provider_config = model_config_resolver.build_provider_config(
+            embed_config, "embedding", tenant=tenant
+        )
+        embedding_override = EmbeddingOverrideConfig(
+            provider=provider_config.get("provider"),
+            model=provider_config.get("model"),
+            api_key=provider_config.get("api_key"),
+            base_url=provider_config.get("base_url"),
+        )
+    except ValueError:
+        pass  # 回退到环境变量
+    
+    # 使用 ModelConfigResolver 获取 LLM 配置
+    llm_config = await model_config_resolver.get_llm_config(session=db, tenant=tenant)
+    
+    # 如果没有请求级 LLM 覆盖，使用租户配置
+    llm_override = payload.llm_override
+    if not llm_override and llm_config.get("llm_provider"):
+        try:
+            provider_config = model_config_resolver.build_provider_config(
+                llm_config, "llm", tenant=tenant
+            )
+            llm_override = LLMConfig(
+                provider=provider_config.get("provider"),
+                model=provider_config.get("model"),
+                api_key=provider_config.get("api_key"),
+                base_url=provider_config.get("base_url"),
+            )
+        except ValueError:
+            pass  # 回退到环境变量
+    
+    # 使用 ModelConfigResolver 获取 Rerank 配置
+    rerank_config = await model_config_resolver.get_rerank_config(session=db, tenant=tenant)
+    
+    # 如果没有请求级 Rerank 覆盖，使用租户配置
+    rerank_override = payload.rerank_override if hasattr(payload, 'rerank_override') else None
+    if not rerank_override and rerank_config.get("rerank_provider"):
+        try:
+            provider_config = model_config_resolver.build_provider_config(
+                rerank_config, "rerank", tenant=tenant
+            )
+            rerank_override = RerankConfig(
+                provider=provider_config.get("provider"),
+                model=provider_config.get("model"),
+                api_key=provider_config.get("api_key"),
+                base_url=provider_config.get("base_url"),
+            )
+        except ValueError:
+            pass  # 回退到环境变量
+    
     # 构建内部参数对象
     params = RAGParams(
         query=payload.query,
@@ -98,7 +160,9 @@ async def rag_generate(
         top_k=payload.top_k,
         score_threshold=payload.score_threshold,
         retriever_override=payload.retriever_override,
-        llm_override=payload.llm_override,
+        llm_override=llm_override,
+        embedding_override=embedding_override,
+        rerank_override=rerank_override,
         system_prompt=payload.system_prompt,
         temperature=payload.temperature,
         max_tokens=payload.max_tokens,
@@ -111,6 +175,7 @@ async def rag_generate(
             tenant_id=tenant.id,
             params=params,
             user_context=user_context,  # 传入用户上下文用于 ACL 过滤
+            tenant=tenant,  # 传入 tenant 用于获取 model_settings 中的 API key
         )
         
         logger.info(

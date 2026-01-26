@@ -146,7 +146,22 @@ async def http_exception_handler(_: Request, exc: HTTPException):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(_: Request, exc: RequestValidationError):
     # 将 Pydantic 校验错误统一映射为 VALIDATION_ERROR
+    # 处理 errors 中可能包含的 bytes 对象（如文件上传）
+    def sanitize_error(err: dict) -> dict:
+        sanitized = {}
+        for k, v in err.items():
+            if isinstance(v, bytes):
+                sanitized[k] = f"<bytes: {len(v)} bytes>"
+            elif isinstance(v, dict):
+                sanitized[k] = sanitize_error(v)
+            elif isinstance(v, list):
+                sanitized[k] = [sanitize_error(i) if isinstance(i, dict) else (f"<bytes: {len(i)} bytes>" if isinstance(i, bytes) else i) for i in v]
+            else:
+                sanitized[k] = v
+        return sanitized
+    
+    errors = [sanitize_error(e) for e in exc.errors()]
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors(), "code": "VALIDATION_ERROR"},
+        content={"detail": errors, "code": "VALIDATION_ERROR"},
     )

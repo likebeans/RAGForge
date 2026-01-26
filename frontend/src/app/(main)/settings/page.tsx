@@ -36,13 +36,16 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
-import { Check, X, RefreshCw, Loader2, Plus, Trash2, Copy, Key, AlertCircle, Eye, EyeOff, Server, Cpu, Database, Info } from "lucide-react";
+import { Check, X, RefreshCw, Loader2, Plus, Trash2, Copy, Key, AlertCircle, Eye, EyeOff, Server, Cpu, Database, Info, Upload, Download } from "lucide-react";
 import { useAppStore } from "@/lib/store";
-import { APIKeyInfo } from "@/lib/api";
+import { APIKeyInfo, ModelSettingsUpdate } from "@/lib/api";
 import { ModelProviderConfig, DefaultModelConfig } from "@/components/settings";
 
 export default function SettingsPage() {
-  const { apiKey, apiBase, setApiKey, setApiBase, client, isConnected, setConnected } = useAppStore();
+  const { 
+    apiKey, apiBase, setApiKey, setApiBase, client, isConnected, setConnected,
+    providerConfigs, defaultModels, upsertProviderConfig, setDefaultModel,
+  } = useAppStore();
   
   const [localApiKey, setLocalApiKey] = useState(apiKey);
   const [localApiBase, setLocalApiBase] = useState(apiBase);
@@ -62,6 +65,9 @@ export default function SettingsPage() {
   // 向量存储配置状态
   const [isolationMode, setIsolationMode] = useState<"partition" | "collection" | "auto">("partition");
 
+  // 模型设置同步状态
+  const [isSyncingModels, setIsSyncingModels] = useState(false);
+
   // 从 localStorage 加载隔离模式配置
   useEffect(() => {
     const savedMode = localStorage.getItem("vector_isolation_mode");
@@ -74,6 +80,119 @@ export default function SettingsPage() {
     setIsolationMode(mode);
     localStorage.setItem("vector_isolation_mode", mode);
     toast.success(`隔离模式已切换为: ${mode}`);
+  };
+
+  // 从后端加载模型配置
+  const loadModelSettingsFromServer = async () => {
+    if (!client) return;
+    try {
+      const settings = await client.getModelSettings();
+
+      // 更新 providerConfigs（标记为已验证）
+      const newProviderConfigs = { ...providerConfigs };
+      for (const [providerId, config] of Object.entries(settings.providers || {})) {
+        // 检查 api_key 是否是脱敏格式（以 ***** 开头）
+        const isMasked = config.api_key && config.api_key.startsWith('****');
+        if (config.api_key && !isMasked) {
+          newProviderConfigs[providerId] = {
+            ...newProviderConfigs[providerId],
+            apiKey: config.api_key,
+            baseUrl: config.base_url || undefined,
+            validated: true,
+            validatedAt: new Date().toISOString(),
+          };
+        }
+      }
+      // 使用 upsertProviderConfig 批量更新
+      for (const [providerId, config] of Object.entries(newProviderConfigs)) {
+        upsertProviderConfig(providerId, config);
+      }
+
+      // 更新 defaultModels
+      if (settings.defaults) {
+        if (settings.defaults.llm) {
+          setDefaultModel('llm', {
+            provider: settings.defaults.llm.provider,
+            model: settings.defaults.llm.model,
+          });
+        }
+        if (settings.defaults.embedding) {
+          setDefaultModel('embedding', {
+            provider: settings.defaults.embedding.provider,
+            model: settings.defaults.embedding.model,
+          });
+        }
+        if (settings.defaults.rerank) {
+          setDefaultModel('rerank', {
+            provider: settings.defaults.rerank.provider,
+            model: settings.defaults.rerank.model,
+          });
+        }
+      }
+    } catch (error) {
+      console.error('加载模型配置失败:', error);
+    }
+  };
+
+  // 页面加载时从后端同步模型配置
+  useEffect(() => {
+    if (isConnected && client) {
+      loadModelSettingsFromServer();
+    }
+  }, [isConnected, client]);
+
+  // 同步模型设置到服务器
+  const handleSyncModelSettings = async () => {
+    if (!client) {
+      toast.error("请先连接后端服务");
+      return;
+    }
+
+    setIsSyncingModels(true);
+    try {
+      // 构建 providers 配置 - 只要有 apiKey 就同步
+      const providers: Record<string, { api_key?: string; base_url?: string }> = {};
+      for (const [providerId, config] of Object.entries(providerConfigs)) {
+        if (config?.apiKey) {
+          providers[providerId] = {
+            api_key: config.apiKey,
+            base_url: config.baseUrl,
+          };
+        }
+      }
+
+      // 构建 defaults 配置
+      const defaults: ModelSettingsUpdate["defaults"] = {};
+      if (defaultModels.llm?.provider && defaultModels.llm?.model) {
+        defaults.llm = {
+          provider: defaultModels.llm.provider,
+          model: defaultModels.llm.model,
+        };
+      }
+      if (defaultModels.embedding?.provider && defaultModels.embedding?.model) {
+        defaults.embedding = {
+          provider: defaultModels.embedding.provider,
+          model: defaultModels.embedding.model,
+        };
+      }
+      if (defaultModels.rerank?.provider && defaultModels.rerank?.model) {
+        defaults.rerank = {
+          provider: defaultModels.rerank.provider,
+          model: defaultModels.rerank.model,
+        };
+      }
+
+      await client.updateModelSettings({
+        providers: Object.keys(providers).length > 0 ? providers : undefined,
+        defaults: Object.keys(defaults).length > 0 ? defaults : undefined,
+      });
+
+      toast.success("模型配置已同步到服务器");
+    } catch (error) {
+      toast.error(`同步失败: ${(error as Error).message}`);
+    } finally {
+      setIsSyncingModels(false);
+    }
   };
 
   useEffect(() => {
@@ -386,6 +505,42 @@ export default function SettingsPage() {
             <div className="space-y-4">
               <ModelProviderConfig />
               <DefaultModelConfig />
+              
+              {/* 同步到服务器 */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Upload className="h-5 w-5" />
+                    同步配置到服务器
+                  </CardTitle>
+                  <CardDescription>
+                    将 Provider API Keys 和默认模型配置保存到服务器，使 API 调用时自动使用这些配置
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center gap-4">
+                    <Button 
+                      onClick={handleSyncModelSettings} 
+                      disabled={isSyncingModels || currentRole !== "admin"}
+                    >
+                      {isSyncingModels ? (
+                        <><Loader2 className="h-4 w-4 mr-2 animate-spin" />同步中...</>
+                      ) : (
+                        <><Upload className="h-4 w-4 mr-2" />同步到服务器</>
+                      )}
+                    </Button>
+                    {currentRole !== "admin" && (
+                      <span className="text-sm text-muted-foreground flex items-center gap-1">
+                        <AlertCircle className="h-4 w-4" />
+                        仅 admin 角色可同步配置
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-3">
+                    同步后，通过 API 调用检索/RAG 时将自动使用您配置的模型，无需在请求中传递配置参数。
+                  </p>
+                </CardContent>
+              </Card>
             </div>
           ) : (
             <Card>

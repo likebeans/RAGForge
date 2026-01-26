@@ -27,10 +27,12 @@ from app.api.routes import (
     openai_compat,
     ground,
     pipeline_playground,
+    provider_config,
     query,
     rag,
     rag_stream,
     raptor,
+    settings,
 )
 
 # 主路由器，包含所有 API 端点
@@ -52,3 +54,5 @@ api_router.include_router(ground.router)  # Ground (playground)
 api_router.include_router(pipeline_playground.router)  # Pipeline playground
 api_router.include_router(enrichment.router, tags=["enrichment"])  # 增强预览
 api_router.include_router(raptor.router)  # RAPTOR 索引管理
+api_router.include_router(settings.router)  # 模型配置管理
+api_router.include_router(provider_config.router, tags=["model-configs"])  # 租户模型配置管理

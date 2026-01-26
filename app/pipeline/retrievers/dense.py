@@ -75,7 +75,7 @@ class DenseRetriever(BaseRetrieverOperator):
                     "text": rec.text,
                     "score": rec.score,
                     "metadata": rec.metadata,
-                    "knowledge_base_id": rec.metadata.get("kb_id") if rec.metadata else None,
+                    "knowledge_base_id": rec.knowledge_base_id or (rec.metadata.get("kb_id") if rec.metadata else None),
                     "document_id": rec.metadata.get("document_id") if rec.metadata else None,
                 })
         

@@ -24,8 +24,9 @@ from app.infra.llm import chat_completion_stream, chat_completion_stream_with_co
 from app.models import KnowledgeBase
 from app.models.tenant import Tenant
 from app.schemas.conversation import StreamRAGRequest
-from app.schemas.config import LLMConfig
+from app.schemas.config import EmbeddingOverrideConfig, LLMConfig
 from app.schemas.internal import RetrieveParams
+from app.services.model_config import model_config_resolver
 from app.services.query import retrieve_chunks
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,9 @@ async def _sse_generator(
     kbs: list[KnowledgeBase],
     session: AsyncSession,
     api_key_ctx: APIKeyContext,
-    llm_override: LLMConfig | None,
+    llm_provider_config: dict | None,
+    tenant: Tenant,
+    embedding_override: EmbeddingOverrideConfig | None,
 ) -> AsyncIterator[str]:
     """
     SSE 事件生成器
@@ -59,6 +62,7 @@ async def _sse_generator(
             query=query,
             top_k=top_k,
             retriever_override={"name": retriever} if retriever != "dense" else None,
+            embedding_override=embedding_override,
         )
         
         # 构建 user_context 用于 ACL 过滤
@@ -70,6 +74,7 @@ async def _sse_generator(
             params=retrieve_params,
             session=session,
             user_context=user_context,
+            tenant=tenant,  # 传入 tenant 用于获取 model_settings 中的 API key
         )
         
         if acl_blocked:
@@ -121,18 +126,17 @@ async def _sse_generator(
 
 请根据以上参考资料回答用户问题。"""
 
-        # Step 3: 流式调用 LLM
-        stream = chat_completion_stream(
-            prompt=user_prompt,
-            system_prompt=system_prompt,
-        )
-
-        if llm_override:
-            provider_config = llm_override.model_dump()
-            provider_config["provider"] = llm_override.provider
+        # Step 3: 流式调用 LLM（优先使用租户配置）
+        if llm_provider_config:
+            logger.info(f"流式 LLM 使用配置: {llm_provider_config.get('provider')}/{llm_provider_config.get('model')}")
             stream = chat_completion_stream_with_config(
                 prompt=user_prompt,
-                provider_config=provider_config,
+                provider_config=llm_provider_config,
+                system_prompt=system_prompt,
+            )
+        else:
+            stream = chat_completion_stream(
+                prompt=user_prompt,
                 system_prompt=system_prompt,
             )
 
@@ -214,6 +218,48 @@ async def rag_stream(
                 },
             )
     
+    # 从知识库配置获取 Embedding 配置（与 /v1/retrieve 保持一致）
+    embed_config = await model_config_resolver.get_embedding_config(
+        session=db,
+        kb=kbs[0] if kbs else None,
+        tenant=tenant,
+    )
+    
+    # 构建带有租户 API Key 的 provider 配置
+    embedding_override: EmbeddingOverrideConfig | None = None
+    try:
+        provider_config = model_config_resolver.build_provider_config(
+            embed_config, "embedding", tenant=tenant
+        )
+        embedding_override = EmbeddingOverrideConfig(
+            provider=provider_config.get("provider"),
+            model=provider_config.get("model"),
+            api_key=provider_config.get("api_key"),
+            base_url=provider_config.get("base_url"),
+        )
+        logger.info(f"流式接口使用 Embedding 配置: {provider_config.get('provider')}/{provider_config.get('model')}")
+    except ValueError:
+        # 如果没有配置 embedding 提供商，使用 None（回退到环境变量）
+        embedding_override = None
+    
+    # 从租户配置获取 LLM 配置（与 Embedding 类似）
+    llm_provider_config: dict | None = None
+    if payload.llm_override:
+        # 请求级覆盖优先
+        llm_provider_config = payload.llm_override.model_dump()
+        llm_provider_config["provider"] = payload.llm_override.provider
+    else:
+        # 从租户配置获取 LLM 配置
+        try:
+            llm_config = await model_config_resolver.get_llm_config(session=db, tenant=tenant)
+            llm_provider_config = model_config_resolver.build_provider_config(
+                llm_config, "llm", tenant=tenant
+            )
+            logger.info(f"流式接口使用 LLM 配置: {llm_provider_config.get('provider')}/{llm_provider_config.get('model')}")
+        except ValueError:
+            # 如果没有配置 LLM 提供商，使用 None（回退到环境变量）
+            llm_provider_config = None
+    
     # 返回 SSE 流式响应
     return StreamingResponse(
         _sse_generator(
@@ -225,7 +271,9 @@ async def rag_stream(
             kbs=kbs,
             session=db,
             api_key_ctx=api_key_ctx,
-            llm_override=payload.llm_override,
+            llm_provider_config=llm_provider_config,
+            tenant=tenant,
+            embedding_override=embedding_override,
         ),
         media_type="text/event-stream",
         headers={
