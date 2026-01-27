@@ -38,21 +38,20 @@ class AsyncPgVectorStore:
     PostgreSQL pgvector 异步向量存储
     
     特性：
+    - 按知识库隔离表：每个 KB 独立一张表，支持不同维度
     - 动态维度：根据实际 embedding 维度自动创建/调整表
     - 多租户：通过 tenant_id 字段隔离
     - 连接池优化：使用 AsyncAdaptedQueuePool
     """
     
-    # 默认表名
-    DEFAULT_TABLE = "vector_chunks"
+    # 表名前缀
+    TABLE_PREFIX = "pgvec_kb_"
     
-    def __init__(self, table_name: str | None = None):
+    def __init__(self):
         self._settings = get_settings()
-        self._table_name = table_name or self.DEFAULT_TABLE
         self._engine = None
         self._session_factory = None
-        self._table_created = False
-        self._current_dim: int | None = None  # 当前表的向量维度
+        self._created_tables: set[str] = set()  # 已创建的表名缓存
     
     @property
     def engine(self):
@@ -86,13 +85,19 @@ class AsyncPgVectorStore:
         await session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await session.commit()
     
-    async def _get_table_dim(self, session: AsyncSession) -> int | None:
-        """获取当前表的向量维度"""
+    def _get_table_name(self, kb_id: str) -> str:
+        """获取知识库对应的表名"""
+        # 将 UUID 中的 - 替换为 _，确保是有效的表名
+        safe_kb_id = kb_id.replace("-", "_")
+        return f"{self.TABLE_PREFIX}{safe_kb_id}"
+    
+    async def _get_table_dim(self, session: AsyncSession, table_name: str) -> int | None:
+        """获取现有表的向量维度"""
         try:
             result = await session.execute(text(f"""
-                SELECT atttypmod 
-                FROM pg_attribute 
-                WHERE attrelid = '{self._table_name}'::regclass 
+                SELECT atttypmod
+                FROM pg_attribute
+                WHERE attrelid = '{table_name}'::regclass
                 AND attname = 'embedding'
             """))
             row = result.fetchone()
@@ -102,30 +107,24 @@ class AsyncPgVectorStore:
             pass
         return None
     
-    async def _ensure_table(self, session: AsyncSession, dim: int) -> None:
-        """
-        确保向量表存在，支持动态维度调整
-        
-        Args:
-            session: 数据库会话
-            dim: 向量维度
-        """
-        if self._table_created and self._current_dim == dim:
+    async def _ensure_table(self, session: AsyncSession, table_name: str, dim: int) -> None:
+        """确保向量表存在（按 KB 隔离），并处理维度变更"""
+        if table_name in self._created_tables:
             return
         
         # 检查表是否存在
         result = await session.execute(text(f"""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
-                WHERE table_name = '{self._table_name}'
+                WHERE table_name = '{table_name}'
             )
         """))
         table_exists = result.scalar()
         
         if not table_exists:
-            # 创建新表
+            # 创建新表（每个 KB 独立一张表）
             await session.execute(text(f"""
-                CREATE TABLE {self._table_name} (
+                CREATE TABLE {table_name} (
                     id VARCHAR(255) PRIMARY KEY,
                     tenant_id VARCHAR(255) NOT NULL,
                     kb_id VARCHAR(255) NOT NULL,
@@ -137,89 +136,80 @@ class AsyncPgVectorStore:
             """))
             # 创建索引
             await session.execute(text(f"""
-                CREATE INDEX IF NOT EXISTS idx_{self._table_name}_tenant_kb 
-                ON {self._table_name} (tenant_id, kb_id)
+                CREATE INDEX IF NOT EXISTS idx_{table_name}_tenant 
+                ON {table_name} (tenant_id)
             """))
             
             # 创建 HNSW 索引
-            # - vector: 最多 2000 维度，使用 vector_cosine_ops
-            # - halfvec: 最多 4000 维度，使用 halfvec_cosine_ops（需要转换类型）
-            # 参考: https://supabase.com/docs/guides/ai/vector-indexes/hnsw-indexes
             if dim <= 2000:
                 await session.execute(text(f"""
-                    CREATE INDEX IF NOT EXISTS idx_{self._table_name}_embedding 
-                    ON {self._table_name} 
+                    CREATE INDEX IF NOT EXISTS idx_{table_name}_embedding 
+                    ON {table_name} 
                     USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)
                 """))
-                logger.info(f"创建向量表 {self._table_name}，维度={dim}，已创建 HNSW 索引 (vector)")
+                logger.info(f"创建向量表 {table_name}，维度={dim}，已创建 HNSW 索引 (vector)")
             elif dim <= 4000:
-                # 高维度向量使用 halfvec 类型创建索引
                 await session.execute(text(f"""
-                    CREATE INDEX IF NOT EXISTS idx_{self._table_name}_embedding 
-                    ON {self._table_name} 
+                    CREATE INDEX IF NOT EXISTS idx_{table_name}_embedding 
+                    ON {table_name} 
                     USING hnsw ((embedding::halfvec({dim})) halfvec_cosine_ops) WITH (m = 16, ef_construction = 64)
                 """))
-                logger.info(f"创建向量表 {self._table_name}，维度={dim}，已创建 HNSW 索引 (halfvec)")
+                logger.info(f"创建向量表 {table_name}，维度={dim}，已创建 HNSW 索引 (halfvec)")
             else:
-                logger.warning(f"创建向量表 {self._table_name}，维度={dim}，维度超过 4000，跳过索引创建")
+                logger.warning(f"创建向量表 {table_name}，维度={dim}，维度超过 4000，跳过索引创建")
             
             await session.commit()
         else:
             # 检查现有表的维度
-            existing_dim = await self._get_table_dim(session)
+            existing_dim = await self._get_table_dim(session, table_name)
             if existing_dim and existing_dim != dim:
                 # 检查表中是否有数据
                 count_result = await session.execute(text(f"""
-                    SELECT COUNT(*) FROM {self._table_name}
+                    SELECT COUNT(*) FROM {table_name}
                 """))
                 row_count = count_result.scalar() or 0
                 
                 if row_count > 0:
-                    # 表中有数据，不能改变维度，使用现有维度
+                    # 表中有数据，不能改变维度
                     logger.error(
-                        f"向量维度冲突: 表中已有 {row_count} 条 {existing_dim} 维向量，"
+                        f"向量维度冲突: 知识库表 {table_name} 中已有 {row_count} 条 {existing_dim} 维向量，"
                         f"但当前 Embedding 模型生成 {dim} 维向量。"
                         f"请确保知识库配置的 Embedding 模型与已有数据一致。"
                     )
                     raise ValueError(
-                        f"向量维度冲突: 表中已有 {existing_dim} 维向量，当前生成 {dim} 维。"
+                        f"向量维度冲突: 该知识库已有 {existing_dim} 维向量，当前生成 {dim} 维。"
                         f"请在知识库配置中指定正确的 embedding 模型，或清空知识库后重新入库。"
                     )
                 else:
                     # 表为空，可以安全地调整维度
                     logger.warning(f"向量维度变更: {existing_dim} -> {dim}，正在调整表结构...")
-                    # 删除旧索引
+                    await session.execute(text(f"DROP INDEX IF EXISTS idx_{table_name}_embedding"))
                     await session.execute(text(f"""
-                        DROP INDEX IF EXISTS idx_{self._table_name}_embedding
-                    """))
-                    # 修改列维度
-                    await session.execute(text(f"""
-                        ALTER TABLE {self._table_name} 
+                        ALTER TABLE {table_name} 
                         ALTER COLUMN embedding TYPE vector({dim})
                     """))
-                    # 重建 HNSW 索引
                     if dim <= 2000:
                         await session.execute(text(f"""
-                            CREATE INDEX idx_{self._table_name}_embedding 
-                            ON {self._table_name} 
+                            CREATE INDEX idx_{table_name}_embedding 
+                            ON {table_name} 
                             USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)
                         """))
                     elif dim <= 4000:
                         await session.execute(text(f"""
-                            CREATE INDEX idx_{self._table_name}_embedding 
-                            ON {self._table_name} 
+                            CREATE INDEX idx_{table_name}_embedding 
+                            ON {table_name} 
                             USING hnsw ((embedding::halfvec({dim})) halfvec_cosine_ops) WITH (m = 16, ef_construction = 64)
                         """))
                     await session.commit()
                     logger.info(f"向量表维度已调整为 {dim}")
         
-        self._table_created = True
-        self._current_dim = dim
+        self._created_tables.add(table_name)
     
     async def upsert_chunks(
         self,
         *,
         tenant_id: str,
+        kb_id: str,
         chunks: list[dict],
         embedding_config: dict | None = None,
     ) -> None:
@@ -241,24 +231,22 @@ class AsyncPgVectorStore:
         if not embeddings or len(embeddings) == 0:
             raise ValueError("无法生成 embeddings")
         
-        # 获取实际维度
+        # 获取实际维度和表名
         dim = len(embeddings[0])
+        table_name = self._get_table_name(kb_id)
         
         async with self.session_factory() as session:
             try:
                 await self._ensure_extension(session)
-                await self._ensure_table(session, dim)
+                await self._ensure_table(session, table_name, dim)
                 
                 # 批量 upsert
                 for chunk, embedding in zip(chunks, embeddings):
                     metadata_json = json.dumps(chunk.get("metadata", {}), ensure_ascii=False)
                     embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
                     
-                    # 兼容两种字段名: kb_id 或 knowledge_base_id
-                    kb_id = chunk.get("kb_id") or chunk.get("knowledge_base_id")
-                    
                     await session.execute(text(f"""
-                        INSERT INTO {self._table_name} 
+                        INSERT INTO {table_name} 
                         (id, tenant_id, kb_id, text, embedding, metadata)
                         VALUES (:id, :tenant_id, :kb_id, :text, :embedding, :metadata)
                         ON CONFLICT (id) DO UPDATE SET
@@ -275,7 +263,7 @@ class AsyncPgVectorStore:
                     })
                 
                 await session.commit()
-                logger.info(f"pgvector 写入成功: {len(chunks)} chunks, dim={dim}")
+                logger.info(f"pgvector 写入成功: 表={table_name}, {len(chunks)} chunks, dim={dim}")
                 
             except Exception as e:
                 await session.rollback()
@@ -310,36 +298,51 @@ class AsyncPgVectorStore:
             raise ValueError("无法生成查询 embedding")
         
         embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
-        kb_ids_str = ",".join(f"'{kb_id}'" for kb_id in kb_ids)
+        
+        # 按 KB 分别查询并合并结果（每个 KB 可能有不同维度）
+        all_records: list[VectorRecord] = []
         
         async with self.session_factory() as session:
-            result = await session.execute(text(f"""
-                SELECT 
-                    id, text, metadata, kb_id,
-                    1 - (embedding <=> :embedding) as score
-                FROM {self._table_name}
-                WHERE tenant_id = :tenant_id 
-                AND kb_id IN ({kb_ids_str})
-                ORDER BY embedding <=> :embedding
-                LIMIT :top_k
-            """), {
-                "embedding": embedding_str,
-                "tenant_id": tenant_id,
-                "top_k": top_k,
-            })
+            for kb_id in kb_ids:
+                table_name = self._get_table_name(kb_id)
+                
+                # 检查表是否存在
+                check_result = await session.execute(text(f"""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_name = '{table_name}'
+                    )
+                """))
+                if not check_result.scalar():
+                    continue  # 表不存在，跳过
+                
+                result = await session.execute(text(f"""
+                    SELECT 
+                        id, text, metadata, kb_id,
+                        1 - (embedding <=> :embedding) as score
+                    FROM {table_name}
+                    WHERE tenant_id = :tenant_id
+                    ORDER BY embedding <=> :embedding
+                    LIMIT :top_k
+                """), {
+                    "embedding": embedding_str,
+                    "tenant_id": tenant_id,
+                    "top_k": top_k,
+                })
+                
+                for row in result.fetchall():
+                    metadata = row[2] if isinstance(row[2], dict) else json.loads(row[2] or "{}")
+                    all_records.append(VectorRecord(
+                        chunk_id=row[0],
+                        text=row[1],
+                        score=float(row[4]),
+                        metadata=metadata,
+                        knowledge_base_id=row[3],
+                    ))
             
-            records = []
-            for row in result.fetchall():
-                metadata = row[2] if isinstance(row[2], dict) else json.loads(row[2] or "{}")
-                records.append(VectorRecord(
-                    chunk_id=row[0],
-                    text=row[1],
-                    score=float(row[4]),
-                    metadata=metadata,
-                    knowledge_base_id=row[3],
-                ))
-            
-            return records
+            # 按分数排序并取 top_k
+            all_records.sort(key=lambda x: x.score, reverse=True)
+            return all_records[:top_k]
     
     async def delete(
         self,
@@ -361,25 +364,37 @@ class AsyncPgVectorStore:
         """
         async with self.session_factory() as session:
             try:
-                if chunk_ids:
-                    ids_str = ",".join(f"'{cid}'" for cid in chunk_ids)
-                    result = await session.execute(text(f"""
-                        DELETE FROM {self._table_name}
-                        WHERE tenant_id = :tenant_id AND id IN ({ids_str})
-                    """), {"tenant_id": tenant_id})
-                elif kb_id:
-                    result = await session.execute(text(f"""
-                        DELETE FROM {self._table_name}
-                        WHERE tenant_id = :tenant_id AND kb_id = :kb_id
-                    """), {"tenant_id": tenant_id, "kb_id": kb_id})
+                deleted = 0
+                
+                if kb_id:
+                    # 删除指定 KB 的数据
+                    table_name = self._get_table_name(kb_id)
+                    
+                    # 检查表是否存在
+                    check_result = await session.execute(text(f"""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE table_name = '{table_name}'
+                        )
+                    """))
+                    if check_result.scalar():
+                        if chunk_ids:
+                            ids_str = ",".join(f"'{cid}'" for cid in chunk_ids)
+                            result = await session.execute(text(f"""
+                                DELETE FROM {table_name}
+                                WHERE tenant_id = :tenant_id AND id IN ({ids_str})
+                            """), {"tenant_id": tenant_id})
+                        else:
+                            result = await session.execute(text(f"""
+                                DELETE FROM {table_name}
+                                WHERE tenant_id = :tenant_id
+                            """), {"tenant_id": tenant_id})
+                        deleted = result.rowcount
                 else:
-                    result = await session.execute(text(f"""
-                        DELETE FROM {self._table_name}
-                        WHERE tenant_id = :tenant_id
-                    """), {"tenant_id": tenant_id})
+                    # 未指定 kb_id，需要遍历所有表（不推荐）
+                    logger.warning("pgvector 删除: 未指定 kb_id，跳过删除")
                 
                 await session.commit()
-                deleted = result.rowcount
                 logger.info(f"pgvector 删除成功: {deleted} records")
                 return deleted
                 

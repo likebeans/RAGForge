@@ -701,6 +701,10 @@ async def _background_ingest_documents(
     """
     from datetime import datetime
     
+    # 让出控制权，确保任务在正确的事件循环上下文中运行
+    # 这解决了 SQLAlchemy async greenlet 上下文问题
+    await asyncio.sleep(0)
+    
     logger.info(f"后台入库任务开始: kb={kb_id}, 文档数={len(doc_id_mapping)}")
     
     async with SessionLocal() as db:

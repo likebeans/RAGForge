@@ -164,6 +164,19 @@ class Settings(BaseSettings):
     es_refresh: str = "false"      # bulk refresh 策略：false/true/wait_for/auto
     es_max_retries: int = 2        # ES 请求重试次数
     
+    # ==================== MinerU PDF 解析配置 ====================
+    mineru_base_url: str = "http://localhost:8010"  # MinerU 服务地址
+    mineru_timeout: int = 300  # PDF 解析超时时间（秒）
+    
+    # ==================== OSS 对象存储配置 ====================
+    oss_enabled: bool = False  # 是否启用 OSS 存储
+    oss_provider: str = "minio"  # minio / aliyun / aws
+    oss_endpoint: str = "http://localhost:9000"  # OSS 服务地址
+    oss_access_key: str | None = None  # Access Key
+    oss_secret_key: str | None = None  # Secret Key
+    oss_bucket: str = "ragforge"  # 存储桶名称
+    oss_region: str = "us-east-1"  # 区域（AWS S3 需要）
+    
     # ==================== BM25 配置（内存实现，生产建议 ES/OpenSearch） ====================
     bm25_enabled: bool = True  # 可关闭内存 BM25，避免多实例不一致
     bm25_backend: str = "memory"  # memory / es

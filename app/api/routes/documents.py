@@ -440,7 +440,7 @@ async def delete_document(
 @router.post("/v1/knowledge-bases/{kb_id}/documents/upload", response_model=DocumentIngestResponse)
 async def upload_file_endpoint(
     kb_id: str = Path(..., description="Knowledge base ID"),
-    file: UploadFile = File(..., description="要上传的文本文件"),
+    file: UploadFile = File(..., description="要上传的文件"),
     title: str | None = Form(default=None, description="文档标题（可选，默认使用文件名）"),
     source: str | None = Form(default=None, description="来源类型"),
     tenant=Depends(get_tenant),
@@ -450,9 +450,16 @@ async def upload_file_endpoint(
     """
     文件直传上传文档（multipart/form-data）
     
-    支持的文件类型：.txt, .md, .markdown, .json
-    文件大小限制：10MB
+    支持的文件类型：
+    - 文本：.txt, .md, .markdown, .json
+    - Excel：.xlsx, .xls
+    - Word：.docx
+    - PDF：.pdf（需要 MinerU 服务）
+    
+    文件大小限制：50MB
     """
+    from app.pipeline.parsers import parser_registry
+    
     # 验证知识库归属
     kb = await ensure_kb_belongs_to_tenant(db, kb_id=kb_id, tenant_id=tenant.id)
     if not kb:
@@ -462,40 +469,54 @@ async def upload_file_endpoint(
         )
 
     # 验证文件类型
-    allowed_extensions = {".txt", ".md", ".markdown", ".json"}
     filename = file.filename or "untitled.txt"
-    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if ext not in allowed_extensions:
+    if not parser_registry.can_parse(filename):
+        supported = ", ".join(sorted(parser_registry.supported_extensions()))
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "VALIDATION_ERROR", "detail": f"不支持的文件类型: {ext}，仅支持 {allowed_extensions}"},
+            detail={"code": "VALIDATION_ERROR", "detail": f"不支持的文件类型，支持: {supported}"},
         )
 
     # 读取文件内容
-    try:
-        content_bytes = await file.read()
-        # 限制文件大小 10MB
-        if len(content_bytes) > 10 * 1024 * 1024:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"code": "VALIDATION_ERROR", "detail": "文件大小超过 10MB 限制"},
-            )
-        content = content_bytes.decode("utf-8")
-    except UnicodeDecodeError:
+    content_bytes = await file.read()
+    
+    # 限制文件大小 50MB
+    max_size_mb = 50
+    if len(content_bytes) > max_size_mb * 1024 * 1024:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "VALIDATION_ERROR", "detail": "文件编码错误，仅支持 UTF-8"},
+            detail={"code": "VALIDATION_ERROR", "detail": f"文件大小超过 {max_size_mb}MB 限制"},
+        )
+
+    # 使用解析器解析文件
+    try:
+        parse_result = await parser_registry.parse(content_bytes, filename)
+        content = parse_result.content
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "PARSE_ERROR", "detail": str(e)},
+        )
+    except Exception as e:
+        logger.error(f"文件解析失败: {filename}, {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "PARSE_ERROR", "detail": f"文件解析失败: {type(e).__name__}"},
         )
 
     # 使用文件名作为默认标题
+    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     doc_title = title or filename.rsplit(".", 1)[0]
     doc_source = source or f"file:{ext.lstrip('.')}"
 
-    # 构建摄取参数对象
+    # 构建摄取参数对象，包含解析元数据
+    doc_metadata = {"original_filename": filename}
+    doc_metadata.update(parse_result.metadata)
+    
     params = IngestionParams(
         title=doc_title,
         content=content,
-        metadata={"original_filename": filename},
+        metadata=doc_metadata,
         source=doc_source,
     )
     
@@ -527,6 +548,24 @@ async def upload_file_endpoint(
         params=params,
         embedding_config=embedding_config,
     )
+    
+    # 存储原始文件到 OSS（异步，不阻塞入库）
+    from app.services.file_storage import get_file_storage
+    file_storage = get_file_storage()
+    if file_storage.enabled:
+        try:
+            raw_file_path = await file_storage.store_raw_file(
+                tenant_id=tenant.id,
+                doc_id=result.document.id,
+                filename=filename,
+                content=content_bytes,
+            )
+            if raw_file_path:
+                result.document.raw_file_path = raw_file_path
+                logger.info(f"原始文件已存储到 OSS: {raw_file_path}")
+        except Exception as e:
+            logger.warning(f"原始文件存储失败（不影响入库）: {e}")
+    
     await db.commit()
     
     # 记录多后端写入失败

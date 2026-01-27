@@ -137,3 +137,10 @@ class Document(TimestampMixin, Base):
     # 记录文档入库过程的详细日志，用于前端展示处理进度和排查问题
     # 格式：每行一条日志，包含时间戳和日志内容
     processing_log: Mapped[str | None] = mapped_column(Text)
+    
+    # ==================== OSS 存储路径 ====================
+    # 原始文件 OSS 路径，格式：oss://bucket/tenant_id/raw/doc_id/filename
+    raw_file_path: Mapped[str | None] = mapped_column(String(500))
+    
+    # 解析结果 OSS 路径，格式：oss://bucket/tenant_id/parsed/doc_id/result.json
+    parsed_result_path: Mapped[str | None] = mapped_column(String(500))
