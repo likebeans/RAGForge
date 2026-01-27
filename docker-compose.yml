@@ -1,0 +1,58 @@
+services:
+  # yaoyan 后端服务
+  yaoyan-backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: yaoyan-backend
+    ports:
+      - "${BACKEND_PORT:-3002}:3002"
+    environment:
+      # Database (使用外部 RAGForge PostgreSQL)
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://kb:kb@host.docker.internal:5435/yaoyan}
+      DB_HOST: ${DB_HOST:-host.docker.internal}
+      DB_PORT: ${DB_PORT:-5435}
+      DB_USER: ${DB_USER:-kb}
+      DB_PASSWORD: ${DB_PASSWORD:-kb}
+      DB_NAME: ${DB_NAME:-yaoyan}
+      # JWT
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-yaoyan-jwt-secret-key-2026}
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRE_DAYS: 7
+      # RAGForge
+      RAGFORGE_BASE_URL: ${RAGFORGE_BASE_URL:-http://192.168.168.105:8020}
+      RAGFORGE_ADMIN_KEY: ${RAGFORGE_ADMIN_KEY:-}
+      # Encryption
+      API_KEY_ENCRYPTION_KEY: ${API_KEY_ENCRYPTION_KEY:-your-aes-key-32-bytes-long!!}
+      # CORS
+      CORS_ORIGINS: '["http://localhost:5173","http://localhost:3000"]'
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    networks:
+      - yaoyan-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # yaoyan 前端服务
+  yaoyan-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: yaoyan-frontend
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      yaoyan-backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - yaoyan-network
+
+networks:
+  yaoyan-network:
+    driver: bridge

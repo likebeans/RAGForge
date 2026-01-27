@@ -1,0 +1,21 @@
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.venv
+venv
+.env
+*.egg-info
+
+# IDE
+.vscode
+.idea
+
+# Tests
+tests
+pytest.ini
+
+# Misc
+*.log
+.DS_Store

@@ -1,0 +1,46 @@
+# Git
+.git
+.gitignore
+
+# Node
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.venv
+venv
+.env
+*.egg-info
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Build outputs
+dist
+build
+
+# Docker
+.docker
+
+# Docs
+docs
+*.md
+!README.md
+
+# Tests
+tests
+__tests__
+*.test.js
+*.spec.js
+
+# Misc
+.DS_Store
+Thumbs.db
+*.log
