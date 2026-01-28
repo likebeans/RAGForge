@@ -524,7 +524,8 @@ class RaptorNativeIndexer:
         Returns:
             保存的向量数量
         """
-        from app.infra.vector_store import vector_store
+        from app.infra.vector_store_factory import get_vector_store
+        vector_store = get_vector_store()
         import uuid
         import numpy as np
         
