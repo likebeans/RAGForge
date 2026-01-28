@@ -402,6 +402,73 @@ class AsyncPgVectorStore:
                 await session.rollback()
                 logger.error(f"pgvector 删除失败: {e}")
                 raise
+    
+    async def upsert_vectors(
+        self,
+        *,
+        tenant_id: str,
+        knowledge_base_id: str,
+        vectors: list[dict],
+    ) -> int:
+        """
+        批量写入已有向量（不重新生成 embedding，用于 RAPTOR 等场景）
+        
+        Args:
+            tenant_id: 租户 ID
+            knowledge_base_id: 知识库 ID
+            vectors: 向量列表，每个包含 {id, vector, payload}
+            
+        Returns:
+            写入的向量数量
+        """
+        if not vectors:
+            return 0
+        
+        # 获取维度和表名
+        dim = len(vectors[0]["vector"])
+        table_name = self._get_table_name(knowledge_base_id)
+        
+        async with self.session_factory() as session:
+            try:
+                await self._ensure_extension(session)
+                await self._ensure_table(session, table_name, dim)
+                
+                count = 0
+                for vec in vectors:
+                    vec_id = vec["id"]
+                    vector = vec["vector"]
+                    payload = vec.get("payload", {})
+                    
+                    text = payload.get("text", "")
+                    metadata_json = json.dumps(payload, ensure_ascii=False)
+                    embedding_str = "[" + ",".join(str(x) for x in vector) + "]"
+                    
+                    await session.execute(text(f"""
+                        INSERT INTO {table_name} 
+                        (id, tenant_id, kb_id, text, embedding, metadata)
+                        VALUES (:id, :tenant_id, :kb_id, :text, :embedding, :metadata)
+                        ON CONFLICT (id) DO UPDATE SET
+                            text = EXCLUDED.text,
+                            embedding = EXCLUDED.embedding,
+                            metadata = EXCLUDED.metadata
+                    """), {
+                        "id": str(vec_id),
+                        "tenant_id": tenant_id,
+                        "kb_id": knowledge_base_id,
+                        "text": text,
+                        "embedding": embedding_str,
+                        "metadata": metadata_json,
+                    })
+                    count += 1
+                
+                await session.commit()
+                logger.info(f"pgvector upsert_vectors 成功: 表={table_name}, {count} vectors, dim={dim}")
+                return count
+                
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"pgvector upsert_vectors 失败: {e}")
+                raise
 
 
 # 全局单例

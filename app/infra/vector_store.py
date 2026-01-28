@@ -477,6 +477,7 @@ class AsyncQdrantVectorStore:
         self,
         *,
         tenant_id: str,
+        kb_id: str = "",
         chunks: list[dict],
         strategy: IsolationStrategy = "auto",
         embedding_config: dict | None = None,

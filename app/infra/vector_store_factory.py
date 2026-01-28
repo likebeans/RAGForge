@@ -22,6 +22,7 @@ class VectorStoreProtocol(Protocol):
         self,
         *,
         tenant_id: str,
+        kb_id: str,
         chunks: list[dict],
         embedding_config: dict | None = None,
         **kwargs,

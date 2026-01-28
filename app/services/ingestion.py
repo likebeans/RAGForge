@@ -513,6 +513,7 @@ async def _index_to_vector_stores(
             vector_store = get_cached_vector_store()
             await vector_store.upsert_chunks(
                 tenant_id=ctx.tenant_id,
+                kb_id=ctx.kb.id,
                 chunks=chunk_data,
                 embedding_config=ctx.embedding_config,
             )
@@ -773,7 +774,7 @@ async def retry_failed_chunks(
         
         try:
             vector_store = get_cached_vector_store()
-            await vector_store.upsert_chunks(tenant_id=tenant_id, chunks=chunk_data)
+            await vector_store.upsert_chunks(tenant_id=tenant_id, kb_id=kb_id, chunks=chunk_data)
             # 成功
             for chunk in chunks:
                 chunk.indexing_status = "indexed"
