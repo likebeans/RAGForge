@@ -439,7 +439,7 @@ class AsyncPgVectorStore:
                     vector = vec["vector"]
                     payload = vec.get("payload", {})
                     
-                    text = payload.get("text", "")
+                    chunk_text = payload.get("text", "")
                     metadata_json = json.dumps(payload, ensure_ascii=False)
                     embedding_str = "[" + ",".join(str(x) for x in vector) + "]"
                     
@@ -455,7 +455,7 @@ class AsyncPgVectorStore:
                         "id": str(vec_id),
                         "tenant_id": tenant_id,
                         "kb_id": knowledge_base_id,
-                        "text": text,
+                        "text": chunk_text,
                         "embedding": embedding_str,
                         "metadata": metadata_json,
                     })
