@@ -516,6 +516,30 @@ async def upload_file_endpoint(
     # 从 KB 配置读取入库选项
     kb_cfg = kb.config or {}
     ingestion_cfg = kb_cfg.get("ingestion", {}) if isinstance(kb_cfg, dict) else {}
+    enricher_cfg = ingestion_cfg.get("enricher", {}) if isinstance(ingestion_cfg, dict) else {}
+    indexer_cfg = ingestion_cfg.get("indexer", {}) if isinstance(ingestion_cfg, dict) else {}
+    
+    # enrich_chunks 可能在 ingestion 或 ingestion.enricher 中
+    enrich_chunks = (
+        ingestion_cfg.get("enrich_chunks", False) or 
+        enricher_cfg.get("enrich_chunks", False)
+    )
+    # generate_summary 可能在 ingestion 或 ingestion.enricher 中
+    generate_summary = ingestion_cfg.get("generate_summary", enricher_cfg.get("generate_summary", True))
+    
+    # 如果启用了增强，获取租户的 LLM 配置
+    llm_config = None
+    if enrich_chunks or generate_summary:
+        try:
+            llm_merged = await model_config_resolver.get_llm_config(
+                session=db, tenant=tenant
+            )
+            llm_config = model_config_resolver.build_provider_config(
+                llm_merged, "llm", tenant=tenant
+            )
+            logger.info(f"[Enrichment] 使用 LLM 配置: provider={llm_config.get('provider')}, model={llm_config.get('model')}")
+        except Exception as e:
+            logger.warning(f"获取 LLM 配置失败: {e}")
     
     params = IngestionParams(
         title=doc_title,
@@ -523,10 +547,11 @@ async def upload_file_endpoint(
         metadata=doc_metadata,
         source=doc_source,
         # 从 KB 配置读取增强选项
-        generate_doc_summary=ingestion_cfg.get("generate_summary", True),
-        enrich_chunks=ingestion_cfg.get("enrich_chunks", False),
-        enricher_config=ingestion_cfg.get("enricher"),
-        indexer_config=kb_cfg.get("raptor") if isinstance(kb_cfg, dict) else None,
+        generate_doc_summary=generate_summary,
+        enrich_chunks=enrich_chunks,
+        llm_config=llm_config,
+        enricher_config=enricher_cfg if enricher_cfg else None,
+        indexer_config=indexer_cfg if indexer_cfg else None,
     )
     
     # 使用 ModelConfigResolver 获取 Embedding 配置
