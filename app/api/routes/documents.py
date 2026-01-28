@@ -513,11 +513,20 @@ async def upload_file_endpoint(
     doc_metadata = {"original_filename": filename}
     doc_metadata.update(parse_result.metadata)
     
+    # 从 KB 配置读取入库选项
+    kb_cfg = kb.config or {}
+    ingestion_cfg = kb_cfg.get("ingestion", {}) if isinstance(kb_cfg, dict) else {}
+    
     params = IngestionParams(
         title=doc_title,
         content=content,
         metadata=doc_metadata,
         source=doc_source,
+        # 从 KB 配置读取增强选项
+        generate_doc_summary=ingestion_cfg.get("generate_summary", True),
+        enrich_chunks=ingestion_cfg.get("enrich_chunks", False),
+        enricher_config=ingestion_cfg.get("enricher"),
+        indexer_config=kb_cfg.get("raptor") if isinstance(kb_cfg, dict) else None,
     )
     
     # 使用 ModelConfigResolver 获取 Embedding 配置
