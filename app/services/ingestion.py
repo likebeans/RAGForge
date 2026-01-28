@@ -973,11 +973,38 @@ async def _build_raptor_index(
         )
     
     try:
-        # 从 KB 配置中获取 llm 配置（embedding_config 优先使用调用方传入的）
+        # 使用 model_config_resolver 获取 LLM 配置（支持租户级配置）
+        from app.services.model_config import model_config_resolver
+        from app.models import Tenant
+        from sqlalchemy import select
+        
+        # 获取租户对象
+        tenant_result = await session.execute(
+            select(Tenant).where(Tenant.id == tenant_id)
+        )
+        tenant = tenant_result.scalar_one_or_none()
+        
+        # 从 KB 配置中获取 llm 覆盖配置
         kb_cfg = kb.config or {}
-        llm_config = None
+        kb_llm_override = None
         if isinstance(kb_cfg, dict):
-            llm_config = kb_cfg.get("llm")
+            kb_llm_override = kb_cfg.get("llm")
+        
+        # 获取合并后的 LLM 配置（租户级 > 系统级 > 环境变量）
+        llm_merged = await model_config_resolver.get_llm_config(
+            session=session,
+            tenant=tenant,
+            request_override=kb_llm_override,
+        )
+        
+        # 构建完整的 provider_config（含 API Key）
+        llm_config = model_config_resolver.build_provider_config(
+            config=llm_merged,
+            config_type="llm",
+            tenant=tenant,
+        )
+        
+        logger.info(f"[RAPTOR] 使用 LLM 配置: provider={llm_config.get('provider')}, model={llm_config.get('model')}")
         
         # 创建原生索引器
         indexer = await create_raptor_native_indexer_from_config(
