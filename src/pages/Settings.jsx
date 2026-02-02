@@ -15,25 +15,27 @@ import {
   Database
 } from 'lucide-react'
 
-const STORAGE_KEY = 'ragforge_config'
+const CONFIG_KEY = 'ragforge_config'
 
+// 从 localStorage 或环境变量获取配置
 const getStoredConfig = () => {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY)
+    const stored = localStorage.getItem(CONFIG_KEY)
     if (stored) {
       return JSON.parse(stored)
     }
   } catch (e) {
     console.error('Failed to load config:', e)
   }
+  // 默认使用环境变量，强制用户通过设置页面配置
   return {
-    baseUrl: 'http://192.168.168.105:8020',
-    apiKey: 'kb_sk_yvmEUfH-E4R9CgNKxeo_9m2L4wzHcy8bxI3BSo0XxcQ'
+    baseUrl: import.meta.env.VITE_RAGFORGE_URL || '',
+    apiKey: import.meta.env.VITE_RAGFORGE_API_KEY || ''
   }
 }
 
 const saveConfig = (config) => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(config))
+  localStorage.setItem(CONFIG_KEY, JSON.stringify(config))
   window.dispatchEvent(new CustomEvent('config-changed', { detail: config }))
 }
 
