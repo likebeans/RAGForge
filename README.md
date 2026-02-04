@@ -46,6 +46,7 @@
 - **🧠 Advanced Retrieval Algorithms** - Dense/BM25/Hybrid/RAPTOR and more
 - **🔄 Pluggable Architecture** - Modular design with custom chunkers, retrievers, and enrichers
 - **🌐 Multi-LLM Providers** - OpenAI, Ollama, Qwen, Zhipu AI, and more
+- **⚡ Async Document Ingestion** - Background processing with status tracking and auto-polling
 - **📊 Full Observability** - Structured logging, request tracing, audit logs, and metrics
 - **🐍 Python SDK** - Complete client library supporting all features
 - **🚀 Production Ready** - Docker deployment, database migrations, configuration management
@@ -65,12 +66,13 @@
 - **Advanced RAG Features**:
   - **HyDE** - LLM-generated hypothetical documents for better semantic retrieval
   - **Multi-Query** - LLM-generated query variants with RRF fusion
-  - **RAPTOR** - Recursive clustering + LLM summarization for hierarchical indexing
+  - **RAPTOR** - Recursive clustering + LLM summarization for hierarchical indexing (tenant-level LLM config)
   - **Parent-Child Chunking** - Large context + small precise matching
   - **Rerank** - Multiple reranking models (bge-reranker, Cohere, etc.)
   - **Document Summarization** - Auto-generate summaries during ingestion
-  - **Chunk Enrichment** - LLM-enhanced chunk context semantics
+  - **Chunk Enrichment** - LLM-enhanced chunk context semantics (tenant-level LLM config)
   - **Context Window** - Auto-expand surrounding context in results
+  - **Async Ingestion** - Background processing with `asyncio.create_task`, immediate API response
 
 ---
 

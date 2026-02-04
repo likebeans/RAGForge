@@ -165,7 +165,9 @@ class Settings(BaseSettings):
     es_max_retries: int = 2        # ES 请求重试次数
     
     # ==================== MinerU PDF 解析配置 ====================
+    mineru_enabled: bool = True  # 是否启用 MinerU（禁用时使用本地回退解析）
     mineru_base_url: str = "http://localhost:8010"  # MinerU 服务地址
+    mineru_api_key: str | None = None  # MinerU API Key（可选，用于云服务认证）
     mineru_timeout: int = 300  # PDF 解析超时时间（秒）
     
     # ==================== OSS 对象存储配置 ====================

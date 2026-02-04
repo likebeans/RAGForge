@@ -51,6 +51,79 @@ def _get_openai_compatible_client(api_key: str | None, base_url: str | None) -> 
     )
 
 
+def create_llm_client(
+    provider: str,
+    model: str,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> "LLMClient":
+    """
+    创建 LLM 客户端（支持动态配置）
+    
+    Args:
+        provider: 提供商名称 (openai/qwen/zhipu/siliconflow 等)
+        model: 模型名称
+        api_key: API Key
+        base_url: API 基础 URL
+    
+    Returns:
+        LLMClient: 包装后的 LLM 客户端
+    """
+    return LLMClient(
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+    )
+
+
+class LLMClient:
+    """LLM 客户端封装，支持动态配置"""
+    
+    def __init__(
+        self,
+        provider: str,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ):
+        self.provider = provider
+        self.model = model
+        self.api_key = api_key
+        self.base_url = base_url
+    
+    async def complete(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2048) -> str:
+        """执行 LLM 补全"""
+        if self.provider in ("openai", "qwen", "kimi", "deepseek", "zhipu", "siliconflow"):
+            client = _get_openai_compatible_client(self.api_key, self.base_url)
+            
+            response = await client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return response.choices[0].message.content or ""
+        
+        elif self.provider == "ollama":
+            base_url = self.base_url or "http://localhost:11434"
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
+                    f"{base_url}/api/chat",
+                    json={
+                        "model": self.model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "stream": False,
+                        "options": {"temperature": temperature},
+                    },
+                )
+                response.raise_for_status()
+                return response.json().get("message", {}).get("content", "")
+        
+        else:
+            raise ValueError(f"不支持的 LLM 提供商: {self.provider}")
+
+
 def _build_llm_config_from_override(
     override: dict[str, Any],
     settings: Any,

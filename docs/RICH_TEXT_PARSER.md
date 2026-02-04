@@ -1,7 +1,7 @@
 # 富文本文件解析功能开发方案
 
-> **版本**: v1.1  
-> **更新时间**: 2026-01-26  
+> **版本**: v1.2  
+> **更新时间**: 2026-02-04  
 > **作者**: RAGForge Team  
 > **状态**: ✅ 已完成基础功能实现
 
@@ -16,7 +16,559 @@
 | MinIO 服务 | ✅ 已部署 | Docker Compose 集成 |
 | OSS 存储 | ✅ 已完成 | 原始文件自动保存 |
 | 数据库字段 | ✅ 已完成 | Document 表添加 OSS 路径 |
-| Schema 提取 | ⏳ 待实现 | xlsx 模板字段提取（Phase 2） |
+| Schema 提取 | ✅ 已完成 | xlsx 模板字段提取 |
+| PDF字段提取→Excel | ✅ 已完成 | PDF解析→LLM字段提取→Excel导出 |
+
+---
+
+## 📌 PDF 字段提取到 Excel 完整流程
+
+### 核心流程图
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        PDF 字段提取到 Excel 完整流程                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────┐                                           
+  │   用户上传   │                                           
+  │ Excel 模板  │  定义要提取的字段                          
+  │ (字段定义)  │  如：产品名称、价格、规格、日期             
+  └──────┬───────┘                                           
+         │                                                   
+         ▼                                                   
+  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+  │  Step 1:    │     │  Step 2:    │     │  Step 3:    │
+  │  解析模板   │────▶│  创建Schema │────▶│  保存Schema │
+  │ (Excel→字段)│     │  (字段列表) │     │  (数据库)   │
+  └──────────────┘     └──────────────┘     └──────────────┘
+                                                    │
+                                                    ▼
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │                           Schema (提取模板)                               │
+  │  {                                                                        │
+  │    "id": "schema-123",                                                   │
+  │    "name": "产品信息提取",                                                │
+  │    "fields": [                                                            │
+  │      {"name": "产品名称", "type": "string"},                             │
+  │      {"name": "规格型号", "type": "string"},                             │
+  │      {"name": "价格", "type": "number"},                                 │
+  │      {"name": "生产日期", "type": "date"}                                │
+  │    ]                                                                      │
+  │  }                                                                        │
+  └──────────────────────────────────────────────────────────────────────────┘
+                                                    │
+                                                    ▼
+  ┌──────────────┐                                           
+  │   用户上传   │                                           
+  │  PDF 文件   │  需要提取信息的源文件                       
+  │ (多个文件)  │                                            
+  └──────┬───────┘                                           
+         │                                                   
+         ▼                                                   
+  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+  │  Step 4:    │     │  Step 5:    │     │  Step 6:    │
+  │  PDF 解析   │────▶│  转 Markdown │────▶│  全文内容   │
+  │  (MinerU)   │     │  (结构化)   │     │  (含表格)   │
+  └──────────────┘     └──────────────┘     └──────────────┘
+                                                    │
+                                                    ▼
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │                         Markdown 内容示例                                 │
+  │  # 产品说明书                                                             │
+  │                                                                           │
+  │  ## 基本信息                                                              │
+  │  | 项目 | 内容 |                                                          │
+  │  |------|------|                                                          │
+  │  | 产品名称 | 益生菌胶囊 |                                                │
+  │  | 规格型号 | 500mg×60粒 |                                                │
+  │  | 价格 | ¥199.00 |                                                       │
+  │  | 生产日期 | 2024-01-15 |                                                │
+  │  ...                                                                      │
+  └──────────────────────────────────────────────────────────────────────────┘
+                                                    │
+                                                    ▼
+  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+  │  Step 7:    │     │  Step 8:    │     │  Step 9:    │
+  │  LLM 提取   │────▶│  JSON 结果  │────▶│  生成 Excel │
+  │(按Schema提取)│     │ (结构化数据)│     │  (导出下载) │
+  └──────────────┘     └──────────────┘     └──────────────┘
+                              │                     │
+                              ▼                     ▼
+  ┌────────────────────────────────┐   ┌────────────────────────────────┐
+  │  {                             │   │  输出 Excel:                    │
+  │    "产品名称": "益生菌胶囊",    │   │  ┌─────────┬─────────┬─────┐   │
+  │    "规格型号": "500mg×60粒",    │   │  │产品名称 │规格型号 │价格 │   │
+  │    "价格": 199.00,             │   │  ├─────────┼─────────┼─────┤   │
+  │    "生产日期": "2024-01-15"    │   │  │益生菌.. │500mg×60│ 199 │   │
+  │  }                             │   │  │维生素.. │100mg×30│  89 │   │
+  └────────────────────────────────┘   │  └─────────┴─────────┴─────┘   │
+                                       └────────────────────────────────┘
+```
+
+### 各步骤详解
+
+#### Step 1-3: 创建提取模板 (Schema)
+
+**用户操作**：上传一个 Excel 文件作为模板，定义要提取的字段
+
+**Excel 模板格式**：
+```
+| 字段名称 | 字段类型 | 是否必填 | 说明 |
+|----------|----------|----------|------|
+| 产品名称 | string   | 是       | 产品的官方名称 |
+| 规格型号 | string   | 否       | 产品的规格描述 |
+| 价格     | number   | 否       | 产品单价（数字） |
+| 生产日期 | date     | 否       | 格式：YYYY-MM-DD |
+```
+
+**系统处理**：
+```python
+# ExcelParser.extract_schema() 从 Excel 提取字段定义
+schema = parser.extract_schema(excel_bytes, name="产品信息提取")
+# 返回:
+# ExtractionSchema(
+#     id="uuid-xxx",
+#     name="产品信息提取",
+#     fields=[
+#         {"name": "产品名称", "type": "string", "required": True},
+#         {"name": "规格型号", "type": "string", "required": False},
+#         {"name": "价格", "type": "number", "required": False},
+#         {"name": "生产日期", "type": "date", "required": False},
+#     ],
+#     source_file="template.xlsx"
+# )
+```
+
+#### Step 4-6: PDF 解析为 Markdown
+
+**用户操作**：上传需要提取信息的 PDF 文件
+
+**系统处理**：
+```python
+# PDFParser 调用 MinerU 服务解析 PDF
+from app.pipeline.parsers.pdf_parser import PDFParser
+from app.infra.mineru_client import MinerUClient
+
+parser = PDFParser()
+result = await parser.parse(pdf_bytes, "product_catalog.pdf")
+
+# result.content 包含完整的 Markdown 格式内容
+# - 文本段落保持原有结构
+# - 表格转换为 Markdown 表格
+# - 公式转换为 LaTeX 格式
+# - 图片提取为独立文件或 Base64
+```
+
+**MinerU 输出示例**：
+```markdown
+# 产品说明书
+
+## 一、产品概述
+
+本产品为高品质益生菌胶囊，采用先进的包埋技术...
+
+## 二、产品信息
+
+| 项目 | 内容 |
+|------|------|
+| 产品名称 | 益生菌胶囊 |
+| 规格型号 | 500mg×60粒/瓶 |
+| 执行标准 | GB/T XXXXX |
+| 零售价格 | ¥199.00 |
+| 生产日期 | 2024-01-15 |
+| 保质期 | 24个月 |
+
+## 三、成分表
+
+| 成分 | 含量 | 单位 |
+|------|------|------|
+| 乳酸菌 | 100亿 | CFU |
+| 双歧杆菌 | 50亿 | CFU |
+...
+```
+
+#### Step 7-8: LLM 按 Schema 提取字段
+
+**系统处理**：
+```python
+# PDFParser._extract_with_schema() 调用 LLM 提取字段
+extracted_fields = await parser._extract_with_schema(
+    content=markdown_content,
+    schema=extraction_schema
+)
+
+# LLM Prompt 示例:
+"""
+请从以下文档内容中提取指定字段的信息。
+
+## 需要提取的字段
+- 产品名称 (string)
+- 规格型号 (string)
+- 价格 (number)
+- 生产日期 (date)
+
+## 文档内容
+{markdown_content}
+
+## 输出要求
+1. 严格按照 JSON 格式返回
+2. 如果某字段未找到，设为 null
+3. 价格字段仅保留数字
+4. 日期字段格式化为 YYYY-MM-DD
+
+请直接返回 JSON：
+"""
+
+# LLM 返回:
+{
+    "产品名称": "益生菌胶囊",
+    "规格型号": "500mg×60粒/瓶",
+    "价格": 199.00,
+    "生产日期": "2024-01-15"
+}
+```
+
+#### Step 9: 生成 Excel 导出
+
+**系统处理**：
+```python
+# 批量处理多个 PDF，汇总结果导出 Excel
+import openpyxl
+from io import BytesIO
+
+def generate_excel(schema: ExtractionSchema, results: list[dict]) -> bytes:
+    """将提取结果生成 Excel 文件"""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "提取结果"
+    
+    # 写入表头（从 Schema 获取字段名）
+    headers = [f["name"] for f in schema.fields]
+    for col, header in enumerate(headers, start=1):
+        ws.cell(row=1, column=col, value=header)
+    
+    # 写入数据行
+    for row_idx, result in enumerate(results, start=2):
+        for col, header in enumerate(headers, start=1):
+            ws.cell(row=row_idx, column=col, value=result.get(header))
+    
+    # 导出为 bytes
+    buffer = BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+```
+
+**输出 Excel 示例**：
+
+| 产品名称 | 规格型号 | 价格 | 生产日期 |
+|----------|----------|------|----------|
+| 益生菌胶囊 | 500mg×60粒 | 199 | 2024-01-15 |
+| 维生素C片 | 100mg×30片 | 89 | 2024-02-20 |
+| 蛋白粉 | 1kg/罐 | 299 | 2024-03-10 |
+
+### API 设计
+
+#### 1. 创建提取模板
+
+```bash
+POST /v1/extraction-schemas
+Content-Type: multipart/form-data
+
+file: template.xlsx        # Excel 模板文件（定义字段）
+name: 产品信息提取          # 模板名称
+```
+
+**响应**：
+```json
+{
+  "id": "schema-123",
+  "name": "产品信息提取",
+  "fields": [
+    {"name": "产品名称", "type": "string", "required": true},
+    {"name": "规格型号", "type": "string", "required": false},
+    {"name": "价格", "type": "number", "required": false},
+    {"name": "生产日期", "type": "date", "required": false}
+  ]
+}
+```
+
+#### 2. 批量提取 PDF 字段
+
+```bash
+POST /v1/extraction-schemas/{schema_id}/extract
+Content-Type: multipart/form-data
+
+files[]: product1.pdf      # 多个 PDF 文件
+files[]: product2.pdf
+files[]: product3.pdf
+output_format: excel       # 输出格式：json / excel
+```
+
+**响应（JSON 格式）**：
+```json
+{
+  "results": [
+    {
+      "filename": "product1.pdf",
+      "fields": {
+        "产品名称": "益生菌胶囊",
+        "规格型号": "500mg×60粒",
+        "价格": 199,
+        "生产日期": "2024-01-15"
+      }
+    },
+    {
+      "filename": "product2.pdf",
+      "fields": {
+        "产品名称": "维生素C片",
+        "规格型号": "100mg×30片",
+        "价格": 89,
+        "生产日期": "2024-02-20"
+      }
+    }
+  ],
+  "total": 2,
+  "success": 2,
+  "failed": 0
+}
+```
+
+**响应（Excel 格式）**：
+```
+Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+Content-Disposition: attachment; filename="extraction_result.xlsx"
+
+<Excel 二进制内容>
+```
+
+#### 3. 使用示例（完整流程）
+
+```bash
+# 1. 上传 Excel 模板，创建 Schema
+SCHEMA_ID=$(curl -X POST "$BASE_URL/v1/extraction-schemas" \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "file=@template.xlsx" \
+  -F "name=产品信息提取" | jq -r '.id')
+
+echo "创建 Schema: $SCHEMA_ID"
+
+# 2. 批量上传 PDF，按 Schema 提取字段，导出 Excel
+curl -X POST "$BASE_URL/v1/extraction-schemas/$SCHEMA_ID/extract" \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "files[]=@product1.pdf" \
+  -F "files[]=@product2.pdf" \
+  -F "files[]=@product3.pdf" \
+  -F "output_format=excel" \
+  --output extraction_result.xlsx
+
+echo "提取完成，结果已保存到 extraction_result.xlsx"
+```
+
+### 技术实现要点
+
+#### 1. MinerU 配置（可选线上/自部署）
+
+```bash
+# .env
+MINERU_ENABLED=true                          # 是否启用 MinerU
+MINERU_BASE_URL=http://localhost:8010        # 自部署地址
+MINERU_API_KEY=                              # API Key（云服务）
+MINERU_TIMEOUT=300                           # 超时时间（秒）
+```
+
+#### 2. LLM 配置（用于字段提取）
+
+提取使用 **租户级 LLM 配置**，通过 `model_config_resolver` 获取：
+- **优先级**：租户级 > 系统级 > 环境变量
+- **支持多提供商**：qwen/zhipu/siliconflow/openai/ollama 等
+- **无 LLM 时**：返回 `{"_warning": "未配置 LLM"}` 警告，不会报错
+
+**配置方式**：
+
+```bash
+# 方式 1: 环境变量（全局默认）
+LLM_PROVIDER=qwen
+LLM_MODEL=qwen-turbo
+QWEN_API_KEY=sk-xxx
+
+# 方式 2: 租户级配置（通过 Admin API）
+curl -X PATCH "$BASE_URL/admin/tenants/{tenant_id}" \
+  -H "X-Admin-Token: $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_config": {
+      "llm": {
+        "provider": "siliconflow",
+        "model": "Qwen/Qwen2.5-7B-Instruct"
+      }
+    }
+  }'
+```
+
+#### 3. 文件存储与入库说明
+
+**PDF 提取支持两种模式**：
+
+| 模式 | 参数 | 行为 | 适用场景 |
+|------|------|------|----------|
+| **仅提取** | 不传 `kb_id` | 提取字段后丢弃 PDF | 临时数据处理 |
+| **提取+入库** | 传入 `kb_id` | 提取字段 + 异步存储 OSS + 入库知识库 | 需要后续检索 |
+
+**提取+入库流程**（指定 `kb_id` 时）：
+```
+PDF 上传 → 内存解析 → LLM 提取 → 立即返回结果
+                              ↓
+                    [异步后台任务]
+                              ↓
+            PDF 存储到 OSS → Markdown 切分 → 向量化 → 入库知识库
+```
+
+**API 调用示例**：
+```bash
+# 仅提取（不入库）
+curl -X POST "$BASE_URL/v1/extraction-schemas/$SCHEMA_ID/extract" \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "files[]=@product.pdf" \
+  -F "output_format=json"
+
+# 提取 + 入库到知识库（异步）
+curl -X POST "$BASE_URL/v1/extraction-schemas/$SCHEMA_ID/extract" \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "files[]=@product.pdf" \
+  -F "output_format=json" \
+  -F "kb_id=$KB_ID"
+```
+
+**入库后的数据**：
+- **OSS 路径**: `oss://ragforge/{tenant_id}/raw/{doc_id}/{filename}`
+- **Document 记录**: 包含提取的字段元数据
+- **Chunks**: PDF 转 Markdown 后切分入库，支持语义检索
+
+#### 4. 错误处理
+
+| 场景 | 处理方式 |
+|------|----------|
+| MinerU 不可用 | 回退到 PyMuPDF 本地解析 |
+| PDF 解析失败 | 返回错误，跳过该文件 |
+| LLM 提取失败 | 重试 1 次，仍失败则标记为提取失败 |
+| JSON 解析失败 | 返回原始 LLM 响应，标记解析错误 |
+
+#### 5. 性能优化
+
+- **异步处理**：多个 PDF 并发解析
+- **批量 LLM 调用**：支持批量提取减少 API 调用次数
+- **缓存**：相同 PDF Hash 跳过重复解析
+
+### 实现状态（2026-02-04 验证通过）
+
+#### 已实现文件
+
+| 文件 | 说明 |
+|------|------|
+| `app/models/extraction_schema.py` | ExtractionSchema ORM 模型 |
+| `app/schemas/extraction_schema.py` | Pydantic 请求/响应模型 |
+| `app/api/routes/extraction.py` | 提取模板管理 API |
+| `app/pipeline/parsers/excel_parser.py` | Excel 模板解析（extract_schema） |
+| `app/pipeline/parsers/pdf_parser.py` | PDF 解析 + LLM 字段提取 |
+| `alembic/versions/20250204_0001_*.py` | 数据库迁移脚本 |
+| `tests/test_extraction_api.py` | API 测试脚本 |
+
+#### 测试结果
+
+**基础功能测试**（无 LLM 配置）：
+```bash
+# 运行测试
+ADMIN_TOKEN=ragforge-admin-2024 uv run python tests/test_extraction_api.py
+
+# 输出
+[1] 创建测试租户... ✅
+[2] 创建提取模板... ✅ (4 字段)
+[3] 列出提取模板... ✅
+[4] 获取提取模板详情... ✅
+[5] 测试 PDF 提取...
+    - JSON 输出: ✅ (200 OK, 返回警告信息)
+    - Excel 输出: ✅ (5KB xlsx 文件)
+```
+
+**完整流程测试**（使用配置了 LLM 的租户 `test-tenant`）：
+```python
+# 租户配置
+tenant_id: a61c607a-d631-49d2-80c6-f2cdd8cd7d7b
+model_settings: {
+  "providers": {
+    "qwen": {"api_key": "sk-xxx", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"}
+  },
+  "defaults": {
+    "llm": {"provider": "qwen", "model": "qwen-plus-2025-12-01"}
+  }
+}
+
+# 测试结果
+[1] 创建 Excel 模板... ✅
+[2] 创建提取模板... ✅ (Schema ID: fa1baff3-553d-415f-b9c0-1afd4f90eb93)
+[3] 创建测试 PDF... ✅
+[4] 测试 PDF 提取... ✅
+    总数: 1, 成功: 1, 失败: 0
+    提取字段: {
+      "产品名称": "Premium Wireless Headphones",
+      "价格": 299.99,
+      "规格": "Bluetooth 5.0, 40mm drivers",
+      "生产日期": "2024-01-15"
+    }
+```
+
+#### 依赖说明
+
+- **PDF 解析**: MinerU（优先） 或 PyMuPDF（回退）
+- **LLM 提取**: 自动使用租户级 > 系统级 > 环境变量 LLM 配置
+- **Excel 生成**: openpyxl
+
+#### LLM 配置说明
+
+字段提取使用 `model_config_resolver` 自动获取 LLM 配置：
+
+| 配置层级 | 优先级 | 配置方式 |
+|----------|--------|----------|
+| 租户级 | 高 | Admin API 更新 `model_config.llm` |
+| 系统级 | 中 | 数据库 `system_configs` 表 |
+| 环境变量 | 低 | `LLM_PROVIDER`, `LLM_MODEL` |
+
+**无 LLM 时的行为**：
+- 返回 `{"_warning": "未配置 LLM，请在租户设置或环境变量中配置 LLM 提供商"}`
+- PDF 解析正常完成，仅字段提取跳过
+- 不会抛出异常，保证流程可用性
+
+**如何为租户配置 LLM**：
+
+```bash
+# 方式 1: 通过 Admin API 配置租户级 LLM
+curl -X PATCH "http://localhost:8020/admin/tenants/{tenant_id}" \
+  -H "X-Admin-Token: ragforge-admin-2024" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_settings": {
+      "providers": {
+        "qwen": {
+          "api_key": "sk-xxx",
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        }
+      },
+      "defaults": {
+        "llm": {
+          "provider": "qwen",
+          "model": "qwen-plus-2025-12-01"
+        }
+      }
+    }
+  }'
+
+# 方式 2: 配置环境变量（全局默认）
+# 在 .env 或 docker-compose.yml 中添加：
+LLM_PROVIDER=qwen
+LLM_MODEL=qwen-plus-2025-12-01
+QWEN_API_KEY=sk-xxx
+```
 
 ---
 
@@ -36,7 +588,7 @@
 ### 1.2 特殊需求
 
 1. **全文提取**：✅ 支持复杂公式、图表、表格
-2. **Schema 提取**：⏳ xlsx 作为模板，定义从 PDF 中提取的字段（待实现）
+2. **Schema 提取**：✅ xlsx 作为模板，定义从 PDF 中提取的字段
 3. **MinerU 集成**：✅ 使用本地部署的 MinerU 服务解析 PDF
 4. **低并发**：✅ 无需考虑高并发优化
 5. **OSS 存储**：✅ 原始文件自动保存到 MinIO

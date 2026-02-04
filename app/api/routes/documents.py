@@ -5,6 +5,7 @@
 上传的文档会被切分成片段并向量化存入向量数据库。
 """
 
+import asyncio
 import logging
 
 import httpx
@@ -37,6 +38,7 @@ from app.services.ingestion import ensure_kb_belongs_to_tenant, ingest_document
 from app.services.model_config import model_config_resolver
 from app.pipeline import operator_registry
 from app.config import get_settings
+from app.db.session import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -541,19 +543,6 @@ async def upload_file_endpoint(
         except Exception as e:
             logger.warning(f"获取 LLM 配置失败: {e}")
     
-    params = IngestionParams(
-        title=doc_title,
-        content=content,
-        metadata=doc_metadata,
-        source=doc_source,
-        # 从 KB 配置读取增强选项
-        generate_doc_summary=generate_summary,
-        enrich_chunks=enrich_chunks,
-        llm_config=llm_config,
-        enricher_config=enricher_cfg if enricher_cfg else None,
-        indexer_config=indexer_cfg if indexer_cfg else None,
-    )
-    
     # 使用 ModelConfigResolver 获取 Embedding 配置
     embedding_config = None
     try:
@@ -574,40 +563,49 @@ async def upload_file_endpoint(
     except ValueError:
         pass  # 回退到知识库/环境变量配置
     
-    # 执行文档摄取
-    result = await ingest_document(
-        db,
+    # 【异步模式】先创建 Document 记录（状态为 processing），立即返回
+    new_doc = Document(
         tenant_id=tenant.id,
-        kb=kb,
-        params=params,
-        embedding_config=embedding_config,
+        knowledge_base_id=kb_id,
+        title=doc_title,
+        source=doc_source,
+        raw_content=content,
+        extra_metadata=doc_metadata,
+        processing_status="processing",
+        summary_status="pending",
+        processing_log="[等待处理] 文档已创建，正在排队入库...\n",
     )
-    
-    # 存储原始文件到 OSS（异步，不阻塞入库）
-    from app.services.file_storage import get_file_storage
-    file_storage = get_file_storage()
-    if file_storage.enabled:
-        try:
-            raw_file_path = await file_storage.store_raw_file(
-                tenant_id=tenant.id,
-                doc_id=result.document.id,
-                filename=filename,
-                content=content_bytes,
-            )
-            if raw_file_path:
-                result.document.raw_file_path = raw_file_path
-                logger.info(f"原始文件已存储到 OSS: {raw_file_path}")
-        except Exception as e:
-            logger.warning(f"原始文件存储失败（不影响入库）: {e}")
+    db.add(new_doc)
+    await db.flush()
+    doc_id = new_doc.id
     
     await db.commit()
     
-    # 记录多后端写入失败
-    for failed in result.failed_stores():
-        logger.warning(f"文档 {result.document.id} 多后端写入失败: [{failed.store_type}] {failed.error}")
-
-    logger.info(f"Uploaded file '{filename}' as document {result.document.id} with {len(result.chunks)} chunks")
-    return DocumentIngestResponse(document_id=result.document.id, chunk_count=len(result.chunks))
+    logger.info(f"文件上传成功，文档 {doc_id} 已创建，开始后台入库")
+    
+    # 启动后台任务执行实际入库
+    asyncio.create_task(
+        _background_file_ingest(
+            tenant_id=tenant.id,
+            kb_id=kb_id,
+            doc_id=doc_id,
+            content=content,
+            doc_title=doc_title,
+            doc_metadata=doc_metadata,
+            doc_source=doc_source,
+            filename=filename,
+            content_bytes=content_bytes,
+            generate_summary=generate_summary,
+            enrich_chunks=enrich_chunks,
+            llm_config=llm_config,
+            enricher_cfg=enricher_cfg,
+            indexer_cfg=indexer_cfg,
+            embedding_config=embedding_config,
+        )
+    )
+    
+    # 立即返回（chunk_count 暂为 0，后台任务完成后更新）
+    return DocumentIngestResponse(document_id=doc_id, chunk_count=0)
 
 
 @router.post("/v1/knowledge-bases/{kb_id}/documents/batch", response_model=BatchIngestResponse)
@@ -851,3 +849,127 @@ async def advanced_batch_ingest_endpoint(
         succeeded=succeeded,
         failed=failed,
     )
+
+
+async def _background_file_ingest(
+    tenant_id: str,
+    kb_id: str,
+    doc_id: str,
+    content: str,
+    doc_title: str,
+    doc_metadata: dict,
+    doc_source: str,
+    filename: str,
+    content_bytes: bytes,
+    generate_summary: bool,
+    enrich_chunks: bool,
+    llm_config: dict | None,
+    enricher_cfg: dict | None,
+    indexer_cfg: dict | None,
+    embedding_config: dict | None,
+):
+    """
+    后台任务：执行实际的文档入库（chunking、embedding、写入向量库）
+    
+    此函数在独立的数据库会话中运行，不影响主请求的响应速度。
+    """
+    from datetime import datetime
+    
+    # 让出控制权，确保任务在正确的事件循环上下文中运行
+    await asyncio.sleep(0)
+    
+    logger.info(f"[后台入库] 开始处理文档 {doc_id}: {doc_title}")
+    
+    async with SessionLocal() as db:
+        try:
+            # 获取知识库
+            kb_result = await db.execute(
+                select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
+            )
+            kb = kb_result.scalar_one_or_none()
+            if not kb:
+                logger.error(f"[后台入库] 知识库 {kb_id} 不存在")
+                return
+            
+            # 获取文档记录
+            doc_result = await db.execute(
+                select(Document).where(Document.id == doc_id)
+            )
+            doc = doc_result.scalar_one_or_none()
+            if not doc:
+                logger.error(f"[后台入库] 文档 {doc_id} 不存在")
+                return
+            
+            # 更新处理日志
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            doc.processing_log = f"[{ts}] [INFO] 开始处理文档: {doc_title}\n"
+            await db.flush()
+            
+            # 构建 IngestionParams
+            params = IngestionParams(
+                title=doc_title,
+                content=content,
+                metadata=doc_metadata,
+                source=doc_source,
+                generate_doc_summary=generate_summary,
+                enrich_chunks=enrich_chunks,
+                llm_config=llm_config,
+                enricher_config=enricher_cfg,
+                indexer_config=indexer_cfg,
+                existing_doc_id=doc_id,  # 使用已存在的文档 ID
+            )
+            
+            # 执行入库
+            result = await ingest_document(
+                db,
+                tenant_id=tenant_id,
+                kb=kb,
+                params=params,
+                embedding_config=embedding_config,
+            )
+            
+            # 存储原始文件到 OSS
+            from app.services.file_storage import get_file_storage
+            file_storage = get_file_storage()
+            if file_storage.enabled:
+                try:
+                    raw_file_path = await file_storage.store_raw_file(
+                        tenant_id=tenant_id,
+                        doc_id=doc_id,
+                        filename=filename,
+                        content=content_bytes,
+                    )
+                    if raw_file_path:
+                        doc.raw_file_path = raw_file_path
+                        logger.info(f"[后台入库] 原始文件已存储到 OSS: {raw_file_path}")
+                except Exception as e:
+                    logger.warning(f"[后台入库] 原始文件存储失败（不影响入库）: {e}")
+            
+            # 更新文档状态为完成
+            doc.processing_status = "completed"
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            doc.processing_log += f"[{ts}] [INFO] 入库完成，共 {len(result.chunks)} 个 chunks\n"
+            
+            await db.commit()
+            
+            # 记录多后端写入失败
+            for failed_store in result.failed_stores():
+                logger.warning(f"[后台入库] 文档 {doc_id} 多后端写入失败: [{failed_store.store_type}] {failed_store.error}")
+            
+            logger.info(f"[后台入库] 文档 {doc_id} 入库完成，共 {len(result.chunks)} 个 chunks")
+            
+        except Exception as e:
+            logger.error(f"[后台入库] 文档 {doc_id} 入库失败: {type(e).__name__}: {e}")
+            try:
+                # 更新文档状态为失败
+                doc_result = await db.execute(
+                    select(Document).where(Document.id == doc_id)
+                )
+                doc = doc_result.scalar_one_or_none()
+                if doc:
+                    doc.processing_status = "failed"
+                    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    doc.processing_log += f"[{ts}] [ERROR] 入库失败: {type(e).__name__}: {e}\n"
+                    await db.commit()
+            except Exception as inner_e:
+                logger.error(f"[后台入库] 更新文档状态失败: {inner_e}")

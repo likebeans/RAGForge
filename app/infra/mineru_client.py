@@ -10,14 +10,16 @@ logger = logging.getLogger(__name__)
 class MinerUClient:
     """MinerU PDF 解析服务客户端"""
     
-    def __init__(self, base_url: str, timeout: int = 300):
+    def __init__(self, base_url: str, timeout: int = 300, api_key: str | None = None):
         """
         Args:
             base_url: MinerU 服务地址，如 http://localhost:8010
             timeout: 请求超时时间（秒），PDF 解析可能较慢
+            api_key: API Key（可选，用于云服务认证）
         """
         self.base_url = base_url.rstrip("/")
         self.timeout = httpx.Timeout(float(timeout))
+        self.api_key = api_key
     
     async def parse_pdf(
         self,
@@ -41,7 +43,12 @@ class MinerUClient:
                 "page_count": 10,           # 页数
             }
         """
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        # 构建请求头（如果有 API Key）
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        
+        async with httpx.AsyncClient(timeout=self.timeout, headers=headers) as client:
             files = {"file": (filename, file_bytes, "application/pdf")}
             data = {"output_format": output_format}
             

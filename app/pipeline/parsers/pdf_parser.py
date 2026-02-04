@@ -17,14 +17,32 @@ class PDFParser(FileParser):
         self._mineru_base_url = mineru_base_url
     
     @property
+    def _settings(self):
+        """获取配置"""
+        from app.config import get_settings
+        return get_settings()
+    
+    @property
+    def mineru_enabled(self) -> bool:
+        """是否启用 MinerU"""
+        return getattr(self._settings, "mineru_enabled", True)
+    
+    @property
     def mineru_base_url(self) -> str:
         """获取 MinerU 服务地址"""
         if self._mineru_base_url:
             return self._mineru_base_url
-        
-        from app.config import get_settings
-        settings = get_settings()
-        return getattr(settings, "MINERU_BASE_URL", "http://localhost:8010")
+        return getattr(self._settings, "mineru_base_url", "http://localhost:8010")
+    
+    @property
+    def mineru_api_key(self) -> str | None:
+        """获取 MinerU API Key"""
+        return getattr(self._settings, "mineru_api_key", None)
+    
+    @property
+    def mineru_timeout(self) -> int:
+        """获取 MinerU 超时时间"""
+        return getattr(self._settings, "mineru_timeout", 300)
     
     @property
     def supported_extensions(self) -> set[str]:
@@ -35,6 +53,8 @@ class PDFParser(FileParser):
         file_bytes: bytes,
         filename: str,
         extraction_schema: ExtractionSchema | None = None,
+        tenant_id: str | None = None,
+        db_session: "AsyncSession | None" = None,
     ) -> ParseResult:
         """
         解析 PDF 文件
@@ -42,16 +62,25 @@ class PDFParser(FileParser):
         1. 调用 MinerU 服务提取全文（含公式、图表）
         2. 如果有 extraction_schema，调用 LLM 进行结构化提取
         """
+        # 检查是否启用 MinerU
+        if not self.mineru_enabled:
+            logger.info("MinerU 未启用，使用本地解析")
+            return await self._parse_local_fallback(file_bytes, filename, extraction_schema, tenant_id, db_session)
+        
         from app.infra.mineru_client import MinerUClient
         
         # Step 1: MinerU 全文提取
-        client = MinerUClient(base_url=self.mineru_base_url)
+        client = MinerUClient(
+            base_url=self.mineru_base_url,
+            timeout=self.mineru_timeout,
+            api_key=self.mineru_api_key,
+        )
         
         try:
             mineru_result = await client.parse_pdf(file_bytes, filename)
         except Exception as e:
             logger.error(f"MinerU 解析失败，尝试本地回退: {e}")
-            return await self._parse_local_fallback(file_bytes, filename)
+            return await self._parse_local_fallback(file_bytes, filename, extraction_schema, tenant_id, db_session)
         
         # 构建内容块
         blocks = self._build_blocks(mineru_result)
@@ -65,7 +94,7 @@ class PDFParser(FileParser):
         extracted_fields = None
         if extraction_schema and extraction_schema.fields:
             extracted_fields = await self._extract_with_schema(
-                full_content, extraction_schema
+                full_content, extraction_schema, tenant_id, db_session
             )
         
         return ParseResult(
@@ -129,9 +158,18 @@ class PDFParser(FileParser):
         self,
         content: str,
         schema: ExtractionSchema,
+        tenant_id: str | None = None,
+        db_session: "AsyncSession | None" = None,
     ) -> dict:
-        """使用 LLM 按 Schema 提取结构化字段"""
-        from app.infra.llm import get_llm_client
+        """
+        使用 LLM 按 Schema 提取结构化字段
+        
+        LLM 配置优先级：租户级 > 系统级 > 环境变量
+        如果没有配置 LLM，返回警告信息
+        """
+        from app.services.model_config import model_config_resolver
+        from app.models import Tenant
+        from sqlalchemy import select
         
         # 构建字段列表
         field_list = "\n".join([
@@ -161,12 +199,55 @@ class PDFParser(FileParser):
 
 请直接返回 JSON，不要包含其他文字："""
         
+        import json
+        
         try:
-            llm = get_llm_client()
+            # 获取租户对象
+            tenant = None
+            if db_session and tenant_id:
+                tenant_result = await db_session.execute(
+                    select(Tenant).where(Tenant.id == tenant_id)
+                )
+                tenant = tenant_result.scalar_one_or_none()
+            
+            # 使用 model_config_resolver 获取 LLM 配置
+            if db_session:
+                llm_merged = await model_config_resolver.get_llm_config(
+                    session=db_session,
+                    tenant=tenant,
+                )
+                # 构建完整配置（含 API Key）
+                llm_config = model_config_resolver.build_provider_config(
+                    config=llm_merged,
+                    config_type="llm",
+                    tenant=tenant,
+                )
+            else:
+                # 无数据库会话，使用环境变量配置
+                from app.config import get_settings
+                settings = get_settings()
+                llm_config = settings.get_llm_config()
+            
+            provider = llm_config.get("provider")
+            if not provider:
+                logger.warning(f"未配置 LLM，无法提取字段 (tenant_id={tenant_id})")
+                return {
+                    "_warning": "未配置 LLM，请在租户设置或环境变量中配置 LLM 提供商",
+                    "_tenant_id": tenant_id,
+                }
+            
+            # 创建 LLM 客户端
+            from app.infra.llm import create_llm_client
+            llm = create_llm_client(
+                provider=provider,
+                model=llm_config.get("model", ""),
+                api_key=llm_config.get("api_key"),
+                base_url=llm_config.get("base_url"),
+            )
+            
             response = await llm.complete(prompt, temperature=0.1)
             
             # 解析 JSON
-            import json
             json_str = response
             
             # 尝试提取 JSON 部分
@@ -188,6 +269,9 @@ class PDFParser(FileParser):
         self,
         file_bytes: bytes,
         filename: str,
+        extraction_schema: ExtractionSchema | None = None,
+        tenant_id: str | None = None,
+        db_session: "AsyncSession | None" = None,
     ) -> ParseResult:
         """本地回退方案（使用 PyMuPDF）"""
         try:
@@ -203,6 +287,7 @@ class PDFParser(FileParser):
         
         blocks = []
         content_parts = []
+        page_count = len(doc)
         
         for page_num, page in enumerate(doc, start=1):
             # 提取文本
@@ -217,13 +302,23 @@ class PDFParser(FileParser):
         
         doc.close()
         
+        full_content = "\n\n".join(content_parts)
+        
+        # 如果有 Schema，进行结构化提取
+        extracted_fields = None
+        if extraction_schema and extraction_schema.fields:
+            extracted_fields = await self._extract_with_schema(
+                full_content, extraction_schema, tenant_id, db_session
+            )
+        
         return ParseResult(
-            content="\n\n".join(content_parts),
+            content=full_content,
             blocks=blocks,
             metadata={
                 "format": "pdf",
-                "page_count": len(doc),
+                "page_count": page_count,
                 "filename": filename,
                 "parser": "pymupdf_fallback",
             },
+            extracted_fields=extracted_fields,
         )

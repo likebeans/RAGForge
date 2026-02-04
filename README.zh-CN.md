@@ -43,6 +43,7 @@
 - **🧠 先进检索算法** - 支持 Dense/BM25/Hybrid/RAPTOR 等多种算法
 - **🔄 可插拔架构** - 模块化设计，支持自定义切分器、检索器、增强器
 - **🌐 多 LLM 提供商** - 支持 OpenAI、Ollama、Qwen、智谱 AI 等多种模型
+- **⚡ 异步文档入库** - 后台处理，状态追踪，前端自动轮询
 - **📊 完整可观测性** - 结构化日志、请求追踪、审计日志和性能监控
 - **🐍 Python SDK** - 完整的客户端库，支持所有功能
 - **🚀 生产就绪** - Docker 部署、数据库迁移、配置管理等开箱即用
@@ -62,12 +63,13 @@
 - **高级 RAG 功能**:
   - **HyDE** - LLM 生成假设文档，提升语义检索效果
   - **Multi-Query** - LLM 生成查询变体，RRF 融合
-  - **RAPTOR** - 递归聚类 + LLM 摘要构建多层次索引树
+  - **RAPTOR** - 递归聚类 + LLM 摘要构建多层次索引树（租户级 LLM 配置）
   - **Parent-Child Chunking** - 父子分块，大块上下文 + 小块精确匹配
   - **Rerank** - 支持多种重排模型（bge-reranker、Cohere 等）
   - **文档摘要** - 摄取时自动生成文档摘要
-  - **Chunk Enrichment** - LLM 增强 Chunk 上下文语义
+  - **Chunk Enrichment** - LLM 增强 Chunk 上下文语义（租户级 LLM 配置）
   - **上下文窗口** - 检索结果自动扩展前后文
+  - **异步入库** - `asyncio.create_task` 后台处理，API 立即响应
 
 ---
 

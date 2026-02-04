@@ -32,6 +32,7 @@ from app.models.chunk import Chunk
 from app.models.conversation import Conversation, Message
 from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase
+from app.models.extraction_schema import ExtractionSchema
 from app.models.raptor_node import RaptorNode
 from app.models.system_config import SystemConfig
 from app.models.tenant import Tenant
@@ -46,6 +47,7 @@ __all__ = [
     "Chunk",
     "Conversation",
     "Document",
+    "ExtractionSchema",
     "KnowledgeBase",
     "Message",
     "RaptorNode",

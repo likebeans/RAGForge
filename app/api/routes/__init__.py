@@ -21,6 +21,7 @@ from app.api.routes import (
     conversations,
     documents,
     enrichment,
+    extraction,
     health,
     kb,
     model_providers,
@@ -56,3 +57,4 @@ api_router.include_router(enrichment.router, tags=["enrichment"])  # 增强预�
 api_router.include_router(raptor.router)  # RAPTOR 索引管理
 api_router.include_router(settings.router)  # 模型配置管理
 api_router.include_router(provider_config.router, tags=["model-configs"])  # 租户模型配置管理
+api_router.include_router(extraction.router)  # PDF 字段提取到 Excel

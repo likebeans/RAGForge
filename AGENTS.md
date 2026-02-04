@@ -10,6 +10,8 @@
 - 多租户架构（租户隔离、配额管理、权限控制）
 - 知识库管理（创建、配置、删除）
 - 文档摄取（上传、切分、向量化、索引）
+  - **异步入库**（`asyncio.create_task` 后台处理，立即返回）
+  - **状态追踪**（processing/completed/failed，前端自动轮询）
 - 语义检索（Dense/BM25/Hybrid/RAPTOR/HyDE 等）
 - RAG 生成（多 LLM 提供商支持）
 - 三层权限模型（操作权限 + KB 范围 + 文档 ACL）
@@ -241,6 +243,11 @@ RAGForge/
 | `context_window` | 上下文窗口大小 | 1 |
 | `include_headers` | 是否包含章节标题 | true |
 
+**LLM 配置**：
+- Chunk 增强使用 **租户级 LLM 配置**（通过 `model_config_resolver` 获取）
+- 支持多提供商（qwen/zhipu/siliconflow/openai 等）
+- 优先级：请求级 > 知识库级 > 租户级 > 系统级 > 环境变量
+
 ### 后处理 (Postprocessors)
 - `ContextWindowExpander`: 上下文窗口扩展
 
@@ -289,7 +296,14 @@ Layer 0:      [C1][C2] [C3]   [C4] [C5] [C6]  (原始Chunks)
 - [x] 数据模型（raptor_nodes 表）
 - [x] 索引持久化（保存到 PostgreSQL）
 - [x] 多提供商 Embedding（qwen/siliconflow/zhipu 等）
+- [x] **租户级 LLM 配置**（使用 `model_config_resolver` 获取租户配置）
 - [ ] RaptorRetriever 检索集成
+
+**LLM 配置**：
+- RAPTOR 索引构建使用 **租户级 LLM 配置**
+- 通过 `model_config_resolver.get_llm_config()` 获取配置
+- 支持多提供商（qwen/zhipu/siliconflow/openai 等）
+- 优先级：知识库级 > 租户级 > 系统级 > 环境变量
 
 **参考论文**：https://arxiv.org/abs/2401.18059
 
@@ -375,6 +389,60 @@ USING hnsw ((embedding::halfvec(2560)) halfvec_cosine_ops) WITH (m = 16, ef_cons
 **参考文档**：[Supabase HNSW Indexes](https://supabase.com/docs/guides/ai/vector-indexes/hnsw-indexes)
 
 **注意**：更高的 `m` 和 `ef_construction` 值会提高召回率，但增加内存和构建时间。
+
+## 异步入库机制
+
+文件上传采用 **异步后台处理** 模式，避免长时间阻塞请求。
+
+### 工作流程
+
+```
+用户上传文件 → API 解析文件 → 创建 Document 记录（status=processing）
+                                    ↓
+                          立即返回 document_id
+                                    ↓
+                          asyncio.create_task() 启动后台任务
+                                    ↓
+                          后台执行：chunking → embedding → 向量库写入
+                                    ↓
+                          更新 Document.processing_status = completed/failed
+```
+
+### 关键实现
+
+**后端**（`app/api/routes/documents.py`）：
+1. `upload_file_endpoint`：
+   - 解析文件后立即创建 `Document` 记录（`processing_status="processing"`）
+   - 调用 `asyncio.create_task(_background_file_ingest)` 启动后台任务
+   - 立即返回 `document_id`（`chunk_count=0`）
+
+2. `_background_file_ingest` 函数：
+   - 使用独立的 `SessionLocal()` 数据库会话
+   - 调用 `ingest_document()` 执行实际入库
+   - 完成后更新 `processing_status` 和 `processing_log`
+   - 异常时记录失败状态
+
+**前端**（自动支持，无需修改）：
+1. 上传文件后立即收到 `document_id`
+2. 文档列表显示 `processing` 状态
+3. 自动轮询（每 3 秒）检测状态变化
+4. 状态变为 `completed` 后显示 `chunk_count`
+
+### 状态说明
+
+| 状态 | 说明 | 前端行为 |
+|------|------|----------|
+| `processing` | 正在处理中 | 显示进度动画，自动轮询 |
+| `completed` | 入库完成 | 显示 chunk 数量，停止轮询 |
+| `failed` | 入库失败 | 显示错误状态，可查看日志 |
+
+### 优势
+
+- ✅ **快速响应**：API 立即返回，不阻塞请求
+- ✅ **并发处理**：多个文件同时上传时，各自独立处理
+- ✅ **状态可追踪**：通过 `processing_status` 和 `processing_log` 查看进度
+- ✅ **容错性**：单个文件失败不影响其他文件
+- ✅ **前端友好**：自动轮询，无需手动刷新
 
 ## 租户管理 (Admin API)
 
