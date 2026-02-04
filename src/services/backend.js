@@ -227,6 +227,50 @@ class BackendClient {
   async getDictByCategory(category) {
     return this.request('GET', `/api/dicts/${category}`)
   }
+
+  // ==================== PDF 智能提取 ====================
+
+  async listExtractionSchemas() {
+    return this.request('GET', '/api/ragforge/extraction-schemas')
+  }
+
+  async createExtractionSchema(file, name) {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('name', name)
+    return this.request('POST', '/api/ragforge/extraction-schemas', formData)
+  }
+
+  async getExtractionSchema(schemaId) {
+    return this.request('GET', `/api/ragforge/extraction-schemas/${schemaId}`)
+  }
+
+  async deleteExtractionSchema(schemaId) {
+    return this.request('DELETE', `/api/ragforge/extraction-schemas/${schemaId}`)
+  }
+
+  async extractFromPdfs(schemaId, files, outputFormat = 'json') {
+    const token = authService.getToken()
+    const formData = new FormData()
+    files.forEach(file => formData.append('files', file))
+    formData.append('output_format', outputFormat)
+    
+    const response = await fetch(`${this.baseUrl}/api/ragforge/extraction-schemas/${schemaId}/extract`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: formData
+    })
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }))
+      throw new Error(error.detail || `HTTP ${response.status}`)
+    }
+    
+    if (outputFormat === 'excel') {
+      return response.blob()
+    }
+    return response.json()
+  }
 }
 
 export const backendClient = new BackendClient()

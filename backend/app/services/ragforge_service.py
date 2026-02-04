@@ -134,3 +134,75 @@ class RagForgeService:
                 async for line in response.aiter_lines():
                     if line:
                         yield line + "\n"
+
+    # ==================== 提取模板 API ====================
+    
+    async def create_extraction_schema(self, api_key: str, file_bytes: bytes, filename: str, name: str) -> dict:
+        """创建提取模板（上传 Excel 定义字段）"""
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{self.base_url}/v1/extraction-schemas",
+                headers={"Authorization": f"Bearer {api_key}"},
+                files={"file": (filename, file_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                data={"name": name}
+            )
+            response.raise_for_status()
+            return response.json()
+    
+    async def list_extraction_schemas(self, api_key: str) -> dict:
+        """获取提取模板列表"""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{self.base_url}/v1/extraction-schemas",
+                headers={"Authorization": f"Bearer {api_key}"}
+            )
+            response.raise_for_status()
+            return response.json()
+    
+    async def get_extraction_schema(self, api_key: str, schema_id: str) -> dict:
+        """获取提取模板详情"""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{self.base_url}/v1/extraction-schemas/{schema_id}",
+                headers={"Authorization": f"Bearer {api_key}"}
+            )
+            response.raise_for_status()
+            return response.json()
+    
+    async def delete_extraction_schema(self, api_key: str, schema_id: str) -> None:
+        """删除提取模板"""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.delete(
+                f"{self.base_url}/v1/extraction-schemas/{schema_id}",
+                headers={"Authorization": f"Bearer {api_key}"}
+            )
+            response.raise_for_status()
+    
+    async def extract_from_pdfs(self, api_key: str, schema_id: str, files: list[tuple], output_format: str = "json") -> dict | bytes:
+        """
+        批量提取 PDF 字段
+        
+        Args:
+            api_key: API Key
+            schema_id: 提取模板 ID
+            files: 文件列表 [(filename, file_bytes), ...]
+            output_format: 输出格式 "json" 或 "excel"
+        
+        Returns:
+            JSON 结果或 Excel 文件字节
+        """
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            # 构建 multipart 文件列表
+            files_data = [("files", (fname, fbytes, "application/pdf")) for fname, fbytes in files]
+            
+            response = await client.post(
+                f"{self.base_url}/v1/extraction-schemas/{schema_id}/extract",
+                headers={"Authorization": f"Bearer {api_key}"},
+                files=files_data,
+                data={"output_format": output_format}
+            )
+            response.raise_for_status()
+            
+            if output_format == "excel":
+                return response.content
+            return response.json()

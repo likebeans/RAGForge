@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Download, Upload, Plus, Database, FileSpreadsheet, RefreshCw, BarChart3, Layers, Clock } from 'lucide-react'
+import { Download, Upload, Plus, Database, FileSpreadsheet, RefreshCw, BarChart3, Layers, Clock, FileText } from 'lucide-react'
 import backendClient from '../services/backend'
 import ProjectFilters from './projects/components/ProjectFilters'
 import ProjectTable from './projects/components/ProjectTable'
 import ProjectModal from './projects/components/ProjectModal'
+import PdfExtractModal from './projects/components/PdfExtractModal'
 
 export default function DataManagement() {
   // 状态管理
@@ -21,6 +22,9 @@ export default function DataManagement() {
     mode: 'view', // 'view' | 'edit' | 'create'
     project: null
   })
+  
+  // PDF 智能提取模态框
+  const [showPdfExtract, setShowPdfExtract] = useState(false)
 
   // 筛选条件
   const [filters, setFilters] = useState({
@@ -300,6 +304,14 @@ export default function DataManagement() {
             </button>
 
             <button 
+              onClick={() => setShowPdfExtract(true)}
+              className="px-3 py-1.5 text-sm bg-violet-50 text-violet-700 border border-violet-200 rounded-lg hover:bg-violet-100 transition-colors flex items-center gap-1.5"
+            >
+              <FileText className="w-4 h-4" />
+              PDF 智能提取
+            </button>
+
+            <button 
               onClick={() => setModal({ show: true, mode: 'create', project: {} })} 
               className="px-3 py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors flex items-center gap-1.5"
             >
@@ -345,6 +357,12 @@ export default function DataManagement() {
           onSave={handleSaveProject}
         />
       )}
+
+      {/* PDF 智能提取模态框 */}
+      <PdfExtractModal
+        show={showPdfExtract}
+        onClose={() => setShowPdfExtract(false)}
+      />
     </div>
   )
 }
