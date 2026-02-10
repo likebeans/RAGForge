@@ -34,8 +34,20 @@ jobs:
       - name: Unit tests (security/audit)
         run: uv run pytest -m "not e2e"
 
+  check-env:
+    runs-on: ubuntu-latest
+    outputs:
+      run_openai: ${{ steps.check.outputs.run_openai }}
+      run_es: ${{ steps.check.outputs.run_es }}
+    steps:
+      - id: check
+        run: |
+          echo "run_openai=${{ env.RUN_OPENAI_E2E == '1' && 'true' || 'false' }}" >> $GITHUB_OUTPUT
+          echo "run_es=${{ env.RUN_ES_E2E == '1' && 'true' || 'false' }}" >> $GITHUB_OUTPUT
+
   e2e:
-    if: ${{ secrets.RUN_OPENAI_E2E == '1' }}
+    needs: check-env
+    if: ${{ needs.check-env.outputs.run_openai == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,15 +60,11 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen
       - name: Run e2e OpenAI/RAG tests (requires API_BASE/API_KEY/Kb)
-        env:
-          RUN_OPENAI_E2E: ${{ env.RUN_OPENAI_E2E }}
-          API_BASE: ${{ env.API_BASE }}
-          API_KEY: ${{ env.API_KEY }}
-          KB_ID: ${{ env.KB_ID }}
         run: uv run pytest -m "e2e" tests/test_e2e_openai.py tests/test_e2e_health.py
 
   es-e2e:
-    if: ${{ secrets.RUN_ES_E2E == '1' }}
+    needs: check-env
+    if: ${{ needs.check-env.outputs.run_es == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,12 +77,4 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen
       - name: Run ES/OpenSearch e2e tests
-        env:
-          RUN_ES_E2E: ${{ env.RUN_ES_E2E }}
-          API_BASE: ${{ env.API_BASE }}
-          API_KEY: ${{ env.API_KEY }}
-          KB_ID: ${{ env.KB_ID }}
-          ES_HOSTS: ${{ env.ES_HOSTS }}
-          ES_USERNAME: ${{ env.ES_USERNAME }}
-          ES_PASSWORD: ${{ env.ES_PASSWORD }}
         run: uv run pytest -m "e2e" tests/test_opensearch_e2e.py
