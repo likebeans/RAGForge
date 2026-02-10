@@ -20,6 +20,7 @@ from app.schemas.config import LLMConfig
 from app.schemas.query import ChunkHit
 from app.schemas.rag import RAGModelInfo, RAGResponse, RAGSource
 from app.services.acl import UserContext
+from app.services.model_config import model_config_resolver
 from app.services.query import get_tenant_kbs, retrieve_chunks
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,18 @@ async def generate_rag_response(
     """
     settings = get_settings()
     
+    # 获取租户 LLM 配置（如果未提供 llm_override 则使用租户配置）
+    llm_provider_config = None
+    if tenant and not params.llm_override:
+        try:
+            llm_config = await model_config_resolver.get_llm_config(session, tenant=tenant)
+            llm_provider_config = model_config_resolver.build_provider_config(
+                llm_config, "llm", tenant=tenant
+            )
+            logger.info(f"RAG: 使用租户 LLM 配置: provider={llm_provider_config.get('provider')}, model={llm_provider_config.get('model')}")
+        except Exception as e:
+            logger.warning(f"RAG: 获取租户 LLM 配置失败，使用环境变量默认值: {e}")
+    
     # 1. 获取知识库
     kbs = await get_tenant_kbs(session, tenant_id, params.kb_ids)
     if not kbs:
@@ -91,6 +104,7 @@ async def generate_rag_response(
             params.temperature,
             params.max_tokens,
             params.llm_override,
+            llm_provider_config,
         )
         return _build_response(
             answer=answer,
@@ -132,6 +146,7 @@ async def generate_rag_response(
             params.temperature,
             params.max_tokens,
             params.llm_override,
+            llm_provider_config,
         )
     else:
         answer = await _generate_with_context(
@@ -141,6 +156,7 @@ async def generate_rag_response(
             temperature=params.temperature,
             max_tokens=params.max_tokens,
             llm_override=params.llm_override,
+            llm_provider_config=llm_provider_config,
         )
     
     # 4. 构建响应
@@ -177,6 +193,7 @@ async def _generate_with_context(
     temperature: float | None,
     max_tokens: int | None,
     llm_override: LLMConfig | None,
+    llm_provider_config: dict | None = None,
 ) -> str:
     """带上下文的 LLM 生成"""
     # 构建上下文
@@ -193,13 +210,21 @@ async def _generate_with_context(
     user_prompt = CONTEXT_TEMPLATE.format(context=context, query=query)
     final_system = system_prompt or DEFAULT_RAG_SYSTEM_PROMPT
     
-    # 调用 LLM
+    # 调用 LLM（优先级：llm_override > 租户配置 > 环境变量）
     if llm_override:
         provider_config = llm_override.model_dump()
         provider_config["provider"] = llm_override.provider
         answer = await chat_completion_with_config(
             prompt=user_prompt,
             provider_config=provider_config,
+            system_prompt=final_system,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    elif llm_provider_config:
+        answer = await chat_completion_with_config(
+            prompt=user_prompt,
+            provider_config=llm_provider_config,
             system_prompt=final_system,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -221,6 +246,7 @@ async def _generate_without_context(
     temperature: float | None,
     max_tokens: int | None,
     llm_override: LLMConfig | None,
+    llm_provider_config: dict | None = None,
 ) -> str:
     """无上下文时的 LLM 生成"""
     no_context_prompt = """你是一个知识库问答助手。用户询问了一个问题，但知识库中没有找到相关信息。
@@ -228,12 +254,21 @@ async def _generate_without_context(
     
     final_system = system_prompt or no_context_prompt
     
+    # 调用 LLM（优先级：llm_override > 租户配置 > 环境变量）
     if llm_override:
         provider_config = llm_override.model_dump()
         provider_config["provider"] = llm_override.provider
         answer = await chat_completion_with_config(
             prompt=query,
             provider_config=provider_config,
+            system_prompt=final_system,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    elif llm_provider_config:
+        answer = await chat_completion_with_config(
+            prompt=query,
+            provider_config=llm_provider_config,
             system_prompt=final_system,
             temperature=temperature,
             max_tokens=max_tokens,

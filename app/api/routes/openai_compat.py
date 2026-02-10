@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_api_key_context, get_db_session, get_tenant
 from app.auth.api_key import APIKeyContext
 from app.config import get_settings
-from app.infra.embeddings import get_embeddings
+from app.infra.embeddings import get_embeddings_with_config
 from app.infra.logging import get_logger
 from app.models import Tenant
 from app.schemas.internal import RAGParams, RetrieveParams
@@ -29,6 +29,7 @@ from app.schemas.openai import (
     EmbeddingResponse,
     EmbeddingUsage,
 )
+from app.services.model_config import model_config_resolver
 from app.services.query import get_tenant_kbs
 from app.services.rag import generate_rag_response
 
@@ -213,6 +214,7 @@ async def chat_completions(
 async def embeddings(
     payload: EmbeddingRequest,
     tenant: Tenant = Depends(get_tenant),
+    db: AsyncSession = Depends(get_db_session),
     _: APIKeyContext = Depends(get_api_key_context),
 ):
     """
@@ -254,9 +256,15 @@ async def embeddings(
             detail={"code": "INVALID_REQUEST", "detail": "input 不能为空"},
         )
     
+    # 获取租户的 Embedding 配置
+    embedding_config = await model_config_resolver.get_embedding_config(db, tenant=tenant)
+    provider_config = model_config_resolver.build_provider_config(
+        embedding_config, "embedding", tenant=tenant
+    )
+    
     # 调用 Embedding 服务
     try:
-        embeddings_list = await get_embeddings(texts)
+        embeddings_list = await get_embeddings_with_config(texts, provider_config)
     except Exception as e:
         logger.error(f"Embedding 生成失败: {e}", exc_info=True)
         raise HTTPException(
@@ -282,10 +290,9 @@ async def embeddings(
         total_tokens=prompt_tokens,
     )
     
-    settings = get_settings()
     response = EmbeddingResponse(
         data=data,
-        model=settings.embedding_model,
+        model=provider_config.get("model", payload.model),
         usage=usage,
     )
     
