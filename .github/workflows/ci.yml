@@ -4,6 +4,16 @@ on:
   push:
   pull_request:
 
+env:
+  RUN_OPENAI_E2E: ${{ secrets.RUN_OPENAI_E2E }}
+  API_BASE: ${{ secrets.API_BASE }}
+  API_KEY: ${{ secrets.API_KEY }}
+  KB_ID: ${{ secrets.KB_ID }}
+  RUN_ES_E2E: ${{ secrets.RUN_ES_E2E }}
+  ES_HOSTS: ${{ secrets.ES_HOSTS }}
+  ES_USERNAME: ${{ secrets.ES_USERNAME }}
+  ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+
 jobs:
   lint-test:
     runs-on: ubuntu-latest
