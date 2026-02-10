@@ -460,6 +460,6 @@ curl -X GET "$API_BASE/v1/knowledge-bases/$KB_ID" \
 ## 相关资源
 
 - [API 参考文档](../architecture/api-specification.md)
-- [Python SDK 文档](../../sdk/README.md)
+- [Python SDK 文档](../sdk/README.md)
 - [算法框架说明](../architecture/pipeline-architecture.md)
 - [部署指南](../operations/deployment.md)

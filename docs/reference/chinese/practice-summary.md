@@ -6,7 +6,7 @@
 
 | 配置项 | 值 |
 |--------|-----|
-| API 服务 | http://localhost:8020 |
+| API 服务 | `http://localhost:8020` |
 | Embedding | Ollama / bge-m3 (1024维) |
 | LLM | Ollama / qwen3:14b |
 | 向量库 | Qdrant |
@@ -204,7 +204,7 @@ source /tmp/rag_demo.env
 
 ## 九、相关文档
 
-- [API 设计文档](./API设计.md)
-- [测试记录](./测试记录.md)
-- [优化方案](./优化.md)
-- [部署指南](./部署.md)
+- [API 设计文档](./api-design.md)
+- [测试记录](./test-records.md)
+- [优化方案](./optimization.md)
+- [部署指南](./deployment.md)

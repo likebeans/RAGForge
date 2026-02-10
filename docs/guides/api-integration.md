@@ -1,6 +1,6 @@
 # RAGForge API 对接文档
 
-> **更新时间**: 2026-01-28  
+> **更新时间**: 2026-02-09  
 > **测试环境**: http://192.168.168.105:8020
 
 ## 概述
@@ -13,6 +13,9 @@ RAGForge 提供以下核心 API 接口供 Agent 服务对接：
 | 文档管理 | `/v1/knowledge-bases/{kb_id}/documents` | 上传、查询、删除文档 |
 | **检索 API** | `/v1/retrieve` | 从知识库检索相关文档片段 |
 | **RAG 生成 API** | `/v1/rag` | 结合检索和 LLM 生成回答 |
+| **流式 RAG API** | `/v1/rag/stream` | SSE 流式 RAG 生成 |
+| **OpenAI 兼容 Chat** | `/v1/chat/completions` | OpenAI 兼容的聊天接口（RAG 模式） |
+| **OpenAI 兼容 Embeddings** | `/v1/embeddings` | OpenAI 兼容的向量化接口 |
 
 ## 认证
 
@@ -452,7 +455,7 @@ curl -X POST "http://192.168.168.105:8020/v1/rag" \
 
 ```json
 {
-  "answer": "根据提供的参考资料，针对**关节疼痛**问题，推荐使用：\n\n### ✅ **典恒金崮膏**\n\n**理由如下：**\n- 明确宣称"三效协同直击关节根源"，主打改善关节健康；\n- 适用人群中包含：久坐族、中老年、运动人群、湿寒体质——这些群体常伴有关节不适或疼痛；\n- 组方理念源自"医圣李时珍养生精髓"，严选二十二味道地本草...\n\n⚠️ 注意事项：\n- 不宜与藜芦同用；\n- 忌食高嘌呤食物、海鲜等...",
+  "answer": "根据提供的参考资料，针对**关节疼痛**问题，推荐使用：\n\n### ✅ **典恒金崮膏**\n\n**理由如下：**\n- 明确宣称\"三效协同直击关节根源\"，主打改善关节健康；\n- 适用人群中包含：久坐族、中老年、运动人群、湿寒体质——这些群体常伴有关节不适或疼痛；\n- 组方理念源自\"医圣李时珍养生精髓\"，严选二十二味道地本草...\n\n⚠️ 注意事项：\n- 不宜与藜芦同用；\n- 忌食高嘌呤食物、海鲜等...",
   "sources": [
     {
       "chunk_id": "1c881e70-2915-4c6b-9e52-2a1c8f188e23",
@@ -498,7 +501,194 @@ curl -X POST "http://localhost:8020/v1/rag" \
 
 ---
 
-## 3. 错误码说明
+## 2.5 流式 RAG API
+
+### 接口信息
+
+| 项目 | 值 |
+|------|-----|
+| **URL** | `POST /v1/rag/stream` |
+| **认证** | Bearer Token |
+| **Content-Type** | application/json |
+| **响应格式** | Server-Sent Events (SSE) |
+
+### 请求参数
+
+与 `/v1/rag` 相同。
+
+### 请求示例
+
+```bash
+curl -X POST "http://192.168.168.105:8020/v1/rag/stream" \
+  -H "Authorization: Bearer kb_sk_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "这个产品有什么功效？",
+    "knowledge_base_ids": ["53e84425-3516-44a5-be25-9a83cee2c156"]
+  }'
+```
+
+### SSE 响应格式
+
+```
+event: sources
+data: [{"text": "...", "score": 0.85, "chunk_id": "xxx", "knowledge_base_id": "xxx"}]
+
+event: content
+data: 根据
+
+event: content
+data: 参考资料
+
+event: content
+data: ，这款产品...
+
+event: done
+data: {"usage": {"prompt_tokens": 150, "completion_tokens": 80}}
+```
+
+**事件类型**：
+- `sources`：检索到的文档来源（首次返回）
+- `content`：LLM 生成的内容片段（流式输出）
+- `done`：生成完成，包含 token 用量统计
+
+---
+
+## 3. OpenAI 兼容 API
+
+RAGForge 提供与 OpenAI API 兼容的接口，方便现有应用快速对接。
+
+### 3.1 Chat Completions（RAG 模式）
+
+| 项目 | 值 |
+|------|-----|
+| **URL** | `POST /v1/chat/completions` |
+| **认证** | Bearer Token |
+| **Content-Type** | application/json |
+
+#### 请求参数
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `model` | string | ✅ | 模型名称（会被租户配置覆盖） |
+| `messages` | array | ✅ | 消息列表 |
+| `knowledge_base_ids` | string[] | ✅ | 知识库 ID 列表（RAG 模式必填） |
+| `temperature` | float | ❌ | 温度参数（0-2） |
+| `max_tokens` | int | ❌ | 最大生成 token 数 |
+| `top_k` | int | ❌ | 检索结果数量（默认 5） |
+
+#### 请求示例
+
+```bash
+curl -X POST "http://192.168.168.105:8020/v1/chat/completions" \
+  -H "Authorization: Bearer kb_sk_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen-plus",
+    "messages": [
+      {"role": "user", "content": "这个知识库讲什么内容？"}
+    ],
+    "knowledge_base_ids": ["53e84425-3516-44a5-be25-9a83cee2c156"]
+  }'
+```
+
+#### 响应示例
+
+```json
+{
+  "id": "chatcmpl-56f4314d-62dc-4660-941d-b4504d0933fa",
+  "object": "chat.completion",
+  "created": 1770621977,
+  "model": "qwen-plus",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "根据参考资料，这个知识库包含健康产品的文献资料..."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 150,
+    "completion_tokens": 75,
+    "total_tokens": 225
+  },
+  "sources": [
+    {
+      "chunk_id": "xxx",
+      "text": "...",
+      "score": 0.85
+    }
+  ]
+}
+```
+
+> ⚠️ **注意**：当前版本 `knowledge_base_ids` 为必填参数，纯 LLM 模式暂未实现。
+
+### 3.2 Embeddings
+
+| 项目 | 值 |
+|------|-----|
+| **URL** | `POST /v1/embeddings` |
+| **认证** | Bearer Token |
+| **Content-Type** | application/json |
+
+#### 请求参数
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `input` | string/array | ✅ | 要向量化的文本（单个或列表） |
+| `model` | string | ❌ | 模型名称（使用租户默认配置） |
+
+#### 请求示例
+
+```bash
+# 单个文本
+curl -X POST "http://192.168.168.105:8020/v1/embeddings" \
+  -H "Authorization: Bearer kb_sk_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": "测试文本",
+    "model": "text-embedding-v3"
+  }'
+
+# 批量文本
+curl -X POST "http://192.168.168.105:8020/v1/embeddings" \
+  -H "Authorization: Bearer kb_sk_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": ["文本1", "文本2", "文本3"],
+    "model": "text-embedding-v3"
+  }'
+```
+
+#### 响应示例
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "embedding",
+      "index": 0,
+      "embedding": [0.0123, -0.0456, 0.0789, ...]
+    }
+  ],
+  "model": "Qwen/Qwen3-Embedding-8B",
+  "usage": {
+    "prompt_tokens": 3,
+    "total_tokens": 3
+  }
+}
+```
+
+> **说明**：响应中的 `model` 字段显示实际使用的模型（来自租户配置），可能与请求中指定的不同。
+
+---
+
+## 4. 错误码说明
 
 | HTTP 状态码 | 错误码 | 说明 |
 |------------|--------|------|
@@ -557,7 +747,7 @@ curl -X POST "$BASE_URL/v1/retrieve" \
 
 ---
 
-## 4. Python 快速接入代码
+## 5. Python 快速接入代码
 
 ```python
 import requests
@@ -633,7 +823,7 @@ def agent_with_rag(user_query: str, kb_ids: list[str]):
 
 ---
 
-## 5. 检索器类型
+## 6. 检索器类型
 
 | 检索器 | 说明 | 适用场景 |
 |--------|------|---------|
@@ -646,7 +836,7 @@ def agent_with_rag(user_query: str, kb_ids: list[str]):
 
 ---
 
-## 6. 健康检查
+## 7. 健康检查
 
 ```bash
 curl http://localhost:8020/health
@@ -662,11 +852,11 @@ curl http://localhost:8020/health
 
 ---
 
-## 7. 模型配置优先级
+## 8. 模型配置优先级
 
 RAGForge 的模型配置（Embedding/LLM/Rerank）遵循以下优先级规则：
 
-### 7.1 配置优先级
+### 8.1 配置优先级
 
 | 模型类型 | 优先级（从高到低） |
 |----------|-------------------|
@@ -674,14 +864,14 @@ RAGForge 的模型配置（Embedding/LLM/Rerank）遵循以下优先级规则：
 | **LLM** | 请求参数 > 租户默认配置 > 环境变量 |
 | **Rerank** | 请求参数 > 租户默认配置 > 环境变量 |
 
-### 7.2 配置来源说明
+### 8.2 配置来源说明
 
 1. **请求参数** (`*_override`)：API 请求中传入的覆盖配置
 2. **知识库配置**：创建知识库时指定的 `config.embedding`
 3. **租户默认配置**：前端设置页面同步到服务器的 `model_settings.defaults`
 4. **环境变量**：Docker 环境变量（如 `EMBEDDING_PROVIDER`、`LLM_PROVIDER`）
 
-### 7.3 查看当前租户配置
+### 8.3 查看当前租户配置
 
 ```bash
 curl -H "Authorization: Bearer kb_sk_xxx" \
@@ -709,7 +899,7 @@ curl -H "Authorization: Bearer kb_sk_xxx" \
 }
 ```
 
-### 7.4 常见问题排查
+### 8.4 常见问题排查
 
 #### 问题1：模型配置显示不正确（如显示 ollama 而非 siliconflow）
 
@@ -805,7 +995,7 @@ All connection attempts failed
    }
    ```
 
-### 7.5 相关代码位置
+### 8.5 相关代码位置
 
 如需调试或修改配置获取逻辑，参考以下文件：
 
@@ -814,8 +1004,9 @@ All connection attempts failed
 | `app/services/model_config.py` | `ModelConfigResolver` 配置解析器 |
 | `app/api/routes/rag.py` | RAG 接口，获取 LLM/Embedding/Rerank 配置 |
 | `app/api/routes/rag_stream.py` | 流式 RAG 接口 |
+| `app/api/routes/openai_compat.py` | OpenAI 兼容接口（Chat/Embeddings） |
 | `app/api/routes/query.py` | 检索接口，获取 Embedding 配置 |
 | `app/api/routes/documents.py` | 文档入库接口，获取 Embedding 配置 |
-| `app/services/rag.py` | `_build_response` 构建响应的 model 信息 |
+| `app/services/rag.py` | RAG 生成服务，使用租户 LLM 配置 |
 | `app/services/ingestion.py` | 文档摄取服务，使用 Embedding 配置生成向量 |
 | `app/schemas/internal.py` | `RAGParams` 内部参数模型定义 |

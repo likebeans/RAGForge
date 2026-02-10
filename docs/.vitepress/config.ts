@@ -8,6 +8,7 @@ export default defineConfig({
   // 基础配置
   base: '/',
   cleanUrls: true,
+  ignoreDeadLinks: true,
   
   // 主题配置
   themeConfig: {
@@ -17,11 +18,12 @@ export default defineConfig({
     // 导航菜单
     nav: [
       { text: '首页', link: '/' },
-      { text: '入门指南', link: '/getting-started/' },
-      { text: '开发文档', link: '/development/' },
-      { text: '系统架构', link: '/architecture/' },
-      { text: '运维部署', link: '/operations/' },
-      { text: '参考资料', link: '/reference/' }
+      { text: '入门', link: '/getting-started/' },
+      { text: '指南', link: '/guides/' },
+      { text: '架构', link: '/architecture/' },
+      { text: '开发', link: '/development/' },
+      { text: '运维', link: '/operations/' },
+      { text: '报告', link: '/reports/' }
     ],
     
     // 侧边栏配置
@@ -38,17 +40,20 @@ export default defineConfig({
           ]
         }
       ],
-      
-      '/development/': [
+
+      '/guides/': [
         {
-          text: '开发文档',
+          text: '使用指南',
           items: [
-            { text: '概述', link: '/development/' },
-            { text: '贡献指南', link: '/development/contributing' },
-            { text: '测试指南', link: '/development/testing' },
-            { text: '管道开发', link: '/development/pipeline-development' },
-            { text: '多租户开发', link: '/development/multi-tenant-development' },
-            { text: '问题排查', link: '/development/troubleshooting' }
+            { text: '概述', link: '/guides/' },
+            { text: '环境配置', link: '/guides/environment-config' },
+            { text: '部署指南', link: '/guides/deployment' },
+            { text: 'API 集成', link: '/guides/api-integration' },
+            { text: '权限管理', link: '/guides/permissions' },
+            { text: 'OpenAI SDK', link: '/guides/openai-sdk' },
+            { text: 'Admin Token', link: '/guides/admin-token-guide' },
+            { text: '生产清单', link: '/guides/production-checklist' },
+            { text: '数据迁移', link: '/guides/migration-sparse-es' }
           ]
         }
       ],
@@ -57,11 +62,32 @@ export default defineConfig({
         {
           text: '系统架构',
           items: [
-            { text: '概述', link: '/architecture/' },
+            { text: '概览', link: '/architecture/overview' },
             { text: '系统设计', link: '/architecture/system-design' },
+            { text: 'Pipeline 架构', link: '/architecture/pipeline-architecture' },
             { text: 'API 规范', link: '/architecture/api-specification' },
-            { text: '管道架构', link: '/architecture/pipeline-architecture' },
-            { text: '架构决策', link: '/architecture/decisions' }
+            { text: '架构决策', link: '/architecture/decisions' },
+            { 
+              text: '核心特性',
+              items: [
+                 { text: '富文本解析器', link: '/architecture/features/rich-text-parser' }
+              ]
+            },
+            { text: '架构更新', link: '/architecture/architecture-updates' }
+          ]
+        }
+      ],
+
+      '/development/': [
+        {
+          text: '开发文档',
+          items: [
+            { text: '概述', link: '/development/' },
+            { text: '贡献指南', link: '/development/contributing' },
+            { text: '测试指南', link: '/development/testing' },
+            { text: 'Pipeline 开发', link: '/development/pipeline-development' },
+            { text: '多租户开发', link: '/development/multi-tenant-development' },
+            { text: '问题排查', link: '/development/troubleshooting' }
           ]
         }
       ],
@@ -73,8 +99,29 @@ export default defineConfig({
             { text: '概述', link: '/operations/' },
             { text: '部署指南', link: '/operations/deployment' },
             { text: '安全指南', link: '/operations/security' },
-            { text: '监控指南', link: '/operations/monitoring' },
-            { text: '问题排查', link: '/operations/troubleshooting' }
+            { text: '监控指南', link: '/operations/monitoring' }
+          ]
+        }
+      ],
+
+      '/reports/': [
+        {
+          text: '报告与历史',
+          items: [
+            { text: '概述', link: '/reports/' },
+            { text: '项目评估', link: '/reports/assessment' },
+            { text: '优化测试', link: '/reports/optimization-test-report' },
+            { text: 'OpenAI SDK 测试', link: '/reports/openai-sdk-testing' },
+            { text: '代码审查', link: '/reports/code-review-report' },
+            { 
+              text: '历史阶段',
+              collapsed: false,
+              items: [
+                { text: 'Phase 1', link: '/reports/history/phase1' },
+                { text: 'Phase 2', link: '/reports/history/phase2' },
+                { text: 'Phase 3', link: '/reports/history/phase3' }
+              ]
+            }
           ]
         }
       ],
@@ -84,25 +131,16 @@ export default defineConfig({
           text: '参考资料',
           items: [
             { text: '概述', link: '/reference/' },
-            { text: '变更日志', link: '/reference/changelog' },
             {
               text: '中文内容',
               collapsed: false,
               items: [
-                { text: '中文内容索引', link: '/reference/chinese/' },
-                { text: '开发指南', link: '/reference/chinese/development-guide' },
-                { text: '优化指南', link: '/reference/chinese/optimization-guide' },
-                { text: '实践总结', link: '/reference/chinese/practice-summary' }
-              ]
-            },
-            {
-              text: '历史文档',
-              collapsed: true,
-              items: [
-                { text: '历史索引', link: '/reference/history/' },
-                { text: '第一阶段开发', link: '/reference/history/phase1-development' },
-                { text: '第二阶段开发', link: '/reference/history/phase2-development' },
-                { text: '第三阶段测试', link: '/reference/history/phase3-development' }
+                { text: '索引', link: '/reference/chinese/' },
+                { text: 'API 设计', link: '/reference/chinese/api-design' },
+                { text: '开发指南', link: '/reference/chinese/development' },
+                { text: '优化经验', link: '/reference/chinese/optimization' },
+                { text: '实践总结', link: '/reference/chinese/practice-summary' },
+                { text: '租户开发', link: '/reference/chinese/tenant-development' }
               ]
             }
           ]
@@ -172,6 +210,8 @@ export default defineConfig({
   
   // 构建配置
   vite: {
-    // Vite 配置选项
+    build: {
+      chunkSizeWarningLimit: 1600
+    }
   }
 })

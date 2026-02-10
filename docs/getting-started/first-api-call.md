@@ -523,12 +523,12 @@ done
 
 1. 探索[开发文档](../development/)了解高级功能
 2. 查看[架构文档](../architecture/)理解系统设计
-3. 学习[Python SDK](../../sdk/README.md)简化开发
+3. 学习[Python SDK](../sdk/README.md)简化开发
 4. 阅读[API 规范](../architecture/api-specification.md)了解完整接口
 
 ## 相关资源
 
 - [快速开始指南](quick-start.md)
 - [配置指南](configuration.md)
-- [错误代码参考](../reference/error-codes.md)
-- [API 限制说明](../reference/api-limits.md)
+- [错误代码参考](../architecture/api-specification.md)
+- [API 限制说明](../architecture/api-specification.md)

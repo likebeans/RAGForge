@@ -375,7 +375,7 @@ server {
 
 #### 7.2 Caddy 配置示例（更简单）
 
-```caddyfile
+```nginx
 # Caddyfile
 
 api.your-domain.com {

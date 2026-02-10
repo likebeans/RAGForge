@@ -39,7 +39,7 @@ Q4 2024     文档重组和国际化
 
 ### 📋 开发阶段记录
 
-#### [第一阶段开发记录 (phase1-development.md)](./phase1-development)
+#### [第一阶段开发记录 (phase1.md)](./phase1)
 **原始文件**：`docs/phase1.md`  
 **时间范围**：2024年1月 - 2024年3月
 
@@ -61,7 +61,7 @@ Q4 2024     文档重组和国际化
 - 使用 Qdrant 作为向量数据库
 - 实现基础的 RAG 检索流程
 
-#### [第二阶段开发记录 (phase2-development.md)](./phase2-development)
+#### [第二阶段开发记录 (phase2.md)](./phase2)
 **原始文件**：`docs/phase2.md`  
 **时间范围**：2024年4月 - 2024年6月
 
@@ -84,7 +84,7 @@ Q4 2024     文档重组和国际化
 - 实现标准化的 API 接口
 - 添加完整的认证授权
 
-#### [第三阶段开发记录 (phase3-development.md)](./phase3-development)
+#### [第三阶段开发记录 (phase3.md)](./phase3)
 **原始文件**：`docs/phase3.md`  
 **时间范围**：2024年7月 - 2024年9月
 
@@ -109,7 +109,7 @@ Q4 2024     文档重组和国际化
 
 ### 📊 评估和分析
 
-#### [项目评估报告 (assessment.md)](./assessment)
+#### [项目评估报告 (assessment.md)](../assessment)
 **原始文件**：`docs/ASSESSMENT.md`
 
 **评估内容**：
@@ -133,7 +133,7 @@ Q4 2024     文档重组和国际化
 
 ### 🔄 迁移和升级
 
-#### [Elasticsearch 迁移记录 (migration-sparse-es.md)](./migration-sparse-es)
+#### [Elasticsearch 迁移记录 (migration-sparse-es.md)](../../guides/migration-sparse-es)
 **原始文件**：`docs/MIGRATION_SPARSE_ES.md`
 
 **迁移背景**：
@@ -317,9 +317,9 @@ Q4 2024     文档重组和国际化
 
 #### 1. 按时间顺序
 建议按照开发阶段的时间顺序阅读：
-1. [第一阶段](./phase1-development) - 了解项目起源
-2. [第二阶段](./phase2-development) - 理解架构演进
-3. [第三阶段](./phase3-development) - 学习优化经验
+1. [第一阶段](./phase1) - 了解项目起源
+2. [第二阶段](./phase2) - 理解架构演进
+3. [第三阶段](./phase3) - 学习优化经验
 
 #### 2. 按主题关注
 根据您的关注点选择相关文档：
@@ -395,14 +395,14 @@ Q4 2024     文档重组和国际化
 ## 快速导航
 
 ### 📅 按时间浏览
-- **项目初期** → [第一阶段开发](./phase1-development)
-- **功能扩展** → [第二阶段开发](./phase2-development)
-- **质量完善** → [第三阶段开发](./phase3-development)
+- **项目初期** → [第一阶段开发](./phase1)
+- **功能扩展** → [第二阶段开发](./phase2)
+- **质量完善** → [第三阶段开发](./phase3)
 
 ### 🎯 按主题浏览
 - **架构演进** → 各阶段开发记录
-- **性能优化** → [评估报告](./assessment)
-- **系统迁移** → [迁移记录](./migration-sparse-es)
+- **性能优化** → [评估报告](../assessment)
+- **系统迁移** → [迁移记录](../../guides/migration-sparse-es)
 
 ### 👥 按角色浏览
 - **新开发者** → 完整的开发历程

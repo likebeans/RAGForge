@@ -715,8 +715,8 @@ docker-compose up -d --force-recreate
 - **[部署指南](./deployment)** - 详细的部署步骤和配置
 - **[安全指南](./security)** - 安全配置和最佳实践
 - **[监控指南](./monitoring)** - 监控系统搭建和配置
-- **[问题排查](./troubleshooting)** - 常见问题和解决方案
+- **[问题排查](../development/troubleshooting)** - 常见问题和解决方案
 
 ---
 
-需要帮助？查看 [问题排查指南](./troubleshooting) 或联系技术支持团队。
+需要帮助？查看 [问题排查指南](../development/troubleshooting) 或联系技术支持团队。

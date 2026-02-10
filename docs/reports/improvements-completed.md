@@ -702,9 +702,9 @@ async def test_retrieve_chunks_with_mock():
 
 ## 相关文档
 
-- [代码审查报告](CODE_REVIEW_REPORT.md)
-- [Admin Token 迁移指南](ADMIN_TOKEN_MIGRATION_GUIDE.md)
-- [项目架构文档](AGENTS.md)
+- [代码审查报告](./code-review-report.md)
+- [Admin Token 迁移指南](../guides/admin-token-guide.md)
+- [项目架构文档](../architecture/overview.md)
 
 ---
 

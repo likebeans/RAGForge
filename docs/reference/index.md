@@ -18,12 +18,13 @@
 - **[变更日志](./changelog)** - 文档重组和项目变更记录
 
 ### 🇨🇳 中文内容保留区
+### 🇨🇳 中文内容保留区
 
 中文内容区保留了项目中有价值的中文技术文档，这些文档提供了独特的技术见解和本地化内容：
 
 - **[中文内容索引](./chinese/)** - 所有中文文档的导航
-- **[开发指南](./chinese/development-guide)** - 详细的中文开发指南
-- **[优化指南](./chinese/optimization-guide)** - 性能优化和算法调优
+- **[中文开发指南](./chinese/development)** - 详细的中文开发指南
+- **[中文优化指南](./chinese/optimization)** - 性能优化和算法调优
 - **[实践总结](./chinese/practice-summary)** - 项目实践经验总结
 
 **为什么保留中文内容？**
@@ -37,10 +38,10 @@
 
 历史文档区保存了项目开发过程中的重要记录，帮助理解项目演进历程：
 
-- **[历史索引](./history/)** - 历史文档导航和时间线
-- **[第一阶段开发](./history/phase1-development)** - 项目初期开发记录
-- **[第二阶段开发](./history/phase2-development)** - 功能扩展阶段
-- **[第三阶段测试](./history/phase3-development)** - 测试和优化阶段
+- **[历史索引](../reports/history/)** - 历史文档导航和时间线
+- **[第一阶段开发](../reports/history/phase1)** - 项目初期开发记录
+- **[第二阶段开发](../reports/history/phase2)** - 功能扩展阶段
+- **[第三阶段测试](../reports/history/phase3)** - 测试和优化阶段
 
 **历史文档的价值：**
 
@@ -52,7 +53,6 @@
 ### 📝 模板和工具
 
 - **[文档模板](../templates/)** - 各种文档的标准模板
-- **[维护指南](../templates/maintenance-guide)** - 文档维护流程和规范
 
 ## 使用指南
 
@@ -60,17 +60,16 @@
 
 #### 1. 按类型查找
 - **技术实现细节** → [中文内容区](./chinese/)
-- **历史背景信息** → [历史文档区](./history/)
+- **历史背景信息** → [历史文档区](../reports/history/)
 - **项目变更记录** → [变更日志](./changelog)
 
 #### 2. 按主题查找
-- **性能优化** → [优化指南](./chinese/optimization-guide)
+- **性能优化** → [优化指南](./chinese/optimization)
 - **开发经验** → [实践总结](./chinese/practice-summary)
-- **架构演进** → [历史文档](./history/)
+- **架构演进** → [历史文档](../reports/history/)
 
 #### 3. 按时间查找
-- **最新变更** → [变更日志](./changelog)
-- **开发历程** → [历史索引](./history/)
+- **开发历程** → [历史索引](../reports/history/)
 
 ### 文档语言说明
 
@@ -182,7 +181,7 @@
 
 - **项目最新变更** → [变更日志](./changelog)
 - **中文技术文档** → [中文内容索引](./chinese/)
-- **项目发展历史** → [历史文档索引](./history/)
+- **项目发展历史** → [历史文档索引](../reports/history/)
 - **文档编写规范** → [模板和指南](../templates/)
 
 ### 📚 推荐阅读路径
@@ -191,10 +190,10 @@
 [入门指南](../getting-started/) → [快速开始](../getting-started/quick-start) → [中文实践总结](./chinese/practice-summary)
 
 **开发者**：
-[开发文档](../development/) → [中文开发指南](./chinese/development-guide) → [历史架构演进](./history/)
+[开发文档](../development/) → [中文开发指南](./chinese/development) → [历史架构演进](../reports/history/)
 
 **运维人员**：
-[运维文档](../operations/) → [中文优化指南](./chinese/optimization-guide) → [部署历史记录](./history/)
+[运维文档](../operations/) → [中文优化指南](./chinese/optimization) → [部署历史记录](../reports/history/)
 
 ---
 

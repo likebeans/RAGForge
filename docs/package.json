@@ -2,6 +2,7 @@
   "name": "self-rag-pipeline-docs",
   "version": "1.0.0",
   "description": "Self-RAG Pipeline 项目文档",
+  "type": "module",
   "scripts": {
     "dev": "vitepress dev",
     "build": "vitepress build",

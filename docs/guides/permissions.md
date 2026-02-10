@@ -720,9 +720,9 @@ curl -H "Authorization: Bearer kb_sk_admin_key" \
 
 ## 相关文档
 
-- [API 对接文档](./API_INTEGRATION.md)
-- [模型配置文档](./API_INTEGRATION.md#7-模型配置优先级)
-- [部署文档](../README.md#部署方式)
+- [API 对接文档](./api-integration.md)
+- [模型配置文档](./api-integration.md#7-模型配置优先级)
+- [部署文档](../operations/deployment.md)
 
 ---
 

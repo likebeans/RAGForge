@@ -213,7 +213,7 @@ uv run python scripts/manage_es_indices.py refresh --index kb_prod
 - **Python 环境管理**：uv 或 pyenv
 - **数据库客户端**：DBeaver 或 pgAdmin
 - **API 测试**：Postman 或 curl
-- **向量数据库管理**：Qdrant Web UI (http://localhost:6333/dashboard)
+- **向量数据库管理**：Qdrant Web UI (`http://localhost:6333/dashboard`)
 
 ### VS Code 配置
 

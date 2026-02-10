@@ -1298,7 +1298,7 @@ slo:
 
 #### 资源使用趋势
 
-```promql
+```text
 # CPU 使用趋势（7天）
 avg_over_time(rate(process_cpu_seconds_total[5m])[7d:1h])
 
