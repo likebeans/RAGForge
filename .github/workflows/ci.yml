@@ -4,16 +4,6 @@ on:
   push:
   pull_request:
 
-env:
-  RUN_OPENAI_E2E: ${{ secrets.RUN_OPENAI_E2E }}
-  API_BASE: ${{ secrets.API_BASE }}
-  API_KEY: ${{ secrets.API_KEY }}
-  KB_ID: ${{ secrets.KB_ID }}
-  RUN_ES_E2E: ${{ secrets.RUN_ES_E2E }}
-  ES_HOSTS: ${{ secrets.ES_HOSTS }}
-  ES_USERNAME: ${{ secrets.ES_USERNAME }}
-  ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
-
 jobs:
   lint-test:
     runs-on: ubuntu-latest
@@ -41,9 +31,20 @@ jobs:
       run_es: ${{ steps.check.outputs.run_es }}
     steps:
       - id: check
+        env:
+          RUN_OPENAI_E2E: ${{ secrets.RUN_OPENAI_E2E }}
+          RUN_ES_E2E: ${{ secrets.RUN_ES_E2E }}
         run: |
-          echo "run_openai=${{ env.RUN_OPENAI_E2E == '1' && 'true' || 'false' }}" >> $GITHUB_OUTPUT
-          echo "run_es=${{ env.RUN_ES_E2E == '1' && 'true' || 'false' }}" >> $GITHUB_OUTPUT
+          if [ "$RUN_OPENAI_E2E" = "1" ]; then
+            echo "run_openai=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_openai=false" >> $GITHUB_OUTPUT
+          fi
+          if [ "$RUN_ES_E2E" = "1" ]; then
+            echo "run_es=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_es=false" >> $GITHUB_OUTPUT
+          fi
 
   e2e:
     needs: check-env
@@ -60,6 +61,10 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen
       - name: Run e2e OpenAI/RAG tests (requires API_BASE/API_KEY/Kb)
+        env:
+          API_BASE: ${{ secrets.API_BASE }}
+          API_KEY: ${{ secrets.API_KEY }}
+          KB_ID: ${{ secrets.KB_ID }}
         run: uv run pytest -m "e2e" tests/test_e2e_openai.py tests/test_e2e_health.py
 
   es-e2e:
@@ -77,4 +82,8 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen
       - name: Run ES/OpenSearch e2e tests
+        env:
+          ES_HOSTS: ${{ secrets.ES_HOSTS }}
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
         run: uv run pytest -m "e2e" tests/test_opensearch_e2e.py
