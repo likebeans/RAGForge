@@ -181,7 +181,7 @@ export default defineConfig({
     
     // 编辑链接
     editLink: {
-      pattern: 'https://github.com/your-org/self-rag-pipeline/edit/main/docs/:path',
+      pattern: 'https://github.com/likebeans/RAGForge/edit/main/docs/:path',
       text: '在 GitHub 上编辑此页'
     },
     
@@ -196,7 +196,7 @@ export default defineConfig({
     
     // 社交链接
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/your-org/self-rag-pipeline' }
+      { icon: 'github', link: 'https://github.com/likebeans/RAGForge' }
     ]
   },
   
