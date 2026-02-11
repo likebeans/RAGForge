@@ -128,7 +128,7 @@ async def ingest_document_endpoint(
             }
             logger.info(f"文档入库使用 Embedding 配置: {embedding_config.get('provider')}/{embedding_config.get('model')} (dim={embedding_config.get('dim')})")
         else:
-            logger.warning(f"[DEBUG] embed_config 中无 embedding_provider，将回退到环境变量")
+            logger.warning("[DEBUG] embed_config 中无 embedding_provider，将回退到环境变量")
     except Exception as e:
         logger.warning(f"获取 Embedding 配置失败，将回退到知识库配置: {type(e).__name__}: {e}")
     

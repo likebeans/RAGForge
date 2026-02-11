@@ -6,8 +6,6 @@ Elasticsearch/OpenSearch BM25 存储
 
 from __future__ import annotations
 
-import logging
-import time
 from typing import Iterable
 
 from elasticsearch import AsyncElasticsearch, helpers

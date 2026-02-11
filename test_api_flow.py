@@ -12,7 +12,6 @@ RAGForge API 完整测试流程
 
 import asyncio
 import json
-import time
 from typing import Dict, Any
 
 import httpx
@@ -155,7 +154,8 @@ class RAGForgeTester:
         }
 
         result = await self.make_request("POST", "/v1/retrieve", json=data)
-        print("✅ 检索成功"        print(f"📊 检索到 {len(result['results'])} 条结果")
+        print("✅ 检索成功")
+        print(f"📊 检索到 {len(result['results'])} 条结果")
         if result['results']:
             print(f"🎯 最高分结果: {result['results'][0]['text'][:100]}...")
         return result
@@ -171,7 +171,8 @@ class RAGForgeTester:
         }
 
         result = await self.make_request("POST", "/v1/rag", json=data)
-        print("✅ RAG 生成成功"        print(f"💬 回答: {result['answer'][:200]}...")
+        print("✅ RAG 生成成功")
+        print(f"💬 回答: {result['answer'][:200]}...")
         print(f"📚 引用来源: {len(result['sources'])} 个")
         return result
 

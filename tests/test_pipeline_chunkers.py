@@ -10,7 +10,6 @@ Pipeline 切分器单元测试
 - ParentChildChunker
 """
 
-import pytest
 from app.pipeline.base import ChunkPiece
 from app.pipeline import operator_registry
 

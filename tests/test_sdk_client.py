@@ -9,9 +9,6 @@ SDK 客户端单元测试
 - rag_stream 流式 RAG
 """
 
-import pytest
-from unittest.mock import Mock, MagicMock, patch
-import json
 
 
 class TestKBServiceClient:
@@ -69,7 +66,7 @@ class TestConversationAPI:
     
     def test_conversation_api_methods(self):
         """测试 ConversationAPI 方法存在"""
-        from sdk.client import ConversationAPI, KBServiceClient
+        from sdk.client import KBServiceClient
         
         client = KBServiceClient(api_key="kb_sk_test")
         conv_api = client.conversations
@@ -98,7 +95,7 @@ class TestRaptorAPI:
     
     def test_raptor_api_methods(self):
         """测试 RaptorAPI 方法存在"""
-        from sdk.client import RaptorAPI, KBServiceClient
+        from sdk.client import KBServiceClient
         
         client = KBServiceClient(api_key="kb_sk_test")
         raptor_api = client.raptor
@@ -124,7 +121,7 @@ class TestModelProviderAPI:
     
     def test_model_provider_api_methods(self):
         """测试 ModelProviderAPI 方法存在"""
-        from sdk.client import ModelProviderAPI, KBServiceClient
+        from sdk.client import KBServiceClient
         
         client = KBServiceClient(api_key="kb_sk_test")
         provider_api = client.model_providers

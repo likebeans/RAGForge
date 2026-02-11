@@ -51,6 +51,9 @@ dependencies = [
     "python-dotenv>=1.0.1",
     # 避免 jieba 触发 pkg_resources 弃用警告
     "setuptools<81",
+    # 开发工具
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
     # 测试
     "pytest>=8.3.0",
     "pytest-asyncio>=0.23.7",
@@ -68,7 +71,23 @@ build-backend = "setuptools.build_meta"
 include = ["app", "app.*", "sdk", "sdk.*"]
 exclude = ["alembic", "alembic.*", "tests", "tests.*"]
 
+[tool.ruff]
+# 忽略的规则
+lint.ignore = [
+    "E402",  # 模块级导入不在文件顶部（某些文件需要延迟导入）
+    "E712",  # 避免与 True/False 比较（测试代码中可接受）
+    "F841",  # 局部变量赋值但未使用（测试代码中可接受）
+]
+# 排除的文件/目录
+exclude = [
+    "alembic/",
+    ".git/",
+    "__pycache__/",
+    "*.pyc",
+]
+
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 addopts = "-q"
 markers = [
     "e2e: end-to-end tests that rely on external services or real databases",

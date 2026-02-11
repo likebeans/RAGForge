@@ -388,7 +388,7 @@ def _resolve_retriever(
             # embedding_override 只有部分字段，合并到现有配置
             if embedding_override.get("api_key"):
                 embedding_config["api_key"] = embedding_override["api_key"]
-                logger.info(f"检索使用请求级 Embedding api_key")
+                logger.info("检索使用请求级 Embedding api_key")
             if embedding_override.get("base_url"):
                 embedding_config["base_url"] = embedding_override["base_url"]
     

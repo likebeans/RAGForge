@@ -79,7 +79,7 @@ async def lifespan(app: FastAPI):
         logger.info("数据库表初始化完成（开发模式）")
     else:
         # 生产环境：仅打印警告，不自动建表
-        logger.info(f"跳过自动建表，请使用 Alembic 迁移")
+        logger.info("跳过自动建表，请使用 Alembic 迁移")
     
     # 检测并标记卡住的文档（processing 状态但服务重启了）
     await _mark_interrupted_documents()

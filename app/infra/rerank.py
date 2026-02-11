@@ -24,7 +24,6 @@ import logging
 from typing import Any
 
 import httpx
-from openai import AsyncOpenAI
 
 from app.config import get_settings
 

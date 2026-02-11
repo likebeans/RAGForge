@@ -19,7 +19,6 @@ from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.api_key import APIKeyContext, get_api_key_context
-from app.config import get_settings
 from app.db.session import get_db
 
 # 为了向后兼容，创建别名

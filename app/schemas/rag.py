@@ -7,7 +7,6 @@ RAG 生成相关的请求/响应模型
 from pydantic import BaseModel, Field
 
 from app.schemas.config import LLMConfig, RerankConfig, RetrieverConfig
-from app.schemas.query import ChunkHit, ModelInfo
 
 
 class RAGRequest(BaseModel):

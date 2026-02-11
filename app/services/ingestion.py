@@ -26,9 +26,8 @@ from app.schemas.internal import IngestionParams
 from app.pipeline.base import BaseChunkerOperator
 from app.pipeline.chunkers.simple import SimpleChunker
 from app.pipeline.enrichers.summarizer import generate_summary, SummaryConfig, resolve_summary_preset
-from app.pipeline.enrichers.chunk_enricher import get_chunk_enricher, EnrichmentConfig
+from app.pipeline.enrichers.chunk_enricher import get_chunk_enricher
 from app.pipeline.indexers.raptor import (
-    RaptorNativeIndexer,
     create_raptor_native_indexer_from_config,
     RAPTOR_NATIVE_AVAILABLE,
 )

@@ -18,7 +18,6 @@ import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Literal
 
 from openai import OpenAI
 
@@ -162,7 +161,7 @@ class QueryRouter:
                         query_type=QueryType.KEYWORD,
                         retriever=RETRIEVER_MAP[QueryType.KEYWORD],
                         confidence=0.7,
-                        reason=f"短查询/关键词模式",
+                        reason="短查询/关键词模式",
                     )
         
         # 默认使用混合检索

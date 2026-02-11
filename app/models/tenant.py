@@ -16,6 +16,7 @@
 """
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from sqlalchemy import DateTime, Integer, JSON, String, Text
@@ -23,6 +24,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.models.mixins import TIMESTAMP_PK, TimestampMixin
+
+if TYPE_CHECKING:
+    from app.models.provider_config import TenantModelConfig
 
 
 class Tenant(TimestampMixin, Base):

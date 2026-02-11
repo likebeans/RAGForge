@@ -16,7 +16,7 @@ from llama_index.core.vector_stores.types import (
 )
 from qdrant_client.http.exceptions import UnexpectedResponse
 
-from app.infra.llamaindex import HashEmbedding, build_qdrant_index
+from app.infra.llamaindex import build_qdrant_index
 from app.pipeline.base import BaseRetrieverOperator
 from app.pipeline.registry import register_operator
 from app.config import get_settings

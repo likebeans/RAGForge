@@ -23,7 +23,7 @@ class WordParser(FileParser):
         """解析 Word 文件"""
         try:
             from docx import Document
-            from docx.table import Table
+            from docx.table import Table  # noqa: F401 - used for type checking
         except ImportError:
             raise ImportError("请安装 python-docx: uv add python-docx")
         

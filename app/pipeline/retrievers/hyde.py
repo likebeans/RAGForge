@@ -22,7 +22,7 @@ from app.pipeline.query_transforms.hyde import (
 )
 
 if TYPE_CHECKING:
-    from app.pipeline import operator_registry
+    pass
 
 logger = logging.getLogger(__name__)
 

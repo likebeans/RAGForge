@@ -6,7 +6,6 @@ Embedding 模块单元测试
 - get_embedding / get_embeddings
 """
 
-import pytest
 from app.infra.embeddings import (
     deterministic_hash_embed,
 )

@@ -29,8 +29,7 @@ import logging
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Generator
+from typing import Generator
 from collections import defaultdict
 
 from app.infra.logging import get_request_id, get_tenant_id

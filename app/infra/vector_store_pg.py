@@ -11,7 +11,6 @@ PostgreSQL pgvector 向量存储实现
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker

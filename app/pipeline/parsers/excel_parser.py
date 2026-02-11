@@ -241,5 +241,5 @@ class ExcelParser(FileParser):
             id=str(uuid.uuid4()),
             name=name,
             fields=fields,
-            source_file=filename if hasattr(self, '_current_filename') else "template.xlsx",
+            source_file=self._current_filename if hasattr(self, '_current_filename') else "template.xlsx",
         )

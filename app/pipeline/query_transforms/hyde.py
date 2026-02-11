@@ -12,8 +12,7 @@ HyDE (Hypothetical Document Embeddings) 查询变换
 """
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 from openai import OpenAI
 

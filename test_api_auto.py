@@ -140,7 +140,7 @@ async def test_api_endpoints():
                                             print(f"      📚 检索到 {len(event_data['sources'])} 个来源")
                                         elif "content" in event_data:
                                             if not content_received:
-                                                print(f"      💬 ", end="", flush=True)
+                                                print("      💬 ", end="", flush=True)
                                                 content_received = True
                                             print(f"{event_data['content']}", end="", flush=True)
                                         elif "done" in event_data:

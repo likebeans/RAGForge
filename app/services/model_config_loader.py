@@ -16,7 +16,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Tenant, TenantModelConfig
+from app.models import TenantModelConfig
 
 logger = logging.getLogger(__name__)
 

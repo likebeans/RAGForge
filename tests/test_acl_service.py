@@ -7,7 +7,6 @@ ACL 权限服务单元测试
 - 用户上下文处理
 """
 
-import pytest
 from app.services.acl import (
     UserContext,
     filter_results_by_acl,

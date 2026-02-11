@@ -24,7 +24,7 @@ from app.infra.llm import chat_completion_stream, chat_completion_stream_with_co
 from app.models import KnowledgeBase
 from app.models.tenant import Tenant
 from app.schemas.conversation import StreamRAGRequest
-from app.schemas.config import EmbeddingOverrideConfig, LLMConfig
+from app.schemas.config import EmbeddingOverrideConfig
 from app.schemas.internal import RetrieveParams
 from app.services.model_config import model_config_resolver
 from app.services.query import retrieve_chunks
@@ -97,7 +97,7 @@ async def _sse_generator(
         yield f"event: sources\ndata: {json.dumps(sources, ensure_ascii=False)}\n\n"
         
         if not chunks:
-            yield f"event: content\ndata: 未找到相关文档，无法回答您的问题。\n\n"
+            yield "event: content\ndata: 未找到相关文档，无法回答您的问题。\n\n"
             yield "event: done\ndata: \n\n"
             return
         

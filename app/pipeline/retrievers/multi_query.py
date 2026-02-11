@@ -15,7 +15,7 @@ from typing import Any
 
 from app.pipeline.base import BaseRetrieverOperator
 from app.pipeline.registry import register_operator, operator_registry
-from app.pipeline.query_transforms.rag_fusion import RAGFusionTransform, FusionConfig
+from app.pipeline.query_transforms.rag_fusion import RAGFusionTransform
 
 logger = logging.getLogger(__name__)
 

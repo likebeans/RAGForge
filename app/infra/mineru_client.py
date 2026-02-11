@@ -83,7 +83,7 @@ class MinerUClient:
             
             except httpx.TimeoutException:
                 logger.error(f"MinerU 服务响应超时: {self.timeout.read}s")
-                raise ValueError(f"MinerU 服务响应超时，请增加超时时间或减小文件大小")
+                raise ValueError("MinerU 服务响应超时，请增加超时时间或减小文件大小")
     
     async def _try_alternative_api(
         self,
@@ -114,7 +114,7 @@ class MinerUClient:
             except Exception:
                 continue
         
-        raise ValueError(f"MinerU API 不可用，已尝试所有路径")
+        raise ValueError("MinerU API 不可用，已尝试所有路径")
     
     def _normalize_result(self, result: dict) -> dict[str, Any]:
         """规范化 MinerU 返回结果"""

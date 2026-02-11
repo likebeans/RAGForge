@@ -25,8 +25,7 @@ logger = logging.getLogger(__name__)
 # 尝试导入 RAPTOR 依赖
 try:
     from app.pipeline.indexers.raptor import (
-        RaptorNativeIndexer as RaptorIndexer, 
-        create_raptor_native_indexer_from_config as create_raptor_indexer_from_config,
+        RaptorNativeIndexer as RaptorIndexer,  # noqa: F401
         RAPTOR_NATIVE_AVAILABLE as RAPTOR_AVAILABLE,
     )
 except ImportError:
@@ -658,7 +657,6 @@ class RaptorRetriever(BaseRetrieverOperator):
         5. 重复直到到达叶子层
         6. 返回最终的叶子节点
         """
-        from app.models.raptor_node import RaptorNode
         from app.models.chunk import Chunk
         from app.infra.embeddings import get_embedding_with_config
         from app.config import get_settings

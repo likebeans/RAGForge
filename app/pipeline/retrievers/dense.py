@@ -5,7 +5,7 @@
 适用于语义匹配场景，能够捕获文本的深层语义信息。
 """
 
-from app.infra.vector_store_factory import get_cached_vector_store, is_using_pgvector
+from app.infra.vector_store_factory import get_cached_vector_store
 from app.pipeline.base import BaseRetrieverOperator
 from app.pipeline.registry import register_operator
 

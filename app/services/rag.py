@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.infra.llm import chat_completion, chat_completion_with_config
-from app.models import KnowledgeBase, Tenant
+from app.models import Tenant
 from app.schemas.internal import RAGParams, RetrieveParams
 from app.schemas.config import LLMConfig
 from app.schemas.query import ChunkHit

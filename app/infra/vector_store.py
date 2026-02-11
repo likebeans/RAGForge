@@ -23,7 +23,6 @@ import logging
 import time
 import re
 from dataclasses import dataclass
-from enum import Enum
 from functools import lru_cache
 from typing import Iterable, Literal
 from contextvars import ContextVar

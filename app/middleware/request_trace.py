@@ -15,7 +15,6 @@
     app.add_middleware(RequestTraceMiddleware)
 """
 
-import time
 import uuid
 from typing import Callable
 
@@ -25,7 +24,6 @@ from starlette.responses import Response
 
 from app.infra.logging import (
     set_request_id,
-    set_tenant_id,
     get_logger,
     RequestTimer,
 )

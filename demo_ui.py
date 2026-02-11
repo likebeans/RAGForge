@@ -6,7 +6,6 @@ Self-RAG Pipeline 演示界面
     streamlit run demo_ui.py
 """
 
-import json
 import requests
 import streamlit as st
 
@@ -66,7 +65,7 @@ def check_connection() -> bool:
     try:
         resp = requests.get(f"{st.session_state.api_base}/health", timeout=5)
         return resp.status_code == 200
-    except:
+    except Exception:
         return False
 
 

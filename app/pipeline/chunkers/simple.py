@@ -5,7 +5,6 @@
 适用于结构清晰的文档（如 Markdown、文章）。
 """
 
-import re
 from app.pipeline.base import BaseChunkerOperator, ChunkPiece
 from app.pipeline.registry import register_operator
 

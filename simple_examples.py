@@ -30,11 +30,18 @@ def show_example(title, method, url, data=None, description=""):
     else:
         headers.append('-H "Authorization: Bearer kb_sk_yvmEUfH-E4R9CgNKxeo_9m2L4wzHcy8bxI3BSo0XxcQ"')
 
-    curl_cmd = f'curl -X {method} "http://localhost:8020{url}" \\\n  -H "Content-Type: application/json" \\\n  {" \\\n  ".join(headers)}'
+    # 构建 curl 命令（避免在 f-string 中使用反斜杠）
+    curl_parts = [
+        'curl -X {} "http://localhost:8020{}"'.format(method, url),
+        '  -H "Content-Type: application/json"',
+    ]
+    curl_parts.extend("  " + h for h in headers)
     if data:
-        curl_cmd += f" \\\n  -d '{json.dumps(data, ensure_ascii=False)}'"
+        json_data = json.dumps(data, ensure_ascii=False)
+        curl_parts.append("  -d '{}'".format(json_data))
+    curl_cmd = " \\\n".join(curl_parts)
 
-    print(f"\n🔧 Curl 命令:")
+    print("\n🔧 Curl 命令:")
     print(curl_cmd)
     print()
 

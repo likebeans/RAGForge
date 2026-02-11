@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db_session, get_tenant, require_role, get_current_api_key
-from app.auth.api_key import APIKeyContext, generate_api_key, hash_api_key
+from app.auth.api_key import APIKeyContext, generate_api_key
 from app.config import get_settings
 from app.models import APIKey
 from app.schemas import APIKeyCreate, APIKeyInfo, APIKeySecret, APIKeyUpdate

@@ -13,11 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_api_key_context, get_db_session, get_tenant
 from app.auth.api_key import APIKeyContext
-from app.config import get_settings
 from app.infra.embeddings import get_embeddings_with_config
 from app.infra.logging import get_logger
 from app.models import Tenant
-from app.schemas.internal import RAGParams, RetrieveParams
+from app.schemas.internal import RAGParams
 from app.schemas.openai import (
     ChatCompletionChoice,
     ChatCompletionRequest,

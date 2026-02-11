@@ -6,7 +6,6 @@
 - 敏感字段处理
 """
 
-import pytest
 from app.services.audit import _sanitize_data, SENSITIVE_FIELDS
 
 

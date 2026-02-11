@@ -1,7 +1,10 @@
 """测试 PDF 字段提取到 Excel API"""
 
 import os
+import pytest
 import requests
+
+pytestmark = pytest.mark.e2e  # 标记为 e2e 测试，需要运行中的 API 服务
 from io import BytesIO
 
 API_BASE = os.getenv("API_BASE", "http://localhost:8020")

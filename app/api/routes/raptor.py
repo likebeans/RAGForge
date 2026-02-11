@@ -12,7 +12,6 @@ RAPTOR API 端点
 import logging
 from datetime import datetime
 from typing import Any
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field

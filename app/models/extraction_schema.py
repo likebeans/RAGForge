@@ -1,8 +1,7 @@
 # 提取模板模型（用于 PDF 字段提取）
 
 from uuid import uuid4
-from sqlalchemy import Column, String, JSON, ForeignKey, DateTime, Text
-from sqlalchemy.sql import func
+from sqlalchemy import Column, String, JSON, ForeignKey, Text
 
 from app.db.base import Base
 from app.models.mixins import TimestampMixin

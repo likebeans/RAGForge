@@ -1,6 +1,11 @@
 # PDF 文件解析器（使用 MinerU 服务）
 
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
 from .base import FileParser, ParseResult, ContentBlock, ContentType, ExtractionSchema
 
 logger = logging.getLogger(__name__)

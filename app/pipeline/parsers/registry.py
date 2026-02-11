@@ -1,7 +1,6 @@
 # 文件解析器注册表
 
 import logging
-from typing import Type
 from .base import FileParser, ParseResult
 
 logger = logging.getLogger(__name__)

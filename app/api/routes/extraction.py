@@ -15,7 +15,6 @@ from app.api.deps import get_db, get_tenant
 from app.models import Tenant, ExtractionSchema, KnowledgeBase, Document
 from app.db.session import SessionLocal
 from app.schemas.extraction_schema import (
-    ExtractionSchemaCreate,
     ExtractionSchemaResponse,
     ExtractionSchemaListResponse,
     BatchExtractResponse,
@@ -345,7 +344,7 @@ async def extract_from_pdfs(
             BytesIO(excel_bytes),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={
-                "Content-Disposition": f'attachment; filename="extraction_result.xlsx"'
+                "Content-Disposition": 'attachment; filename="extraction_result.xlsx"'
             },
         )
     else:

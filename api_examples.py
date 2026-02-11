@@ -46,7 +46,7 @@ class RAGForgeExamples:
         print(f"方法: {method}")
         print(f"URL: {url}")
         if data:
-            print(f"请求体:")
+            print("请求体:")
             print(json.dumps(data, indent=2, ensure_ascii=False))
 
         # 生成 curl 命令
@@ -56,11 +56,18 @@ class RAGForgeExamples:
         else:
             headers.append('-H "Authorization: Bearer kb_sk_T7dNScWSz1x_LtcXslFOqIfNIXez9sbPJlJhfhlhPW8"')
 
-        curl_cmd = f'curl -X {method} "{self.base_url}{url}" \\\n  -H "Content-Type: application/json" \\\n  {" \\\n  ".join(headers)}'
+        # 构建 curl 命令（避免在 f-string 中使用反斜杠）
+        curl_parts = [
+            'curl -X {} "{}{}"'.format(method, self.base_url, url),
+            '  -H "Content-Type: application/json"',
+        ]
+        curl_parts.extend("  " + h for h in headers)
         if data:
-            curl_cmd += f' \\\n  -d \'{json.dumps(data, ensure_ascii=False)}\''
+            json_data = json.dumps(data, ensure_ascii=False)
+            curl_parts.append("  -d '{}'".format(json_data))
+        curl_cmd = " \\\n".join(curl_parts)
 
-        print(f"\n🔧 Curl 命令:")
+        print("\n🔧 Curl 命令:")
         print(curl_cmd)
 
     async def show_health_check(self):
@@ -102,7 +109,7 @@ class RAGForgeExamples:
                 print("创建成功! 返回信息:")
                 print(f"  租户ID: {result['tenant']['id']}")
                 print(f"  API Key: {result['api_key']['key']}")
-                print(f"  ⚠️  请保存 API Key，只在创建时返回一次!")
+                print("  ⚠️  请保存 API Key，只在创建时返回一次!")
         except Exception as e:
             print(f"❌ 请求失败: {e}")
 
@@ -286,7 +293,8 @@ class RAGForgeExamples:
   -H "Authorization: Bearer kb_sk_T7dNScWSz1x_LtcXslFOqIfNIXez9sbPJlJhfhlhPW8" \\
   -d '{json.dumps(data, ensure_ascii=False)}'""")
 
-        print("\n📡 流式响应格式:"        print("event: sources")
+        print("\n📡 流式响应格式:")
+        print("event: sources")
         print("data: [检索到的文档列表]")
         print()
         print("event: content")
