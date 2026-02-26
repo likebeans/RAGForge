@@ -8,8 +8,11 @@ import { authService } from '../services/auth'
 
 export default function ProtectedRoute({ children }) {
   const location = useLocation()
+  const isAuth = authService.isAuthenticated()
   
-  if (!authService.isAuthenticated()) {
+  if (!isAuth) {
+    console.log('[ProtectedRoute] Redirecting to login. Location:', location.pathname)
+    console.log('[ProtectedRoute] Auth state:', { token: authService.getToken(), user: authService.getUser() })
     return <Navigate to="/login" state={{ from: location }} replace />
   }
   

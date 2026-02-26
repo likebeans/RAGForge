@@ -40,7 +40,7 @@ class BackendClient {
 
     const response = await fetch(`${this.baseUrl}${endpoint}`, config)
 
-    if (response.status === 401) {
+    if (response.status === 401 && requireAuth) {
       authService.clearAuth()
       window.location.href = '/login'
       throw new Error('登录已过期')
@@ -212,6 +212,45 @@ class BackendClient {
     const token = authService.getToken()
     const queryString = new URLSearchParams(params).toString()
     const response = await fetch(`${this.baseUrl}/api/projects/export?${queryString}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+    if (!response.ok) throw new Error('导出失败')
+    return response.blob()
+  }
+
+  async getReports(params = {}) {
+    const queryString = new URLSearchParams(params).toString()
+    return this.request('GET', `/api/reports?${queryString}`)
+  }
+
+  async getReport(reportId) {
+    return this.request('GET', `/api/reports/${reportId}`)
+  }
+
+  async createReport(data) {
+    return this.request('POST', '/api/reports', data)
+  }
+
+  async updateReport(reportId, data) {
+    return this.request('PUT', `/api/reports/${reportId}`, data)
+  }
+
+  async deleteReport(reportId) {
+    return this.request('DELETE', `/api/reports/${reportId}`)
+  }
+
+  async bulkDeleteReports(ids = []) {
+    return this.request('POST', '/api/reports/bulk-delete', { ids })
+  }
+
+  async exportReports(params = {}, ids = null) {
+    const token = authService.getToken()
+    const query = { ...params }
+    if (ids && ids.length > 0) {
+      query.ids = ids.join(',')
+    }
+    const queryString = new URLSearchParams(query).toString()
+    const response = await fetch(`${this.baseUrl}/api/reports/export?${queryString}`, {
       headers: { 'Authorization': `Bearer ${token}` }
     })
     if (!response.ok) throw new Error('导出失败')

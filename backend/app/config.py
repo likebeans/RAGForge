@@ -21,9 +21,16 @@ class Settings(BaseSettings):
     # 应用配置
     app_name: str = "yaoyan-backend"
     debug: bool = False
+    backend_port: int = 3002
+    frontend_port: int = 5173
 
     # 数据库配置
     database_url: str = "postgresql+asyncpg://kb:kb@localhost:5435/yaoyan"
+    db_host: str = "localhost"
+    db_port: int = 5435
+    db_user: str = "kb"
+    db_password: str = "kb"
+    db_name: str = "yaoyan"
 
     # JWT 配置
     jwt_secret_key: str = generate_secret_key(32)
@@ -43,6 +50,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # 忽略额外的环境变量
 
     @classmethod
     def validate_settings(cls, settings) -> None:

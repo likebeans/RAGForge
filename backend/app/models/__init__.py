@@ -6,5 +6,6 @@ from app.models.group import Group
 from app.models.api_key_mapping import APIKeyMapping
 from app.models.project import DrugProject
 from app.models.dict_item import DictItem
+from app.models.report import Report
 
-__all__ = ["User", "Role", "Group", "APIKeyMapping", "DrugProject", "DictItem"]
+__all__ = ["User", "Role", "Group", "APIKeyMapping", "DrugProject", "DictItem", "Report"]

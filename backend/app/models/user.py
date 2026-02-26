@@ -1,11 +1,15 @@
 """用户模型"""
 
 from uuid import uuid4
+from typing import TYPE_CHECKING
 from sqlalchemy import String, Boolean, Table, Column, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.models.mixins import TimestampMixin
+
+if TYPE_CHECKING:
+    from app.models.report import Report
 
 user_roles = Table(
     "user_roles",
@@ -55,4 +59,9 @@ class User(TimestampMixin, Base):
         "APIKeyMapping",
         back_populates="user",
         uselist=False
+    )
+    reports: Mapped[list["Report"]] = relationship(
+        "Report",
+        back_populates="user",
+        cascade="all, delete-orphan"
     )

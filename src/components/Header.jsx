@@ -8,6 +8,7 @@ export default function Header() {
   const navigate = useNavigate()
   const [showUserMenu, setShowUserMenu] = useState(false)
   const user = authService.getUser()
+  const [searchText, setSearchText] = useState('')
 
   const handleLogout = () => {
     backendClient.logout()
@@ -22,14 +23,25 @@ export default function Header() {
   return (
     <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6">
       {/* 搜索框 */}
-      <div className="flex-1 max-w-xl">
+      <div className="w-full max-w-[560px] mx-auto">
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
             type="text"
-            placeholder="Global search..."
-            className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            placeholder="全局搜索..."
+            className="w-full h-10 pl-10 pr-10 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
           />
+          {searchText && (
+            <button
+              onClick={() => setSearchText('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 rounded p-1"
+              aria-label="清除搜索"
+            >
+              ×
+            </button>
+          )}
         </div>
       </div>
 

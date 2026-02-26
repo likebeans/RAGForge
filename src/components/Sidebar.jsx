@@ -44,7 +44,15 @@ const menuItems = [
     icon: FileText,
     children: [
       { id: 'report-list', label: '报告列表', icon: FileStack, path: '/reports' },
-      { id: 'report-new', label: '新建报告', icon: FilePlus, path: '/reports/new' }
+      {
+        id: 'report-generation',
+        label: '报告生成',
+        icon: FilePlus,
+        children: [
+          { id: 'report-new', label: '新建报告', icon: FilePlus, path: '/reports/new' },
+          { id: 'report-assistant', label: '报告生成助手', icon: MessageSquare, path: '/reports/assistant' }
+        ]
+      }
     ]
   },
   {
@@ -105,7 +113,7 @@ export default function Sidebar() {
             }
           }}
           className={`w-full flex items-center justify-between px-4 py-2.5 text-sm rounded-lg transition-colors ${
-            level === 0 ? '' : 'pl-10'
+            level === 0 ? '' : level === 1 ? 'pl-8' : 'pl-12'
           } ${
             isActive(item.path)
               ? 'bg-primary-50 text-primary-600 font-medium'
@@ -130,7 +138,7 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-64 bg-white border-r border-gray-200 flex flex-col">
+    <aside className="fixed left-0 top-0 h-screen w-64 bg-white border-r border-gray-200 flex flex-col z-30">
       {/* Logo */}
       <div className="h-16 flex items-center gap-3 px-5 border-b border-gray-200">
         <div className="w-9 h-9 bg-primary-500 rounded-lg flex items-center justify-center">
