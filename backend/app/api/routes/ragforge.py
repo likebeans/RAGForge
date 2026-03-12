@@ -27,6 +27,7 @@ class RagRequest(BaseModel):
     knowledge_base_ids: list[str]
     top_k: int = 5
     stream: bool = False
+    retriever: str = "hybrid"  # dense / bm25 / hybrid / hyde / fusion
 
 
 @router.post("/retrieve")
@@ -68,7 +69,8 @@ async def rag(
                 "query": request.query,
                 "knowledge_base_ids": request.knowledge_base_ids,
                 "top_k": request.top_k,
-                "stream": request.stream
+                "stream": request.stream,
+                "retriever": request.retriever,
             }
         )
         return result

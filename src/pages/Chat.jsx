@@ -97,7 +97,7 @@ export default function Chat() {
 
     try {
       // 使用后端代理的 RAG 接口（自动注入用户身份）
-      const result = await backendClient.rag(userMessage.content, selectedKbIds, { topK: 5 })
+      const result = await backendClient.rag(userMessage.content, selectedKbIds, { topK: 5, retriever })
       
       setMessages(prev =>
         prev.map(msg =>
@@ -312,9 +312,11 @@ export default function Chat() {
                                 </p>
                               )}
                             </div>
-                            <span className="text-xs text-primary-600 font-medium">
-                              {(source.score * 100).toFixed(0)}%
-                            </span>
+                            {source.score != null && (
+                              <span className="text-xs text-primary-600 font-medium flex-shrink-0">
+                                {(source.score * 100).toFixed(0)}%
+                              </span>
+                            )}
                           </div>
                         ))}
                       </div>

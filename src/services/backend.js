@@ -183,11 +183,12 @@ class BackendClient {
   }
 
   async rag(query, kbIds, options = {}) {
-    const { topK = 5 } = options
+    const { topK = 5, retriever = 'hybrid' } = options
     return this.request('POST', '/api/ragforge/rag', {
       query,
       knowledge_base_ids: kbIds,
-      top_k: topK
+      top_k: topK,
+      retriever,
     })
   }
 
