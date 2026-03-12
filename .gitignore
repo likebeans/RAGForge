@@ -22,3 +22,37 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# ─── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# ─── 环境变量（敏感信息，绝不提交）─────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── SQLite 数据库文件 ─────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ─── Docker ───────────────────────────────────────────────────
+.docker/
+
+# ─── macOS ────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
