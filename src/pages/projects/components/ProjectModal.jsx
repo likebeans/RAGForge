@@ -14,6 +14,9 @@ export default function ProjectModal({
   useEffect(() => {
     if (project) {
       setFormData(JSON.parse(JSON.stringify(project)))
+    } else {
+      // 新增时初始化空表单
+      setFormData({})
     }
   }, [project])
 
@@ -34,7 +37,7 @@ export default function ProjectModal({
   ]
 
   const renderField = (label, key, type = 'text', options = null) => {
-    const isEditing = mode === 'edit'
+    const isEditing = mode === 'edit' || mode === 'create'
     const value = formData[key]
 
     if (!isEditing) {
@@ -130,14 +133,26 @@ export default function ProjectModal({
           <form id="project-form" onSubmit={handleSubmit}>
             <div className={activeTab === 'basic' ? 'block' : 'hidden'}>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField('项目名称', 'project_name')}
-                {renderField('靶点', 'target')}
-                {renderField('靶点类型', 'target_type', 'text', dicts.target_type)}
+                {renderField('项目名称', 'drug_name')}
+                {renderField('靶点', 'target_name')}
                 {renderField('作用机制', 'mechanism')}
                 {renderField('药物类型', 'drug_type', 'text', dicts.drug_type)}
                 {renderField('药物剂型', 'dosage_form', 'text', dicts.dosage_form)}
-                {renderField('研究阶段', 'research_stage', 'text', dicts.research_stage)}
-                {renderField('研发机构', 'research_institution')}
+                {renderField('研究阶段', 'dev_phase', 'text', [
+                  { code: 'PRE_CLINICAL', label: '临床前' },
+                  { code: 'PHASE_I', label: 'I 期' },
+                  { code: 'PHASE_II', label: 'II 期' },
+                  { code: 'PHASE_III', label: 'III 期' },
+                  { code: 'NDA', label: '上市申请' },
+                  { code: 'APPROVED', label: '已上市' },
+                ])}
+                {renderField('项目状态', 'overall_status', 'text', [
+                  { code: 'SCREENING', label: '初筛' },
+                  { code: 'IN_PROGRESS', label: '进行中' },
+                  { code: 'MONITORING', label: '监控' },
+                  { code: 'ARCHIVED', label: '归档' },
+                  { code: 'RESTARTED', label: '已重启' },
+                ])}
               </div>
             </div>
 

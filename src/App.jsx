@@ -9,6 +9,7 @@ import Settings from './pages/Settings'
 import ApiKeyManagement from './pages/ApiKeyManagement'
 import UserRoleManagement from './pages/UserRoleManagement'
 import DataManagement from './pages/DataManagement'
+import MasterDataManagement from './pages/MasterDataManagement'
 import ReportsList from './pages/ReportsList'
 import ReportEditor from './pages/ReportEditor'
 import ReportDetail from './pages/ReportDetail'
@@ -26,7 +27,7 @@ function App() {
             <MainLayout />
           </ProtectedRoute>
         }>
-          <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route index element={<Navigate to="/projects" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="chat" element={<Chat />} />
           <Route path="reports" element={<ReportsList />} />
@@ -37,6 +38,8 @@ function App() {
           <Route path="knowledge" element={<KnowledgeOverview />} />
           <Route path="knowledge/docs" element={<KnowledgeDocs />} />
           <Route path="knowledge/upload" element={<KnowledgeUpload />} />
+          <Route path="projects" element={<DataManagement />} />
+          <Route path="master-data" element={<MasterDataManagement />} />
           <Route path="data" element={<DataManagement />} />
           <Route path="admin/api-keys" element={<ApiKeyManagement />} />
           <Route path="admin/users" element={<UserRoleManagement />} />

@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin_user, get_current_user
 from app.db.session import get_db
-from app.models import DrugProject, User
-from app.schemas.project import ProjectCreate, ProjectListResponse, ProjectResponse, ProjectUpdate
+from app.models.user import User
+from app.schemas.project import ProjectCreate, ProjectListResponse, ProjectResponse, ProjectDetailResponse, ProjectUpdate
 from app.services.project_service import ProjectService
 from app.services.import_export_service import ImportExportService
 
@@ -86,34 +86,19 @@ async def export_projects(
     page: int = 1,
     page_size: int = 1000,
     keyword: str | None = None,
-    target_type: str | None = None,
-    drug_type: str | None = None,
-    research_stage: str | None = None,
-    indication_type: str | None = None,
-    score_min: float | None = None,
-    score_max: float | None = None,
-    valuation_min: float | None = None,
-    valuation_max: float | None = None,
     sort_by: str | None = None,
     sort_order: str = "desc",
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
     """导出项目数据到 Excel（支持筛选条件）"""
+    # ... 后续需要重构 ImportExportService 以适配新的 7 张表关联关系
     service = ImportExportService(db)
     
     excel_file = await service.export_to_excel(
         page=page,
         page_size=page_size,
         keyword=keyword,
-        target_type=_split_csv(target_type),
-        drug_type=_split_csv(drug_type),
-        research_stage=_split_csv(research_stage),
-        indication_type=_split_csv(indication_type),
-        score_min=score_min,
-        score_max=score_max,
-        valuation_min=valuation_min,
-        valuation_max=valuation_max,
         sort_by=sort_by,
         sort_order=sort_order,
     )
@@ -135,14 +120,10 @@ async def list_projects(
     page: int = 1,
     page_size: int = 20,
     keyword: str | None = None,
-    target_type: str | None = None,
     drug_type: str | None = None,
-    research_stage: str | None = None,
-    indication_type: str | None = None,
+    dev_phase: str | None = None,
     score_min: float | None = None,
     score_max: float | None = None,
-    valuation_min: float | None = None,
-    valuation_max: float | None = None,
     sort_by: str | None = None,
     sort_order: str = "desc",
     db: AsyncSession = Depends(get_db),
@@ -157,37 +138,33 @@ async def list_projects(
         page=page,
         page_size=page_size,
         keyword=keyword,
-        target_type=_split_csv(target_type),
-        drug_type=_split_csv(drug_type),
-        research_stage=_split_csv(research_stage),
-        indication_type=_split_csv(indication_type),
+        drug_type=drug_type,
+        dev_phase=dev_phase,
         score_min=score_min,
         score_max=score_max,
-        valuation_min=valuation_min,
-        valuation_max=valuation_max,
         sort_by=sort_by,
         sort_order=sort_order,
     )
 
     return ProjectListResponse(
-        items=[ProjectResponse.model_validate(p) for p in items],
+        items=[ProjectResponse.from_orm_with_joins(p) for p in items],
         total=total,
         page=page,
         page_size=page_size,
     )
 
 
-@router.get("/{project_id}", response_model=ProjectResponse)
+@router.get("/{project_id}", response_model=ProjectDetailResponse)
 async def get_project(
-    project_id: int,
+    project_id: str,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
     service = ProjectService(db)
-    project = await service.get_by_id(project_id)
+    project = await service.get_by_id_with_joins(project_id)
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
-    return ProjectResponse.model_validate(project)
+    return ProjectDetailResponse.model_validate(project)
 
 
 @router.post("", response_model=ProjectResponse)
@@ -197,15 +174,15 @@ async def create_project(
     current_user: User = Depends(get_current_admin_user),
 ):
     service = ProjectService(db)
+    project = await service.create(project_in=data, created_by=current_user.id)
+    # 重新加载含子表的完整对象
+    project = await service.get_by_id_with_joins(project.id)
+    return ProjectResponse.from_orm_with_joins(project)
 
-    project = DrugProject(**data.model_dump(), created_by=current_user.id)
-    project = await service.create(project)
-    return ProjectResponse.model_validate(project)
 
-
-@router.put("/{project_id}", response_model=ProjectResponse)
+@router.put("/{project_id}", response_model=ProjectDetailResponse)
 async def update_project(
-    project_id: int,
+    project_id: str,
     data: ProjectUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin_user),
@@ -216,18 +193,15 @@ async def update_project(
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
-    update_data = data.model_dump(exclude_unset=True)
-    project = await service.update(project, **update_data)
+    project = await service.update(project=project, update_data=data)
     project.created_by = project.created_by or current_user.id
-    await db.commit()
-    await db.refresh(project)
-
-    return ProjectResponse.model_validate(project)
+    
+    return ProjectDetailResponse.model_validate(project)
 
 
 @router.delete("/{project_id}")
 async def delete_project(
-    project_id: int,
+    project_id: str,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin_user),
 ):

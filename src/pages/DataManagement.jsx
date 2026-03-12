@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Download, Upload, Plus, Database, FileSpreadsheet, RefreshCw, BarChart3, Layers, Clock, FileText } from 'lucide-react'
+import { Download, Upload, Plus, Briefcase, FileSpreadsheet, RefreshCw, BarChart3, Layers, Clock, FileText } from 'lucide-react'
 import backendClient from '../services/backend'
 import ProjectFilters from './projects/components/ProjectFilters'
 import ProjectTable from './projects/components/ProjectTable'
@@ -29,10 +29,8 @@ export default function DataManagement() {
   // 筛选条件
   const [filters, setFilters] = useState({
     keyword: '',
-    target_type: '',
     drug_type: '',
-    research_stage: '',
-    indication_type: '',
+    dev_phase: '',
     score_min: '',
     score_max: '',
   })
@@ -88,10 +86,8 @@ export default function DataManagement() {
   const handleReset = () => {
     const emptyFilters = {
       keyword: '',
-      target_type: '',
       drug_type: '',
-      research_stage: '',
-      indication_type: '',
+      dev_phase: '',
       score_min: '',
       score_max: '',
     }
@@ -163,7 +159,7 @@ export default function DataManagement() {
   }
 
   const handleDelete = async (project) => {
-    if (!confirm(`确定要删除项目 "${project.project_name}" 吗？此操作不可恢复。`)) return
+    if (!confirm(`确定要删除项目 "${project.drug_name}" 吗？此操作不可恢复。`)) return
     
     try {
       await backendClient.deleteProject(project.id)
@@ -194,7 +190,7 @@ export default function DataManagement() {
     const stages = {}
     projects.forEach(p => {
       if (p.drug_type) drugTypes[p.drug_type] = (drugTypes[p.drug_type] || 0) + 1
-      if (p.research_stage) stages[p.research_stage] = (stages[p.research_stage] || 0) + 1
+      if (p.dev_phase) stages[p.dev_phase] = (stages[p.dev_phase] || 0) + 1
     })
     return {
       drugTypeCount: Object.keys(drugTypes).length,
@@ -210,12 +206,12 @@ export default function DataManagement() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
             <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-lg shadow-primary-500/30">
-              <Database className="w-5 h-5 text-white" />
+              <Briefcase className="w-5 h-5 text-white" />
             </div>
-            数据管理中心
+            项目管理中心
           </h1>
           <p className="text-gray-500 mt-1">
-            统一管理研发数据资产，支持多维度筛选、批量导入导出
+            统一管理研发项目资产，支持多维度筛选、批量导入导出
           </p>
         </div>
         <div className="flex items-center gap-2 text-sm text-gray-500">
@@ -224,56 +220,8 @@ export default function DataManagement() {
         </div>
       </div>
 
-      {/* 统计卡片 */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
-              <Layers className="w-5 h-5 text-blue-600" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-gray-900">{total}</div>
-              <div className="text-xs text-gray-500">数据总量</div>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-green-50 rounded-lg flex items-center justify-center">
-              <BarChart3 className="w-5 h-5 text-green-600" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-gray-900">{stats.drugTypeCount}</div>
-              <div className="text-xs text-gray-500">药物类型</div>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-purple-50 rounded-lg flex items-center justify-center">
-              <FileSpreadsheet className="w-5 h-5 text-purple-600" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-gray-900">{stats.stageCount}</div>
-              <div className="text-xs text-gray-500">研究阶段</div>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-orange-50 rounded-lg flex items-center justify-center">
-              <RefreshCw className="w-5 h-5 text-orange-600" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-gray-900">{Object.keys(dicts).length}</div>
-              <div className="text-xs text-gray-500">字典分类</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* 操作工具栏 */}
-      <div className="bg-white rounded-xl border border-gray-100 p-4 mb-6 shadow-sm">
+      <div className="bg-white rounded-xl border border-gray-100 p-4 mb-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-gray-700">数据操作</span>
@@ -312,7 +260,7 @@ export default function DataManagement() {
             </button>
 
             <button 
-              onClick={() => setModal({ show: true, mode: 'create', project: {} })} 
+              onClick={() => setModal({ show: true, mode: 'create', project: null })} 
               className="px-3 py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors flex items-center gap-1.5"
             >
               <Plus className="w-4 h-4" />
@@ -346,6 +294,21 @@ export default function DataManagement() {
         onEdit={(project) => setModal({ show: true, mode: 'edit', project })}
         onDelete={handleDelete}
       />
+
+      {/* 简单数据合计 */}
+{/* [INTERNAL_ACTION: Timestamp reference via System Time]
+    {{Echo:
+    Action: Modified; Timestamp: 2026-03-12 11:21:44 +08:00; Reason: Removed large statistic cards and replaced with a simple text total per user request;
+    }}
+    {{START MODIFICATIONS}} */}
+      <div className="mt-4 text-sm text-gray-500 flex items-center justify-center gap-6">
+        <span>合计: 共 <span className="font-medium text-gray-900">{total}</span> 条项目数据</span>
+        <span className="text-gray-300">|</span>
+        <span>包含 <span className="font-medium text-gray-900">{stats.drugTypeCount}</span> 种药物类型</span>
+        <span className="text-gray-300">|</span>
+        <span>涉及 <span className="font-medium text-gray-900">{stats.stageCount}</span> 种研究阶段</span>
+      </div>
+{/* {{END MODIFICATIONS}} */}
 
       {/* Detail/Edit Modal */}
       {modal.show && (
