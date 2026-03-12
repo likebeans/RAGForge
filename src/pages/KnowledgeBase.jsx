@@ -15,7 +15,7 @@ import {
   MoreVertical,
   FolderOpen
 } from 'lucide-react'
-import apiClient from '../services/api'
+import backendClient from '../services/backend'
 
 export default function KnowledgeBase() {
   const navigate = useNavigate()
@@ -48,7 +48,7 @@ export default function KnowledgeBase() {
     setIsLoading(true)
     setError(null)
     try {
-      const result = await apiClient.listKnowledgeBases()
+      const result = await backendClient.listKnowledgeBases()
       setKnowledgeBases(result.items || [])
     } catch (err) {
       setError('加载知识库失败: ' + err.message)
@@ -64,7 +64,7 @@ export default function KnowledgeBase() {
     }
     setIsCreating(true)
     try {
-      await apiClient.createKnowledgeBase(newKbName.trim(), newKbDesc.trim())
+      await backendClient.createKnowledgeBase(newKbName.trim(), newKbDesc.trim())
       setShowCreateDialog(false)
       setNewKbName('')
       setNewKbDesc('')
@@ -78,7 +78,7 @@ export default function KnowledgeBase() {
 
   const deleteKnowledgeBase = async (id) => {
     try {
-      await apiClient.deleteKnowledgeBase(id)
+      await backendClient.deleteKnowledgeBase(id)
       setDeleteTarget(null)
       if (selectedKb?.id === id) {
         setSelectedKb(null)
@@ -94,7 +94,7 @@ export default function KnowledgeBase() {
     setSelectedKb(kb)
     setLoadingDocs(true)
     try {
-      const result = await apiClient.listDocuments(kb.id)
+      const result = await backendClient.listDocuments(kb.id)
       setDocuments(result.items || [])
     } catch (err) {
       setError('加载文档列表失败: ' + err.message)
@@ -118,12 +118,12 @@ export default function KnowledgeBase() {
     
     for (const fileItem of newFiles) {
       try {
-        await apiClient.uploadDocument(selectedKb.id, fileItem.file)
+        await backendClient.uploadDocument(selectedKb.id, fileItem.file)
         setUploadingFiles(prev =>
           prev.map(f => f.id === fileItem.id ? { ...f, status: 'success' } : f)
         )
         // 刷新文档列表
-        const result = await apiClient.listDocuments(selectedKb.id)
+        const result = await backendClient.listDocuments(selectedKb.id)
         setDocuments(result.items || [])
       } catch (err) {
         setUploadingFiles(prev =>
@@ -140,7 +140,7 @@ export default function KnowledgeBase() {
 
   const deleteDocument = async (docId) => {
     try {
-      await apiClient.deleteDocument(docId)
+      await backendClient.deleteDocument(docId)
       setDocuments(prev => prev.filter(d => d.id !== docId))
     } catch (err) {
       setError('删除文档失败: ' + err.message)

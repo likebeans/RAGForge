@@ -116,7 +116,58 @@ class RagForgeService:
             )
             response.raise_for_status()
             return response.json()
-    
+
+    async def create_knowledge_base(self, api_key: str, name: str, description: str = "") -> dict:
+        """创建知识库"""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{self.base_url}/v1/knowledge-bases",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={"name": name, "description": description}
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def delete_knowledge_base(self, api_key: str, kb_id: str) -> None:
+        """删除知识库"""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.delete(
+                f"{self.base_url}/v1/knowledge-bases/{kb_id}",
+                headers={"Authorization": f"Bearer {api_key}"}
+            )
+            response.raise_for_status()
+
+    async def list_documents(self, api_key: str, kb_id: str) -> dict:
+        """获取知识库文档列表"""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{self.base_url}/v1/knowledge-bases/{kb_id}/documents",
+                headers={"Authorization": f"Bearer {api_key}"}
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def upload_document(self, api_key: str, kb_id: str, filename: str, file_bytes: bytes) -> dict:
+        """上传文档到知识库"""
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{self.base_url}/v1/knowledge-bases/{kb_id}/documents",
+                headers={"Authorization": f"Bearer {api_key}"},
+                files={"file": (filename, file_bytes)}
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def delete_document(self, api_key: str, doc_id: str) -> None:
+        """删除文档"""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.delete(
+                f"{self.base_url}/v1/documents/{doc_id}",
+                headers={"Authorization": f"Bearer {api_key}"}
+            )
+            response.raise_for_status()
+
+
     async def rag_stream(self, api_key: str, query: str, knowledge_base_ids: list[str], top_k: int = 5):
         """流式 RAG 问答"""
         async with httpx.AsyncClient(timeout=300.0) as client:

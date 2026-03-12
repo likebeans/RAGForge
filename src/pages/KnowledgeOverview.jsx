@@ -14,7 +14,7 @@ import {
   Clock,
   ChevronRight
 } from 'lucide-react'
-import apiClient from '../services/api'
+import backendClient from '../services/backend'
 
 export default function KnowledgeOverview() {
   const navigate = useNavigate()
@@ -46,7 +46,7 @@ export default function KnowledgeOverview() {
     setIsLoading(true)
     setError(null)
     try {
-      const result = await apiClient.listKnowledgeBases()
+      const result = await backendClient.listKnowledgeBases()
       const kbs = result.items || []
       setKnowledgeBases(kbs)
       
@@ -71,7 +71,7 @@ export default function KnowledgeOverview() {
     }
     setIsCreating(true)
     try {
-      await apiClient.createKnowledgeBase(newKbName.trim(), newKbDesc.trim())
+      await backendClient.createKnowledgeBase(newKbName.trim(), newKbDesc.trim())
       setShowCreateDialog(false)
       setNewKbName('')
       setNewKbDesc('')
@@ -85,7 +85,7 @@ export default function KnowledgeOverview() {
 
   const deleteKnowledgeBase = async (id) => {
     try {
-      await apiClient.deleteKnowledgeBase(id)
+      await backendClient.deleteKnowledgeBase(id)
       setDeleteTarget(null)
       await loadKnowledgeBases()
     } catch (err) {

@@ -152,6 +152,28 @@ class BackendClient {
     return this.request('GET', '/api/ragforge/knowledge-bases')
   }
 
+  async createKnowledgeBase(name, description = '') {
+    return this.request('POST', '/api/ragforge/knowledge-bases', { name, description })
+  }
+
+  async deleteKnowledgeBase(id) {
+    return this.request('DELETE', `/api/ragforge/knowledge-bases/${id}`)
+  }
+
+  async listDocuments(kbId) {
+    return this.request('GET', `/api/ragforge/knowledge-bases/${kbId}/documents`)
+  }
+
+  async uploadDocument(kbId, file) {
+    const formData = new FormData()
+    formData.append('file', file)
+    return this.request('POST', `/api/ragforge/knowledge-bases/${kbId}/documents`, formData)
+  }
+
+  async deleteDocument(docId) {
+    return this.request('DELETE', `/api/ragforge/documents/${docId}`)
+  }
+
   async retrieve(query, kbIds, topK = 5) {
     return this.request('POST', '/api/ragforge/retrieve', {
       query,

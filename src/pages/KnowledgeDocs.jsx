@@ -13,7 +13,7 @@ import {
   FolderOpen,
   ArrowLeft
 } from 'lucide-react'
-import apiClient from '../services/api'
+import backendClient from '../services/backend'
 
 export default function KnowledgeDocs() {
   const [searchParams] = useSearchParams()
@@ -51,7 +51,7 @@ export default function KnowledgeDocs() {
   const loadKnowledgeBases = async () => {
     setIsLoading(true)
     try {
-      const result = await apiClient.listKnowledgeBases()
+      const result = await backendClient.listKnowledgeBases()
       setKnowledgeBases(result.items || [])
     } catch (err) {
       setError('加载知识库失败: ' + err.message)
@@ -63,7 +63,7 @@ export default function KnowledgeDocs() {
   const loadDocuments = async (kbId) => {
     setLoadingDocs(true)
     try {
-      const result = await apiClient.listDocuments(kbId)
+      const result = await backendClient.listDocuments(kbId)
       setDocuments(result.items || [])
     } catch (err) {
       setError('加载文档失败: ' + err.message)
@@ -81,7 +81,7 @@ export default function KnowledgeDocs() {
   const deleteDocument = async (docId) => {
     if (!confirm('确定要删除这个文档吗？')) return
     try {
-      await apiClient.deleteDocument(docId)
+      await backendClient.deleteDocument(docId)
       setDocuments(prev => prev.filter(d => d.id !== docId))
     } catch (err) {
       setError('删除文档失败: ' + err.message)

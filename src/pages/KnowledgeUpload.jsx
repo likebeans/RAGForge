@@ -19,7 +19,7 @@ import {
   Users,
   UserCheck
 } from 'lucide-react'
-import apiClient from '../services/api'
+import backendClient from '../services/backend'
 
 const ACCEPTED_TYPES = {
   'text/markdown': '.md',
@@ -87,7 +87,7 @@ export default function KnowledgeUpload() {
   const loadKnowledgeBases = async () => {
     setIsLoading(true)
     try {
-      const result = await apiClient.listKnowledgeBases()
+      const result = await backendClient.listKnowledgeBases()
       setKnowledgeBases(result.items || [])
       // 如果没有预选，选择第一个
       if (!preselectedKbId && result.items?.length > 0) {
@@ -173,7 +173,7 @@ export default function KnowledgeUpload() {
       ))
       
       try {
-        await apiClient.uploadDocumentWithACL(selectedKbId, fileItem.file, aclOptions)
+        await backendClient.uploadDocument(selectedKbId, fileItem.file)
         setFiles(prev => prev.map(f => 
           f.id === fileItem.id ? { ...f, status: 'success' } : f
         ))

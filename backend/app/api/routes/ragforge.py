@@ -117,11 +117,97 @@ async def list_knowledge_bases(
 ):
     """获取知识库列表"""
     service = RagForgeService(db)
-    
     try:
         api_key = await service.get_or_create_user_api_key(current_user)
         result = await service.list_knowledge_bases(api_key)
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class CreateKnowledgeBaseRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+@router.post("/knowledge-bases")
+async def create_knowledge_base(
+    request: CreateKnowledgeBaseRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """创建知识库"""
+    service = RagForgeService(db)
+    try:
+        api_key = await service.get_or_create_user_api_key(current_user)
+        result = await service.create_knowledge_base(api_key, request.name, request.description or "")
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/knowledge-bases/{kb_id}")
+async def delete_knowledge_base(
+    kb_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """删除知识库"""
+    service = RagForgeService(db)
+    try:
+        api_key = await service.get_or_create_user_api_key(current_user)
+        await service.delete_knowledge_base(api_key, kb_id)
+        return {"message": "删除成功"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/knowledge-bases/{kb_id}/documents")
+async def list_documents(
+    kb_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取知识库文档列表"""
+    service = RagForgeService(db)
+    try:
+        api_key = await service.get_or_create_user_api_key(current_user)
+        result = await service.list_documents(api_key, kb_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/knowledge-bases/{kb_id}/documents")
+async def upload_document(
+    kb_id: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """上传文档到知识库"""
+    service = RagForgeService(db)
+    try:
+        api_key = await service.get_or_create_user_api_key(current_user)
+        file_bytes = await file.read()
+        result = await service.upload_document(api_key, kb_id, file.filename, file_bytes)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/documents/{doc_id}")
+async def delete_document(
+    doc_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """删除文档"""
+    service = RagForgeService(db)
+    try:
+        api_key = await service.get_or_create_user_api_key(current_user)
+        await service.delete_document(api_key, doc_id)
+        return {"message": "删除成功"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
