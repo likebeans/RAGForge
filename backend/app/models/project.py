@@ -75,7 +75,7 @@ class ProjectMaster(TimestampMixin, Base):
     __tablename__ = "project_master"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True) # project_id
-    drug_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    project_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     target_id: Mapped[str | None] = mapped_column(String(100), ForeignKey("target_dict.id", ondelete="SET NULL"), index=True)
     indication: Mapped[str | None] = mapped_column(String(255), index=True)
     dev_phase: Mapped[DevPhaseEnum | None] = mapped_column(Enum(DevPhaseEnum), index=True)

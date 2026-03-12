@@ -71,7 +71,7 @@ class ProjectCreate(BaseModel):
     """创建项目 - 平铺 DTO，后端自动拆分写入各子表"""
 
     # ── project_master ──────────────────────────────
-    drug_name: str = Field(..., description="药物/项目名称")
+    project_name: str = Field(..., description="药物/项目名称")
     target_name: str | None = Field(None, description="靶点名称（后端自动匹配/创建 target_dict）")
     indication: str | None = Field(None, description="适应症")
     dev_phase: DevPhaseEnum | None = Field(None, description="研发阶段")
@@ -108,7 +108,7 @@ class ProjectCreate(BaseModel):
 
 class ProjectUpdate(BaseModel):
     """更新项目时的聚合传参结构"""
-    drug_name: str | None = None
+    project_name: str | None = None
     target_id: str | None = None
     indication: str | None = None
     dev_phase: DevPhaseEnum | None = None
@@ -123,7 +123,7 @@ class ProjectUpdate(BaseModel):
 class ProjectResponse(BaseModel):
     """列表页/精简信息响应 (含主表 + 关联子表的平铺字段)"""
     id: str
-    drug_name: str
+    project_name: str
     target_id: str | None = None
     target_name: str | None = None       # 来自 target_dict.standard_name
     indication: str | None = None
@@ -147,7 +147,7 @@ class ProjectResponse(BaseModel):
         """从含关联对象的 ORM 实体中构建响应"""
         return cls(
             id=project.id,
-            drug_name=project.drug_name,
+            project_name=project.project_name,
             target_id=project.target_id,
             target_name=project.target_info.standard_name if project.target_info else None,
             indication=project.indication,

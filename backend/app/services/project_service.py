@@ -66,7 +66,7 @@ class ProjectService:
         # 2. 写入主表
         project = ProjectMaster(
             id=project_id,
-            drug_name=project_in.drug_name,
+            project_name=project_in.project_name,
             target_id=target_id,
             indication=project_in.indication,
             dev_phase=project_in.dev_phase,
@@ -111,7 +111,7 @@ class ProjectService:
         # 1. 更新主表字段
         update_dict = update_data.model_dump(exclude_unset=True)
         
-        for key in ["drug_name", "target_id", "indication", "dev_phase", "overall_status", "overall_score"]:
+        for key in ["project_name", "target_id", "indication", "dev_phase", "overall_status", "overall_score"]:
             if key in update_dict:
                 setattr(project, key, update_dict[key])
 
@@ -163,7 +163,7 @@ class ProjectService:
             like = f"%{keyword}%"
             filters.append(
                 or_(
-                    ProjectMaster.drug_name.ilike(like),
+                    ProjectMaster.project_name.ilike(like),
                     ProjectMaster.indication.ilike(like),
                 )
             )
@@ -180,7 +180,7 @@ class ProjectService:
         sort_map = {
             "created_at": ProjectMaster.created_at,
             "overall_score": ProjectMaster.overall_score,
-            "drug_name": ProjectMaster.drug_name,
+            "project_name": ProjectMaster.project_name,
         }
         sort_col = sort_map.get(sort_by or "created_at", ProjectMaster.created_at)
         order_clause = sort_col.desc() if sort_order.lower() == "desc" else sort_col.asc()

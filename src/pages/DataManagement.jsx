@@ -159,7 +159,7 @@ export default function DataManagement() {
   }
 
   const handleDelete = async (project) => {
-    if (!confirm(`确定要删除项目 "${project.drug_name}" 吗？此操作不可恢复。`)) return
+    if (!confirm(`确定要删除项目 "${project.project_name}" 吗？此操作不可恢复。`)) return
     
     try {
       await backendClient.deleteProject(project.id)

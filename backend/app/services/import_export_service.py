@@ -204,9 +204,6 @@ class ImportExportService:
                     error_count += 1
                     continue
 
-                # 从 project_name 映射为新的 drug_name
-                if "project_name" in project_data:
-                    project_data["drug_name"] = project_data.pop("project_name")
 
                 # 创建复合验证对象
                 create_schema = ProjectCreate(
@@ -274,7 +271,7 @@ class ImportExportService:
         for row_idx, project in enumerate(items, start=2):
             for col, (field, _) in self.COLUMN_MAPPING.items():
                 if field == "project_name":
-                    ws[f"{col}{row_idx}"] = project.drug_name
+                    ws[f"{col}{row_idx}"] = project.project_name
                 elif hasattr(project, field):
                    ws[f"{col}{row_idx}"] = getattr(project, field, None)
                 # Note: 为了简单此演示脚本，暂略去对后续1:1关系表的平铺导出逻辑

@@ -5,7 +5,7 @@ const dataDomains = [
     code: 'Project_Master',
     title: '项目主表',
     description: '维护项目基础身份信息，是整个评估流程的锚点表。',
-    tags: ['project_id', 'drug_name', 'target_id', 'indication', 'dev_phase', 'overall_status']
+    tags: ['project_id', 'project_name', 'target_id', 'indication', 'dev_phase', 'overall_status']
   },
   {
     code: 'Target_Dict',
@@ -29,7 +29,7 @@ const dataDomains = [
 
 const projectMasterFields = [
   ['project_id', 'String / PK', '项目唯一编码', '系统生成并贯穿全流程'],
-  ['drug_name', 'String', '创新药或项目名称', '维护主名称口径'],
+  ['project_name', 'String', '创新药或项目名称', '维护主名称口径'],
   ['target_id', 'String / FK', '关联标准靶点库', '建立标准化靶点映射'],
   ['indication', 'String', '适应症范围', '支持适应症分类和调研'],
   ['dev_phase', 'Enum', '研发阶段', '临床前 / I / II / III / 上市申请'],

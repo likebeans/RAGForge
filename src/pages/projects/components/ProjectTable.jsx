@@ -76,7 +76,7 @@ export default function ProjectTable({
               <tr key={project.id} className="hover:bg-gray-50/80 transition-colors group">
                 <td className="px-6 py-4">
                   <div className="flex flex-col">
-                    <span className="font-medium text-gray-900">{project.drug_name}</span>
+                    <span className="font-medium text-gray-900">{project.project_name}</span>
                     <span className="text-xs text-gray-500 mt-0.5">
                       靶点: {project.target_name || '-'}
                     </span>

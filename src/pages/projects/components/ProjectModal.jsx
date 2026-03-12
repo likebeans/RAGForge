@@ -133,7 +133,7 @@ export default function ProjectModal({
           <form id="project-form" onSubmit={handleSubmit}>
             <div className={activeTab === 'basic' ? 'block' : 'hidden'}>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField('项目名称', 'drug_name')}
+                {renderField('项目名称', 'project_name')}
                 {renderField('靶点', 'target_name')}
                 {renderField('作用机制', 'mechanism')}
                 {renderField('药物类型', 'drug_type', 'text', dicts.drug_type)}
