@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.db.base import Base
-from app.models import User, Role, Group, APIKeyMapping, DrugProject, DictItem
+from app.models import User, Role, Group, APIKeyMapping, DictItem, ProjectMaster, ProjectDetail, ProjectValuation, ResearchDetail, TargetDict, ProjectManagementInfo, ProjectInstitutionLink
 from app.config import get_settings
 
 config = context.config
