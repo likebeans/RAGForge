@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
-  LayoutDashboard,
   MessageSquare,
   FileText,
   FilePlus,
@@ -21,28 +20,30 @@ import {
 
 const menuItems = [
   {
-    id: 'dashboard',
-    label: '工作台',
-    icon: LayoutDashboard,
-    path: '/dashboard'
+    id: 'projects',
+    label: '项目管理',
+    icon: Briefcase,
+    path: '/projects'
   },
   {
-    id: 'chat',
-    label: 'AI 对话',
-    icon: MessageSquare,
-    path: '/chat'
-  },
-  {
-    id: 'data',
+    id: 'master-data',
     label: '数据管理',
     icon: Database,
-    path: '/data'
+    hidden: true,
+    path: '/master-data'
   },
+// [INTERNAL_ACTION: Timestamp reference via System Time]
+// {{Echo:
+// Action: Modified; Timestamp: 2026-03-12 09:32:18 +08:00; Reason: Hide reports feature from UI;
+// }}
+// {{START MODIFICATIONS}}
   {
     id: 'reports',
     label: '报告中心',
     icon: FileText,
+    hidden: true,
     children: [
+// {{END MODIFICATIONS}}
       { id: 'report-list', label: '报告列表', icon: FileStack, path: '/reports' },
       {
         id: 'report-generation',
@@ -65,23 +66,37 @@ const menuItems = [
       { id: 'kb-upload', label: '上传', icon: Upload, path: '/knowledge/upload' }
     ]
   },
+// [INTERNAL_ACTION: Timestamp reference via System Time]
+// {{Echo:
+// Action: Modified; Timestamp: 2026-03-12 09:32:18 +08:00; Reason: Hide admin module from UI;
+// }}
+// {{START MODIFICATIONS}}
   {
     id: 'admin',
     label: '管理',
     icon: Users,
+    hidden: true,
     children: [
+// {{END MODIFICATIONS}}
       { id: 'api-keys', label: 'API Key 管理', icon: Settings, path: '/admin/api-keys' },
       { id: 'users', label: '用户与角色', icon: Users, path: '/admin/users' },
       { id: 'audit', label: '审计日志', icon: ScrollText, path: '/admin/audit' },
       { id: 'models', label: '模型与策略', icon: Cpu, path: '/admin/models' }
     ]
   },
+// [INTERNAL_ACTION: Timestamp reference via System Time]
+// {{Echo:
+// Action: Modified; Timestamp: 2026-03-12 09:32:18 +08:00; Reason: Hide settings module from UI;
+// }}
+// {{START MODIFICATIONS}}
   {
     id: 'settings',
     label: '设置',
     icon: Settings,
+    hidden: true,
     path: '/settings'
   }
+// {{END MODIFICATIONS}}
 ]
 
 export default function Sidebar() {
@@ -98,6 +113,8 @@ export default function Sidebar() {
   const isActive = (path) => location.pathname === path
 
   const renderMenuItem = (item, level = 0) => {
+    if (item.hidden) return null
+
     const hasChildren = item.children && item.children.length > 0
     const isExpanded = expanded.includes(item.id)
     const Icon = item.icon

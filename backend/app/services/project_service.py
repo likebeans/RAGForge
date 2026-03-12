@@ -1,10 +1,11 @@
 """项目服务"""
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import DrugProject
-
+from app.models.project import ProjectMaster, ProjectDetail, ResearchDetail, ProjectValuation, ProjectManagementInfo, TargetDict
+from app.schemas.project import ProjectCreate, ProjectUpdate
 
 class ProjectService:
     """项目服务"""
@@ -12,30 +13,135 @@ class ProjectService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def get_by_id(self, project_id: int) -> DrugProject | None:
+    async def get_by_id(self, project_id: str) -> ProjectMaster | None:
         result = await self.db.execute(
-            select(DrugProject).where(
-                DrugProject.id == project_id,
-                DrugProject.is_deleted == False,
+            select(ProjectMaster).where(
+                ProjectMaster.id == project_id,
+                ProjectMaster.is_deleted == False,
             )
         )
         return result.scalar_one_or_none()
 
-    async def create(self, project: DrugProject) -> DrugProject:
+    async def get_by_id_with_joins(self, project_id: str) -> ProjectMaster | None:
+        result = await self.db.execute(
+            select(ProjectMaster)
+            .options(
+                selectinload(ProjectMaster.target_info),
+                selectinload(ProjectMaster.detail),
+                selectinload(ProjectMaster.valuations),
+                selectinload(ProjectMaster.research_detail),
+                selectinload(ProjectMaster.management_info),
+            )
+            .where(ProjectMaster.id == project_id, ProjectMaster.is_deleted == False)
+        )
+        return result.scalar_one_or_none()
+
+    async def _resolve_target_id(self, target_name: str) -> str | None:
+        """根据靶点名称查找或创建 target_dict 记录，返回 target_id"""
+        if not target_name:
+            return None
+        result = await self.db.execute(
+            select(TargetDict).where(TargetDict.standard_name == target_name)
+        )
+        target = result.scalar_one_or_none()
+        if target:
+            return target.id
+        # 不存在则自动创建
+        import re
+        new_id = "TGT-" + re.sub(r"[^A-Z0-9]", "", target_name.upper())[:20]
+        target = TargetDict(id=new_id, standard_name=target_name)
+        self.db.add(target)
+        await self.db.flush()
+        return new_id
+
+    async def create(self, project_in: ProjectCreate, created_by: str | None = None) -> ProjectMaster:
+        import uuid
+        from datetime import datetime
+
+        project_id = str(uuid.uuid4())
+
+        # 1. 解析 target_id（按名称自动匹配/创建）
+        target_id = await self._resolve_target_id(project_in.target_name)
+
+        # 2. 写入主表
+        project = ProjectMaster(
+            id=project_id,
+            drug_name=project_in.drug_name,
+            target_id=target_id,
+            indication=project_in.indication,
+            dev_phase=project_in.dev_phase,
+            overall_status=project_in.overall_status,
+            overall_score=project_in.overall_score,
+            created_by=created_by,
+        )
+
+        # 3. 写入 project_details（有任意一个字段则创建）
+        detail_fields = ["drug_type", "dosage_form", "mechanism", "project_highlights",
+                         "differentiation", "current_therapy", "efficacy_indicators", "safety_indicators"]
+        detail_data = {f: getattr(project_in, f) for f in detail_fields if getattr(project_in, f) is not None}
+        if detail_data:
+            project.detail = ProjectDetail(project_id=project_id, **detail_data)
+
+        # 4. 写入 project_management_info（有任意一个字段则创建）
+        mgmt_fields = ["risk_notes", "follow_up_records"]
+        mgmt_data = {f: getattr(project_in, f) for f in mgmt_fields if getattr(project_in, f) is not None}
+        if mgmt_data:
+            project.management_info = ProjectManagementInfo(project_id=project_id, **mgmt_data)
+
+        # 5. 写入 research_details
+        research_fields = ["market_json", "competitor_data", "patent_json", "policy_impact"]
+        research_data = {f: getattr(project_in, f) for f in research_fields if getattr(project_in, f) is not None}
+        if research_data:
+            project.research_detail = ResearchDetail(project_id=project_id, **research_data)
+
         self.db.add(project)
+
+        # 6. 写入初始估值记录（有 asking_price 或 project_valuation 则创建）
+        valuation_fields = ["asking_price", "project_valuation", "company_valuation", "strategic_fit_score"]
+        valuation_data = {f: getattr(project_in, f) for f in valuation_fields if getattr(project_in, f) is not None}
+        if valuation_data:
+            val_date = datetime.fromisoformat(project_in.valuation_date) if project_in.valuation_date else datetime.utcnow()
+            self.db.add(ProjectValuation(project_id=project_id, valuation_date=val_date, **valuation_data))
+
         await self.db.commit()
         await self.db.refresh(project)
         return project
 
-    async def update(self, project: DrugProject, **kwargs) -> DrugProject:
-        for key, value in kwargs.items():
-            if value is not None and hasattr(project, key):
-                setattr(project, key, value)
+    async def update(self, project: ProjectMaster, update_data: ProjectUpdate) -> ProjectMaster:
+        # 1. 更新主表字段
+        update_dict = update_data.model_dump(exclude_unset=True)
+        
+        for key in ["drug_name", "target_id", "indication", "dev_phase", "overall_status", "overall_score"]:
+            if key in update_dict:
+                setattr(project, key, update_dict[key])
+
+        # 2. 更新 1:1 映射关系 (如果不存在则创建，存在则更新)
+        if "detail" in update_dict and update_dict["detail"]:
+            if project.detail:
+                for k, v in update_dict["detail"].items():
+                    setattr(project.detail, k, v)
+            else:
+                project.detail = ProjectDetail(project_id=project.id, **update_dict["detail"])
+
+        if "research_detail" in update_dict and update_dict["research_detail"]:
+            if project.research_detail:
+                for k, v in update_dict["research_detail"].items():
+                    setattr(project.research_detail, k, v)
+            else:
+                project.research_detail = ResearchDetail(project_id=project.id, **update_dict["research_detail"])
+
+        if "management_info" in update_dict and update_dict["management_info"]:
+            if project.management_info:
+                for k, v in update_dict["management_info"].items():
+                    setattr(project.management_info, k, v)
+            else:
+                project.management_info = ProjectManagementInfo(project_id=project.id, **update_dict["management_info"])
+
         await self.db.commit()
         await self.db.refresh(project)
         return project
 
-    async def soft_delete(self, project: DrugProject) -> None:
+    async def soft_delete(self, project: ProjectMaster) -> None:
         project.is_deleted = True
         await self.db.commit()
 
@@ -44,66 +150,45 @@ class ProjectService:
         page: int,
         page_size: int,
         keyword: str | None = None,
-        target_type: list[str] | None = None,
-        drug_type: list[str] | None = None,
-        research_stage: list[str] | None = None,
-        indication_type: list[str] | None = None,
-        score_min: float | None = None,
-        score_max: float | None = None,
-        valuation_min: float | None = None,
-        valuation_max: float | None = None,
+        # 新字段可能需要后续增加关联查询
         sort_by: str | None = None,
         sort_order: str = "desc",
-    ) -> tuple[list[DrugProject], int]:
-        filters = [DrugProject.is_deleted == False]
+    ) -> tuple[list[ProjectMaster], int]:
+        filters = [ProjectMaster.is_deleted == False]
 
         if keyword:
             like = f"%{keyword}%"
             filters.append(
                 or_(
-                    DrugProject.project_name.ilike(like),
-                    DrugProject.target.ilike(like),
-                    DrugProject.indication.ilike(like),
+                    ProjectMaster.drug_name.ilike(like),
+                    ProjectMaster.indication.ilike(like),
                 )
             )
 
-        if target_type:
-            filters.append(DrugProject.target_type.in_(target_type))
-        if drug_type:
-            filters.append(DrugProject.drug_type.in_(drug_type))
-        if research_stage:
-            filters.append(DrugProject.research_stage.in_(research_stage))
-        if indication_type:
-            filters.append(DrugProject.indication_type.in_(indication_type))
-
-        if score_min is not None:
-            filters.append(DrugProject.overall_score >= score_min)
-        if score_max is not None:
-            filters.append(DrugProject.overall_score <= score_max)
-        if valuation_min is not None:
-            filters.append(DrugProject.project_valuation >= valuation_min)
-        if valuation_max is not None:
-            filters.append(DrugProject.project_valuation <= valuation_max)
-
         sort_map = {
-            "created_at": DrugProject.created_at,
-            "overall_score": DrugProject.overall_score,
-            "project_valuation": DrugProject.project_valuation,
-            "project_name": DrugProject.project_name,
+            "created_at": ProjectMaster.created_at,
+            "overall_score": ProjectMaster.overall_score,
+            "drug_name": ProjectMaster.drug_name,
         }
-        sort_col = sort_map.get(sort_by or "created_at", DrugProject.created_at)
+        sort_col = sort_map.get(sort_by or "created_at", ProjectMaster.created_at)
         order_clause = sort_col.desc() if sort_order.lower() == "desc" else sort_col.asc()
 
-        total_result = await self.db.execute(select(func.count()).select_from(select(DrugProject).where(*filters).subquery()))
+        total_result = await self.db.execute(select(func.count()).select_from(select(ProjectMaster).where(*filters).subquery()))
         total = int(total_result.scalar() or 0)
 
         offset = (page - 1) * page_size
         result = await self.db.execute(
-            select(DrugProject)
+            select(ProjectMaster)
+            .options(
+                selectinload(ProjectMaster.target_info),
+                selectinload(ProjectMaster.detail),
+                selectinload(ProjectMaster.valuations),
+            )
             .where(*filters)
             .order_by(order_clause)
             .offset(offset)
             .limit(page_size)
         )
-        items = list(result.scalars().all())
+        
+        items = list(result.scalars().unique().all())
         return items, total

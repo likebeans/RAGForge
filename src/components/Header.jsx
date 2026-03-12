@@ -87,13 +87,19 @@ export default function Header() {
                 <p className="text-sm font-medium text-gray-700">{user?.display_name}</p>
                 <p className="text-xs text-gray-500">{user?.username}</p>
               </div>
-              <button
+{/* [INTERNAL_ACTION: Timestamp reference via System Time]
+    {{Echo:
+    Action: Modified; Timestamp: 2026-03-12 09:32:18 +08:00; Reason: Hide personal settings from user menu;
+    }}
+    {{START MODIFICATIONS}} */}
+              {/* <button
                 onClick={() => { setShowUserMenu(false); navigate('/settings'); }}
                 className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
               >
                 <User className="w-4 h-4" />
                 个人设置
-              </button>
+              </button> */}
+{/* {{END MODIFICATIONS}} */}
               <button
                 onClick={handleLogout}
                 className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50"

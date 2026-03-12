@@ -76,10 +76,9 @@ export default function ProjectTable({
               <tr key={project.id} className="hover:bg-gray-50/80 transition-colors group">
                 <td className="px-6 py-4">
                   <div className="flex flex-col">
-                    <span className="font-medium text-gray-900">{project.project_name}</span>
+                    <span className="font-medium text-gray-900">{project.drug_name}</span>
                     <span className="text-xs text-gray-500 mt-0.5">
-                      靶点: {project.target || '-'}
-                      {project.target_type && ` (${getLabel('target_type', project.target_type)})`}
+                      靶点: {project.target_name || '-'}
                     </span>
                   </div>
                 </td>
@@ -89,17 +88,14 @@ export default function ProjectTable({
                   </span>
                 </td>
                 <td className="px-6 py-4">
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getBadgeColor(project.research_stage)}`}>
-                    {getLabel('research_stage', project.research_stage)}
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getBadgeColor(project.dev_phase)}`}>
+                    {project.dev_phase || '-'}
                   </span>
                 </td>
                 <td className="px-6 py-4">
                   <div className="flex flex-col max-w-[200px]">
                     <span className="text-sm text-gray-700 truncate" title={project.indication}>
                       {project.indication || '-'}
-                    </span>
-                    <span className="text-xs text-gray-500 mt-0.5">
-                      {getLabel('indication_type', project.indication_type)}
                     </span>
                   </div>
                 </td>
@@ -109,9 +105,9 @@ export default function ProjectTable({
                       <span className="text-sm font-semibold text-primary-600">{project.overall_score || '-'}</span>
                       <span className="text-xs text-gray-400">分</span>
                     </div>
-                    {project.project_valuation && (
+                    {project.asking_price && (
                       <span className="text-xs text-gray-500 mt-0.5">
-                        ¥ {project.project_valuation.toLocaleString()} 万
+                        ¥ {project.asking_price.toLocaleString()} 万
                       </span>
                     )}
                   </div>
