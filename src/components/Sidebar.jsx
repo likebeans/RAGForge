@@ -26,6 +26,12 @@ const menuItems = [
     path: '/projects'
   },
   {
+    id: 'chat',
+    label: 'AI 对话',
+    icon: MessageSquare,
+    path: '/chat'
+  },
+  {
     id: 'master-data',
     label: '数据管理',
     icon: Database,
