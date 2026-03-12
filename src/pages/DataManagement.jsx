@@ -29,10 +29,8 @@ export default function DataManagement() {
   // 筛选条件
   const [filters, setFilters] = useState({
     keyword: '',
-    target_type: '',
     drug_type: '',
-    research_stage: '',
-    indication_type: '',
+    dev_phase: '',
     score_min: '',
     score_max: '',
   })
@@ -88,10 +86,8 @@ export default function DataManagement() {
   const handleReset = () => {
     const emptyFilters = {
       keyword: '',
-      target_type: '',
       drug_type: '',
-      research_stage: '',
-      indication_type: '',
+      dev_phase: '',
       score_min: '',
       score_max: '',
     }

@@ -150,7 +150,10 @@ class ProjectService:
         page: int,
         page_size: int,
         keyword: str | None = None,
-        # 新字段可能需要后续增加关联查询
+        drug_type: str | None = None,
+        dev_phase: str | None = None,
+        score_min: float | None = None,
+        score_max: float | None = None,
         sort_by: str | None = None,
         sort_order: str = "desc",
     ) -> tuple[list[ProjectMaster], int]:
@@ -165,6 +168,15 @@ class ProjectService:
                 )
             )
 
+        if dev_phase:
+            filters.append(ProjectMaster.dev_phase == dev_phase)
+
+        if score_min is not None:
+            filters.append(ProjectMaster.overall_score >= score_min)
+
+        if score_max is not None:
+            filters.append(ProjectMaster.overall_score <= score_max)
+
         sort_map = {
             "created_at": ProjectMaster.created_at,
             "overall_score": ProjectMaster.overall_score,
@@ -172,23 +184,55 @@ class ProjectService:
         }
         sort_col = sort_map.get(sort_by or "created_at", ProjectMaster.created_at)
         order_clause = sort_col.desc() if sort_order.lower() == "desc" else sort_col.asc()
-
-        total_result = await self.db.execute(select(func.count()).select_from(select(ProjectMaster).where(*filters).subquery()))
-        total = int(total_result.scalar() or 0)
-
         offset = (page - 1) * page_size
-        result = await self.db.execute(
-            select(ProjectMaster)
-            .options(
-                selectinload(ProjectMaster.target_info),
-                selectinload(ProjectMaster.detail),
-                selectinload(ProjectMaster.valuations),
+
+        from app.models.project import ProjectDetail as _PD
+
+        if drug_type:
+            # drug_type 在 project_details 子表，需要 join
+            detail_filter = _PD.drug_type == drug_type
+            count_q = (
+                select(func.count())
+                .select_from(ProjectMaster)
+                .join(_PD, _PD.project_id == ProjectMaster.id)
+                .where(*filters, detail_filter)
             )
-            .where(*filters)
-            .order_by(order_clause)
-            .offset(offset)
-            .limit(page_size)
-        )
-        
+            total_result = await self.db.execute(count_q)
+            total = int(total_result.scalar() or 0)
+
+            result = await self.db.execute(
+                select(ProjectMaster)
+                .join(_PD, _PD.project_id == ProjectMaster.id)
+                .options(
+                    selectinload(ProjectMaster.target_info),
+                    selectinload(ProjectMaster.detail),
+                    selectinload(ProjectMaster.valuations),
+                )
+                .where(*filters, detail_filter)
+                .order_by(order_clause)
+                .offset(offset)
+                .limit(page_size)
+            )
+        else:
+            count_q = select(func.count()).select_from(
+                select(ProjectMaster).where(*filters).subquery()
+            )
+            total_result = await self.db.execute(count_q)
+            total = int(total_result.scalar() or 0)
+
+            result = await self.db.execute(
+                select(ProjectMaster)
+                .options(
+                    selectinload(ProjectMaster.target_info),
+                    selectinload(ProjectMaster.detail),
+                    selectinload(ProjectMaster.valuations),
+                )
+                .where(*filters)
+                .order_by(order_clause)
+                .offset(offset)
+                .limit(page_size)
+            )
+
         items = list(result.scalars().unique().all())
         return items, total
+

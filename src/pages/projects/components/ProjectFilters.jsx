@@ -52,14 +52,17 @@ export default function ProjectFilters({ filters, setFilters, onSearch, onReset,
         <div>
           <label className="block text-xs font-medium text-gray-500 mb-1">研究阶段</label>
           <select 
-            value={filters.research_stage} 
-            onChange={(e) => handleChange('research_stage', e.target.value)}
+            value={filters.dev_phase} 
+            onChange={(e) => handleChange('dev_phase', e.target.value)}
             className="w-full px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 bg-white"
           >
             <option value="">全部阶段</option>
-            {dicts.research_stage?.map(item => (
-              <option key={item.code} value={item.code}>{item.label}</option>
-            ))}
+            <option value="PRE_CLINICAL">临床前</option>
+            <option value="PHASE_I">I 期</option>
+            <option value="PHASE_II">II 期</option>
+            <option value="PHASE_III">III 期</option>
+            <option value="NDA">上市申请</option>
+            <option value="APPROVED">已上市</option>
           </select>
         </div>
 
