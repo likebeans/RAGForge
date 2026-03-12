@@ -1,7 +1,7 @@
 # 项目入库 API 使用指南
 
-> **服务地址**：`http://<服务器IP>:3002`  
-> **认证方式**：Bearer Token（JWT）  
+> **服务地址**：`http://<服务器IP>:3002`
+> **认证方式**：Bearer Token（JWT）
 > **Content-Type**：`application/json`
 
 ---
@@ -36,20 +36,22 @@ curl -X POST http://<host>:3002/api/auth/login \
 | **路径** | `/api/projects` |
 | **权限** | 管理员 |
 
+> `id` 无需传递，服务端自动生成 UUID。
+
 ### 请求体字段说明
 
-> 只有 `drug_name` 必填，其余字段全部可选。
+> 只有 `project_name` 必填，其余字段全部可选。
 
 #### 基本信息（写入 `project_master` 表）
 
-| 字段 | 类型 | 说明 | 示例 |
-|------|------|------|------|
-| `drug_name` | string | **必填** 药物/项目名称 | `"BTK抑制剂"` |
-| `target_name` | string | 靶点名称（自动匹配/创建靶点记录） | `"BTK"` |
-| `indication` | string | 适应症 | `"B细胞淋巴瘤"` |
-| `dev_phase` | enum | 研发阶段，见下方枚举表 | `"PHASE_II"` |
-| `overall_status` | enum | 项目状态，默认 `SCREENING` | `"IN_PROGRESS"` |
-| `overall_score` | float | 综合评分 0~10 | `7.5` |
+| 字段 | 类型 | 必填 | 说明 | 示例 |
+|------|------|------|------|------|
+| `project_name` | string | **是** | 项目名称（唯一，不可重复） | `"BTK抑制剂"` |
+| `target_name` | string | 否 | 靶点名称（自动匹配/创建靶点记录） | `"BTK"` |
+| `indication` | string | 否 | 适应症 | `"B细胞淋巴瘤"` |
+| `dev_phase` | enum | 否 | 研发阶段，见下方枚举表 | `"PHASE_II"` |
+| `overall_status` | enum | 否 | 项目状态，默认 `SCREENING` | `"IN_PROGRESS"` |
+| `overall_score` | float | 否 | 综合评分 0~10 | `7.5` |
 
 #### 研发详情（写入 `project_details` 表）
 
@@ -72,7 +74,7 @@ curl -X POST http://<host>:3002/api/auth/login \
 | `project_valuation` | float | 项目估值（万元） | `80000` |
 | `company_valuation` | float | 公司估值（万元） | `200000` |
 | `strategic_fit_score` | float | 战略匹配度 0~10 | `8.0` |
-| `valuation_date` | string | 估值日期，ISO8601 | `"2026-03-12T00:00:00"` |
+| `valuation_date` | string | 估值日期，ISO8601，默认当天 | `"2026-03-12T00:00:00"` |
 
 #### 研究信息（写入 `research_details` 表）
 
@@ -101,7 +103,7 @@ curl -X POST http://<host>:3002/api/projects \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "drug_name": "BTK抑制剂-新一代",
+    "project_name": "BTK抑制剂-新一代",
     "target_name": "BTK",
     "indication": "慢性淋巴细胞白血病",
     "dev_phase": "PHASE_II",
@@ -126,7 +128,7 @@ curl -X POST http://<host>:3002/api/projects \
 ```json
 {
   "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "drug_name": "BTK抑制剂-新一代",
+  "project_name": "BTK抑制剂-新一代",
   "target_id": "TGT-BTK",
   "target_name": "BTK",
   "indication": "慢性淋巴细胞白血病",
@@ -142,7 +144,7 @@ curl -X POST http://<host>:3002/api/projects \
 
 ---
 
-## Step 3 — 查看已入库项目
+## Step 3 — 查询已入库项目
 
 ### 获取列表
 
@@ -155,19 +157,46 @@ curl "http://<host>:3002/api/projects?page=1&page_size=20" \
 
 | 参数 | 说明 | 示例 |
 |------|------|------|
-| `keyword` | 按药物名/适应症模糊搜索 | `"BTK"` |
+| `keyword` | 按项目名/适应症模糊搜索 | `"BTK"` |
 | `drug_type` | 按药物类型精确过滤 | `"small_molecule"` |
 | `dev_phase` | 按研发阶段过滤 | `"PHASE_II"` |
 | `score_min` | 评分下限 | `7` |
 | `score_max` | 评分上限 | `9` |
-| `sort_by` | 排序字段（`created_at`/`overall_score`/`drug_name`） | `"overall_score"` |
-| `sort_order` | 排序方向 `asc`/`desc` | `"desc"` |
+| `sort_by` | 排序字段（`created_at` / `overall_score` / `project_name`） | `"overall_score"` |
+| `sort_order` | 排序方向 `asc` / `desc` | `"desc"` |
 
 ### 获取单条详情
 
 ```bash
 curl "http://<host>:3002/api/projects/<project_id>" \
   -H "Authorization: Bearer $TOKEN"
+```
+
+---
+
+## Step 4 — 更新项目
+
+### 接口信息
+
+| 项目 | 值 |
+|------|-----|
+| **方法** | `PUT` |
+| **路径** | `/api/projects/<project_id>` |
+| **权限** | 管理员 |
+
+> 所有字段均为可选，只传需要修改的字段。
+
+```bash
+curl -X PUT http://<host>:3002/api/projects/<project_id> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project_name": "BTK抑制剂-新一代（更名）",
+    "overall_score": 9.0,
+    "detail": {
+      "mechanism": "更新后的作用机制描述"
+    }
+  }'
 ```
 
 ---
@@ -213,9 +242,10 @@ curl "http://<host>:3002/api/projects/<project_id>" \
 |------------|------|---------|
 | `401` | Token 未提供或已过期 | 重新登录获取 Token |
 | `403` | 账号无管理员权限 | 联系管理员授权 |
+| `409` | `project_name` 已存在（唯一约束冲突） | 换一个不重复的项目名称 |
 | `422` | 请求体字段有误（枚举值不对/必填项缺失） | 检查 `dev_phase` 等枚举字段是否使用英文常量 |
 | `500` | 服务内部错误 | 联系后端负责人排查 |
 
 ---
 
-> 💡 **Swagger 在线文档**：如在测试环境访问 `http://<host>:3002/docs` 可直接在浏览器测试所有接口。
+> 💡 **Swagger 在线文档**：在测试环境访问 `http://<host>:3002/docs` 可直接在浏览器测试所有接口。
