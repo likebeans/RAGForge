@@ -36,6 +36,24 @@ export default function ProjectTable({
     return BADGE_COLORS[code] || 'bg-gray-50 text-gray-600'
   }
 
+  // 适应症：兼容纯字符串 / JSON 数组字符串 / 实际数组
+  const formatIndication = (indication) => {
+    if (!indication) return null
+    if (Array.isArray(indication)) return indication
+    const str = String(indication).trim()
+    // 尝试解析 JSON 数组
+    if (str.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(str)
+        if (Array.isArray(parsed)) return parsed
+      } catch (_) {}
+      // 降级：去掉括号和引号后按逗号分割
+      return str.replace(/^\[|\]$/g, '').split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean)
+    }
+    // 普通字符串按逗号/顿号分割
+    return str.split(/[,，、]/).map(s => s.trim()).filter(Boolean)
+  }
+
   if (loading) {
     return (
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
@@ -93,10 +111,20 @@ export default function ProjectTable({
                   </span>
                 </td>
                 <td className="px-6 py-4">
-                  <div className="flex flex-col max-w-[200px]">
-                    <span className="text-sm text-gray-700 truncate" title={project.indication}>
-                      {project.indication || '-'}
-                    </span>
+                  <div className="flex flex-wrap gap-1 max-w-[200px]">
+                    {(() => {
+                      const items = formatIndication(project.indication)
+                      if (!items || items.length === 0) return <span className="text-sm text-gray-400">-</span>
+                      return items.slice(0, 3).map((item, i) => (
+                        <span key={i} className="inline-block px-1.5 py-0.5 bg-blue-50 text-blue-700 text-xs rounded">
+                          {item}
+                        </span>
+                      )).concat(
+                        items.length > 3
+                          ? [<span key="more" className="text-xs text-gray-400">+{items.length - 3}</span>]
+                          : []
+                      )
+                    })()}
                   </div>
                 </td>
                 <td className="px-6 py-4">
