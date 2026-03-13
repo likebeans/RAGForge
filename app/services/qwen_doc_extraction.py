@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -254,6 +256,79 @@ def _select_project_payload(
     return {"项目": normalized_target}
 
 
+def _extract_project_ids_from_payloads(payloads: list[dict[str, Any]]) -> list[str]:
+    """从抽取结果中归一化提取项目编号。"""
+    results: list[str] = []
+    seen: set[str] = set()
+
+    for item in payloads:
+        raw_value = item.get("项目")
+        if not isinstance(raw_value, str):
+            continue
+
+        normalized = _maybe_project_id(raw_value)
+        if not normalized:
+            continue
+
+        item["项目"] = normalized
+        if normalized not in seen:
+            seen.add(normalized)
+            results.append(normalized)
+
+    return results
+
+
+async def _extract_fields_via_project_fallback(
+    client: AsyncOpenAI,
+    *,
+    model: str,
+    file_id: str,
+    file_bytes: bytes,
+) -> tuple[str, list[str], list[dict[str, Any]], list[dict[str, str]]]:
+    """旧的项目列表 + 逐项目抽取回退逻辑。"""
+    project_list_content = await _request_file_completion(
+        client,
+        model=model,
+        file_id=file_id,
+        prompt=build_project_list_prompt(),
+    )
+    project_ids = parse_project_ids(project_list_content)
+    text_project_ids = extract_project_ids_from_pdf_bytes(file_bytes)
+    project_ids = _filter_project_ids(project_ids, text_project_ids)
+
+    project_responses: list[dict[str, str]] = []
+    extracted_fields: list[dict[str, Any]] = []
+
+    if not project_ids:
+        fallback_content = await _request_file_completion(
+            client,
+            model=model,
+            file_id=file_id,
+            prompt=build_default_extraction_prompt(),
+        )
+        extracted_fields = parse_extracted_fields(fallback_content)
+        project_ids = _extract_project_ids_from_payloads(extracted_fields)
+        project_responses.append(
+            {"project_id": "fallback", "content": fallback_content}
+        )
+        return project_list_content, project_ids, extracted_fields, project_responses
+
+    for project_id in project_ids:
+        project_content = await _request_file_completion(
+            client,
+            model=model,
+            file_id=file_id,
+            prompt=build_project_prompt(project_id),
+        )
+        payloads = parse_extracted_fields(project_content)
+        extracted_fields.append(_select_project_payload(project_id, payloads))
+        project_responses.append(
+            {"project_id": project_id, "content": project_content}
+        )
+
+    return project_list_content, project_ids, extracted_fields, project_responses
+
+
 async def _safe_delete_remote_file(client: AsyncOpenAI, file_id: str | None) -> None:
     """尽力删除远端文件，不影响主流程。"""
     if not file_id:
@@ -276,6 +351,7 @@ async def extract_fields_from_pdf(
     """上传 PDF 到 DashScope 并调用 qwen-doc-turbo 抽取字段。"""
     client = AsyncOpenAI(api_key=api_key, base_url=base_url)
     file_id: str | None = None
+    summary_task: asyncio.Task[str] | None = None
 
     try:
         uploaded = await client.files.create(
@@ -284,55 +360,69 @@ async def extract_fields_from_pdf(
         )
         file_id = uploaded.id
 
-        project_list_content = await _request_file_completion(
-            client,
-            model=model,
-            file_id=file_id,
-            prompt=build_project_list_prompt(),
-        )
-        project_ids = parse_project_ids(project_list_content)
-        text_project_ids = extract_project_ids_from_pdf_bytes(file_bytes)
-        project_ids = _filter_project_ids(project_ids, text_project_ids)
-
-        summary_content = await _request_file_completion(
-            client,
-            model=model,
-            file_id=file_id,
-            prompt=build_document_summary_prompt(),
+        summary_task = asyncio.create_task(
+            _request_file_completion(
+                client,
+                model=model,
+                file_id=file_id,
+                prompt=build_document_summary_prompt(),
+            )
         )
 
-        project_responses: list[dict[str, str]] = []
+        fast_extraction_error: Exception | None = None
+        fast_content = ""
         extracted_fields: list[dict[str, Any]] = []
 
-        if not project_ids:
-            fallback_content = await _request_file_completion(
+        try:
+            fast_content = await _request_file_completion(
                 client,
                 model=model,
                 file_id=file_id,
                 prompt=build_default_extraction_prompt(),
             )
-            extracted_fields = parse_extracted_fields(fallback_content)
-            project_ids = [
-                _normalize_project_id(item["项目"])
-                for item in extracted_fields
-                if isinstance(item.get("项目"), str)
-            ]
-            project_responses.append(
-                {"project_id": "fallback", "content": fallback_content}
-            )
-        else:
-            for project_id in project_ids:
-                project_content = await _request_file_completion(
-                    client,
-                    model=model,
-                    file_id=file_id,
-                    prompt=build_project_prompt(project_id),
-                )
-                payloads = parse_extracted_fields(project_content)
-                extracted_fields.append(_select_project_payload(project_id, payloads))
-                project_responses.append(
-                    {"project_id": project_id, "content": project_content}
-                )
+            extracted_fields = parse_extracted_fields(fast_content)
+            if not extracted_fields:
+                raise ValueError("模型未返回任何项目")
+        except Exception as exc:  # noqa: BLE001 - 快路径失败时回退旧逻辑
+            fast_extraction_error = exc
+
+        if fast_extraction_error is None:
+            project_ids = _extract_project_ids_from_payloads(extracted_fields)
+            summary_content = await summary_task
+            return {
+                "filename": filename,
+                "model": model,
+                "file_id": file_id,
+                "parse_mode": DEFAULT_PARSE_MODE,
+                "page_count": None,
+                "document_summary": summary_content.strip(),
+                "project_ids": project_ids,
+                "extracted_fields": extracted_fields,
+                "raw_response": {
+                    "project_list": "",
+                    "summary": summary_content,
+                    "projects": [
+                        {"project_id": "fastpath", "content": fast_content}
+                    ],
+                },
+            }
+
+        logger.info(
+            "qwen-doc fast path unusable, falling back to project fan-out: %s",
+            fast_extraction_error,
+        )
+        (
+            project_list_content,
+            project_ids,
+            extracted_fields,
+            project_responses,
+        ) = await _extract_fields_via_project_fallback(
+            client,
+            model=model,
+            file_id=file_id,
+            file_bytes=file_bytes,
+        )
+        summary_content = await summary_task
 
         return {
             "filename": filename,
@@ -376,4 +466,8 @@ async def extract_fields_from_pdf(
             file_id=file_id,
         ) from exc
     finally:
+        if summary_task and not summary_task.done():
+            summary_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await summary_task
         await _safe_delete_remote_file(client, file_id)
