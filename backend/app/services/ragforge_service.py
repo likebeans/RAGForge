@@ -28,17 +28,34 @@ class RagForgeService:
             )
         )
         mapping = result.scalar_one_or_none()
-        
+
         if mapping:
             current_identity = self._build_identity(user)
             if mapping.identity_snapshot == current_identity:
-                # 解密存储的 API Key
-                return decrypt_api_key(mapping.ragforge_api_key)
+                try:
+                    api_key = decrypt_api_key(mapping.ragforge_api_key)
+                    # 快速验证 key 是否仍有效
+                    await self._verify_api_key(api_key)
+                    return api_key
+                except Exception:
+                    # 解密失败或 key 已失效 → 作废并重建
+                    mapping.is_valid = False
+                    await self.db.commit()
             else:
                 mapping.is_valid = False
                 await self.db.commit()
-        
+
         return await self._create_api_key(user)
+
+    async def _verify_api_key(self, api_key: str) -> None:
+        """向 RAGForge 发起轻量探测，验证 key 是否仍有效（失败则抛异常）"""
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{self.base_url}/v1/knowledge-bases?page=1&page_size=1",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            if response.status_code in (401, 403):
+                raise ValueError("RAGForge API key is no longer valid")
     
     async def _create_api_key(self, user: User) -> str:
         """为用户创建 RAGForge API Key"""
