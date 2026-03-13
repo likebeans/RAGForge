@@ -13,10 +13,10 @@ LLM 客户端模块
 
 使用示例：
     from app.infra.llm import get_llm_client, chat_completion
-    
+
     # 简单调用
     response = await chat_completion("你好，请介绍一下自己")
-    
+
     # 完整参数
     response = await chat_completion(
         prompt="总结以下文档",
@@ -41,13 +41,15 @@ logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=8)
-def _get_openai_compatible_client(api_key: str | None, base_url: str | None) -> AsyncOpenAI:
+def _get_openai_compatible_client(
+    api_key: str | None, base_url: str | None
+) -> AsyncOpenAI:
     """获取 OpenAI 兼容客户端"""
     base_url = normalize_base_url(base_url)
     return AsyncOpenAI(
         api_key=api_key or "dummy",
         base_url=base_url,
-        timeout=120.0,
+        timeout=600.0,
     )
 
 
@@ -59,13 +61,13 @@ def create_llm_client(
 ) -> "LLMClient":
     """
     创建 LLM 客户端（支持动态配置）
-    
+
     Args:
         provider: 提供商名称 (openai/qwen/zhipu/siliconflow 等)
         model: 模型名称
         api_key: API Key
         base_url: API 基础 URL
-    
+
     Returns:
         LLMClient: 包装后的 LLM 客户端
     """
@@ -79,7 +81,7 @@ def create_llm_client(
 
 class LLMClient:
     """LLM 客户端封装，支持动态配置"""
-    
+
     def __init__(
         self,
         provider: str,
@@ -91,12 +93,21 @@ class LLMClient:
         self.model = model
         self.api_key = api_key
         self.base_url = base_url
-    
-    async def complete(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2048) -> str:
+
+    async def complete(
+        self, prompt: str, temperature: float = 0.7, max_tokens: int = 2048
+    ) -> str:
         """执行 LLM 补全"""
-        if self.provider in ("openai", "qwen", "kimi", "deepseek", "zhipu", "siliconflow"):
+        if self.provider in (
+            "openai",
+            "qwen",
+            "kimi",
+            "deepseek",
+            "zhipu",
+            "siliconflow",
+        ):
             client = _get_openai_compatible_client(self.api_key, self.base_url)
-            
+
             response = await client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
@@ -104,7 +115,7 @@ class LLMClient:
                 max_tokens=max_tokens,
             )
             return response.choices[0].message.content or ""
-        
+
         elif self.provider == "ollama":
             base_url = self.base_url or "http://localhost:11434"
             async with httpx.AsyncClient(timeout=120.0) as client:
@@ -119,7 +130,7 @@ class LLMClient:
                 )
                 response.raise_for_status()
                 return response.json().get("message", {}).get("content", "")
-        
+
         else:
             raise ValueError(f"不支持的 LLM 提供商: {self.provider}")
 
@@ -130,14 +141,14 @@ def _build_llm_config_from_override(
 ) -> dict[str, Any]:
     """
     从前端传递的 llm_config 构建完整配置
-    
+
     优先使用 override 中的值，未提供的从环境变量回落
     """
     provider = override.get("provider", "").lower()
     model = override.get("model", "")
     api_key = override.get("api_key")
     base_url = override.get("base_url")
-    
+
     # 从环境变量回落 api_key 和 base_url
     if provider == "ollama":
         base_url = base_url or settings.ollama_base_url
@@ -162,7 +173,7 @@ def _build_llm_config_from_override(
     elif provider == "gemini":
         api_key = api_key or settings.gemini_api_key
         base_url = base_url or "https://generativelanguage.googleapis.com/v1beta"
-    
+
     return {
         "provider": provider,
         "model": model,
@@ -181,7 +192,7 @@ async def chat_completion(
 ) -> str:
     """
     调用 LLM 进行对话补全
-    
+
     Args:
         prompt: 用户输入
         system_prompt: 系统提示词
@@ -193,12 +204,12 @@ async def chat_completion(
             - api_key: API 密钥（可选，会从环境变量回落）
             - base_url: API 地址（可选，会从环境变量回落）
         **kwargs: 其他参数
-    
+
     Returns:
         str: LLM 生成的回复
     """
     settings = get_settings()
-    
+
     # 如果提供了 llm_config，使用它；否则使用环境变量配置
     if llm_config and llm_config.get("provider"):
         config = _build_llm_config_from_override(llm_config, settings)
@@ -206,32 +217,36 @@ async def chat_completion(
     else:
         config = settings.get_llm_config()
         provider = config["provider"]
-    
+
     # 使用配置默认值
     if temperature is None:
         temperature = settings.llm_temperature
     if max_tokens is None:
         max_tokens = settings.llm_max_tokens
-    
+
     try:
         if provider == "ollama":
-            return await _ollama_chat(prompt, system_prompt, config, temperature, max_tokens)
-        
+            return await _ollama_chat(
+                prompt, system_prompt, config, temperature, max_tokens
+            )
+
         elif provider == "gemini":
             if not config.get("api_key"):
                 raise ValueError("GEMINI_API_KEY 未配置")
-            return await _gemini_chat(prompt, system_prompt, config, temperature, max_tokens)
-        
+            return await _gemini_chat(
+                prompt, system_prompt, config, temperature, max_tokens
+            )
+
         elif provider in ("openai", "qwen", "kimi", "deepseek", "zhipu", "siliconflow"):
             if not config.get("api_key"):
                 raise ValueError(f"{provider.upper()}_API_KEY 未配置")
             return await _openai_compatible_chat(
                 prompt, system_prompt, config, temperature, max_tokens
             )
-        
+
         else:
             raise ValueError(f"未知的 LLM 提供者: {provider}")
-            
+
     except Exception as e:
         logger.error(f"LLM 调用失败 ({provider}): {e}")
         raise
@@ -246,12 +261,12 @@ async def _ollama_chat(
 ) -> str:
     """Ollama Chat API"""
     url = f"{config['base_url']}/api/chat"
-    
+
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
-    
+
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(
             url,
@@ -277,13 +292,15 @@ async def _openai_compatible_chat(
     max_tokens: int,
 ) -> str:
     """OpenAI 兼容 API Chat"""
-    client = _get_openai_compatible_client(config.get("api_key"), config.get("base_url"))
-    
+    client = _get_openai_compatible_client(
+        config.get("api_key"), config.get("base_url")
+    )
+
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
-    
+
     prompt_len = len(prompt)
     sys_len = len(system_prompt) if system_prompt else 0
     try:
@@ -333,7 +350,9 @@ async def _siliconflow_chat(
 ) -> str:
     """SiliconFlow Chat（OpenAI 兼容，但需要更详细的错误信息）"""
     api_key = config.get("api_key")
-    base_url = normalize_base_url(config.get("base_url")) or "https://api.siliconflow.cn/v1"
+    base_url = (
+        normalize_base_url(config.get("base_url")) or "https://api.siliconflow.cn/v1"
+    )
     base_url = base_url.rstrip("/")
     url = f"{base_url}/chat/completions"
 
@@ -427,22 +446,15 @@ async def _gemini_chat(
 ) -> str:
     """Gemini API Chat"""
     url = f"{config['base_url']}/models/{config['model']}:generateContent"
-    
+
     contents = []
     if system_prompt:
-        contents.append({
-            "role": "user",
-            "parts": [{"text": f"System: {system_prompt}"}]
-        })
-        contents.append({
-            "role": "model", 
-            "parts": [{"text": "Understood."}]
-        })
-    contents.append({
-        "role": "user",
-        "parts": [{"text": prompt}]
-    })
-    
+        contents.append(
+            {"role": "user", "parts": [{"text": f"System: {system_prompt}"}]}
+        )
+        contents.append({"role": "model", "parts": [{"text": "Understood."}]})
+    contents.append({"role": "user", "parts": [{"text": prompt}]})
+
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(
             url,
@@ -463,16 +475,25 @@ async def _gemini_chat(
 def get_llm_client() -> AsyncOpenAI | None:
     """
     获取 OpenAI 兼容的 LLM 客户端
-    
+
     注意：仅适用于 OpenAI 兼容的提供商
     对于 Ollama/Gemini 等，请使用 chat_completion 函数
     """
     settings = get_settings()
     config = settings.get_llm_config()
-    
-    if config["provider"] in ("openai", "qwen", "kimi", "deepseek", "zhipu", "siliconflow"):
-        return _get_openai_compatible_client(config.get("api_key"), config.get("base_url"))
-    
+
+    if config["provider"] in (
+        "openai",
+        "qwen",
+        "kimi",
+        "deepseek",
+        "zhipu",
+        "siliconflow",
+    ):
+        return _get_openai_compatible_client(
+            config.get("api_key"), config.get("base_url")
+        )
+
     return None
 
 
@@ -488,32 +509,34 @@ async def chat_completion_stream(
 ) -> AsyncIterator[str]:
     """
     流式调用 LLM 进行对话补全
-    
+
     Args:
         prompt: 用户输入
         system_prompt: 系统提示词
         temperature: 温度参数（0-2）
         max_tokens: 最大生成 token 数
         **kwargs: 其他参数
-    
+
     Yields:
         str: LLM 生成的文本片段
     """
     settings = get_settings()
     config = settings.get_llm_config()
     provider = config["provider"]
-    
+
     # 使用配置默认值
     if temperature is None:
         temperature = settings.llm_temperature
     if max_tokens is None:
         max_tokens = settings.llm_max_tokens
-    
+
     try:
         if provider == "ollama":
-            async for chunk in _ollama_chat_stream(prompt, system_prompt, config, temperature, max_tokens):
+            async for chunk in _ollama_chat_stream(
+                prompt, system_prompt, config, temperature, max_tokens
+            ):
                 yield chunk
-        
+
         elif provider in ("openai", "qwen", "kimi", "deepseek", "zhipu", "siliconflow"):
             if not config.get("api_key"):
                 raise ValueError(f"{provider.upper()}_API_KEY 未配置")
@@ -521,16 +544,18 @@ async def chat_completion_stream(
                 prompt, system_prompt, config, temperature, max_tokens
             ):
                 yield chunk
-        
+
         elif provider == "gemini":
             # Gemini 暂不支持流式，降级为非流式
             logger.warning("Gemini 暂不支持流式输出，将使用非流式模式")
-            result = await _gemini_chat(prompt, system_prompt, config, temperature, max_tokens)
+            result = await _gemini_chat(
+                prompt, system_prompt, config, temperature, max_tokens
+            )
             yield result
-        
+
         else:
             raise ValueError(f"未知的 LLM 提供者: {provider}")
-            
+
     except Exception as e:
         logger.error(f"LLM 流式调用失败 ({provider}): {e}")
         raise
@@ -545,12 +570,12 @@ async def _ollama_chat_stream(
 ) -> AsyncIterator[str]:
     """Ollama Chat API 流式输出"""
     url = f"{config['base_url']}/api/chat"
-    
+
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
-    
+
     async with httpx.AsyncClient(timeout=120.0) as client:
         async with client.stream(
             "POST",
@@ -581,13 +606,15 @@ async def _openai_compatible_chat_stream(
     max_tokens: int,
 ) -> AsyncIterator[str]:
     """OpenAI 兼容 API Chat 流式输出"""
-    client = _get_openai_compatible_client(config.get("api_key"), config.get("base_url"))
-    
+    client = _get_openai_compatible_client(
+        config.get("api_key"), config.get("base_url")
+    )
+
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
-    
+
     stream = await client.chat.completions.create(
         model=config["model"],
         messages=messages,
@@ -595,7 +622,7 @@ async def _openai_compatible_chat_stream(
         max_tokens=max_tokens,
         stream=True,
     )
-    
+
     async for chunk in stream:
         if chunk.choices and chunk.choices[0].delta.content:
             yield chunk.choices[0].delta.content
@@ -614,9 +641,9 @@ async def chat_completion_with_config(
 ) -> str:
     """
     使用指定配置调用 LLM 进行对话补全
-    
+
     此函数支持动态配置，配置来自 ModelConfigResolver 解析的结果。
-    
+
     Args:
         prompt: 用户输入
         provider_config: 提供商配置，包含 provider, model, api_key, base_url
@@ -624,14 +651,14 @@ async def chat_completion_with_config(
         temperature: 温度参数（0-2）
         max_tokens: 最大生成 token 数
         **kwargs: 其他参数
-    
+
     Returns:
         str: LLM 生成的回复
-    
+
     Example:
         config = await model_config_resolver.get_llm_config(session, tenant)
         provider_config = settings._get_provider_config(
-            config["llm_provider"], 
+            config["llm_provider"],
             config["llm_model"]
         )
         response = await chat_completion_with_config(
@@ -642,23 +669,27 @@ async def chat_completion_with_config(
         )
     """
     provider = provider_config.get("provider")
-    
+
     # 使用默认值
     settings = get_settings()
     if temperature is None:
         temperature = settings.llm_temperature
     if max_tokens is None:
         max_tokens = settings.llm_max_tokens
-    
+
     try:
         if provider == "ollama":
-            return await _ollama_chat(prompt, system_prompt, provider_config, temperature, max_tokens)
-        
+            return await _ollama_chat(
+                prompt, system_prompt, provider_config, temperature, max_tokens
+            )
+
         elif provider == "gemini":
             if not provider_config.get("api_key"):
                 raise ValueError("GEMINI_API_KEY 未配置")
-            return await _gemini_chat(prompt, system_prompt, provider_config, temperature, max_tokens)
-        
+            return await _gemini_chat(
+                prompt, system_prompt, provider_config, temperature, max_tokens
+            )
+
         elif provider == "siliconflow":
             if not provider_config.get("api_key"):
                 raise ValueError("SILICONFLOW_API_KEY 未配置")
@@ -672,10 +703,10 @@ async def chat_completion_with_config(
             return await _openai_compatible_chat(
                 prompt, system_prompt, provider_config, temperature, max_tokens
             )
-        
+
         else:
             raise ValueError(f"未知的 LLM 提供者: {provider}")
-            
+
     except Exception as e:
         logger.error(
             f"LLM 调用失败 ({provider}): {e}",
@@ -701,30 +732,32 @@ async def chat_completion_stream_with_config(
 ) -> AsyncIterator[str]:
     """
     使用指定配置流式调用 LLM 进行对话补全
-    
+
     Args:
         prompt: 用户输入
         provider_config: 提供商配置
         system_prompt: 系统提示词
         temperature: 温度参数
         max_tokens: 最大生成 token 数
-    
+
     Yields:
         str: LLM 生成的文本片段
     """
     provider = provider_config.get("provider")
-    
+
     settings = get_settings()
     if temperature is None:
         temperature = settings.llm_temperature
     if max_tokens is None:
         max_tokens = settings.llm_max_tokens
-    
+
     try:
         if provider == "ollama":
-            async for chunk in _ollama_chat_stream(prompt, system_prompt, provider_config, temperature, max_tokens):
+            async for chunk in _ollama_chat_stream(
+                prompt, system_prompt, provider_config, temperature, max_tokens
+            ):
                 yield chunk
-        
+
         elif provider in ("openai", "qwen", "kimi", "deepseek", "zhipu", "siliconflow"):
             if not provider_config.get("api_key"):
                 raise ValueError(f"{provider.upper()}_API_KEY 未配置")
@@ -732,15 +765,17 @@ async def chat_completion_stream_with_config(
                 prompt, system_prompt, provider_config, temperature, max_tokens
             ):
                 yield chunk
-        
+
         elif provider == "gemini":
             logger.warning("Gemini 暂不支持流式输出，将使用非流式模式")
-            result = await _gemini_chat(prompt, system_prompt, provider_config, temperature, max_tokens)
+            result = await _gemini_chat(
+                prompt, system_prompt, provider_config, temperature, max_tokens
+            )
             yield result
-        
+
         else:
             raise ValueError(f"未知的 LLM 提供者: {provider}")
-            
+
     except Exception as e:
         logger.error(f"LLM 流式调用失败 ({provider}): {e}")
         raise

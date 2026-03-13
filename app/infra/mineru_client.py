@@ -25,7 +25,14 @@ class MinerUClient:
         self,
         file_bytes: bytes,
         filename: str,
-        output_format: str = "markdown",
+        backend: str = "hybrid-auto-engine",
+        parse_method: str = "auto",
+        lang_list: list[str] = None,
+        return_md: bool = True,
+        table_enable: bool = True,
+        formula_enable: bool = True,
+        start_page_id: int = 0,
+        end_page_id: int = 99999,
     ) -> dict[str, Any]:
         """
         调用 MinerU 解析 PDF
@@ -33,7 +40,14 @@ class MinerUClient:
         Args:
             file_bytes: PDF 文件二进制
             filename: 文件名
-            output_format: 输出格式（markdown/json）
+            backend: 解析后端（hybrid-auto-engine/pipeline/vlm-auto-engine等）
+            parse_method: 解析方法（auto/txt/ocr）
+            lang_list: 语言列表，默认["ch"]
+            return_md: 是否返回markdown内容
+            table_enable: 是否启用表格解析
+            formula_enable: 是否启用公式解析
+            start_page_id: 起始页码（从0开始）
+            end_page_id: 结束页码（从0开始）
         
         Returns:
             {
@@ -48,14 +62,28 @@ class MinerUClient:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         
+        # 默认语言列表
+        if lang_list is None:
+            lang_list = ["ch"]
+        
         async with httpx.AsyncClient(timeout=self.timeout, headers=headers) as client:
-            files = {"file": (filename, file_bytes, "application/pdf")}
-            data = {"output_format": output_format}
+            # 使用正确的API格式 - files数组形式
+            files = {"files": (filename, file_bytes, "application/pdf")}
+            data = {
+                "backend": backend,
+                "parse_method": parse_method,
+                "lang_list": lang_list,
+                "return_md": str(return_md).lower(),
+                "table_enable": str(table_enable).lower(),
+                "formula_enable": str(formula_enable).lower(),
+                "start_page_id": start_page_id,
+                "end_page_id": end_page_id,
+            }
             
             try:
-                # 尝试标准 MinerU API
+                # 使用正确的 MinerU API 端点
                 response = await client.post(
-                    f"{self.base_url}/api/v1/parse",
+                    f"{self.base_url}/file_parse",
                     files=files,
                     data=data,
                 )
@@ -64,16 +92,12 @@ class MinerUClient:
                 
                 logger.info(
                     f"MinerU 解析完成: {filename}, "
-                    f"页数: {result.get('page_count', 'N/A')}, "
-                    f"内容长度: {len(result.get('markdown', ''))}"
+                    f"后端: {backend}, "
+                    f"结果键: {list(result.keys())}"
                 )
-                return self._normalize_result(result)
+                return self._normalize_result(result, filename)
                 
             except httpx.HTTPStatusError as e:
-                # 尝试备用 API 路径
-                if e.response.status_code == 404:
-                    return await self._try_alternative_api(client, files, data, filename)
-                
                 logger.error(f"MinerU 服务返回错误: {e.response.status_code} - {e.response.text[:200]}")
                 raise ValueError(f"MinerU 解析失败: HTTP {e.response.status_code}")
             
@@ -116,7 +140,7 @@ class MinerUClient:
         
         raise ValueError("MinerU API 不可用，已尝试所有路径")
     
-    def _normalize_result(self, result: dict) -> dict[str, Any]:
+    def _normalize_result(self, result: dict, filename: str = "") -> dict[str, Any]:
         """规范化 MinerU 返回结果"""
         normalized = {
             "markdown": "",
@@ -125,38 +149,88 @@ class MinerUClient:
             "page_count": 0,
         }
         
-        # 处理不同版本 MinerU 的返回格式
-        if "markdown" in result:
-            normalized["markdown"] = result["markdown"]
-        elif "content" in result:
-            normalized["markdown"] = result["content"]
-        elif "text" in result:
-            normalized["markdown"] = result["text"]
-        
-        if "blocks" in result:
-            normalized["blocks"] = result["blocks"]
-        elif "elements" in result:
-            # 转换 elements 格式为 blocks
-            normalized["blocks"] = [
-                {
-                    "type": elem.get("type", "text"),
-                    "content": elem.get("text", elem.get("content", "")),
-                    "page": elem.get("page", elem.get("page_number")),
-                    "bbox": elem.get("bbox", elem.get("bounding_box")),
-                    "table_data": elem.get("table_data"),
-                }
-                for elem in result["elements"]
-            ]
-        
-        if "tables" in result:
-            normalized["tables"] = result["tables"]
-        
-        if "page_count" in result:
-            normalized["page_count"] = result["page_count"]
-        elif "pages" in result:
-            normalized["page_count"] = len(result["pages"])
-        elif "num_pages" in result:
-            normalized["page_count"] = result["num_pages"]
+        # 处理新的 MinerU API 返回格式
+        # 格式: {"backend": "...", "version": "...", "results": {"filename": {...}}}
+        if "results" in result and isinstance(result["results"], dict):
+            # 查找文件名对应的解析结果
+            file_key = None
+            for key in result["results"]:
+                if filename in key or key in filename:
+                    file_key = key
+                    break
+            
+            if file_key and result["results"][file_key]:
+                file_result = result["results"][file_key]
+                
+                # 提取markdown内容
+                if "md_content" in file_result:
+                    normalized["markdown"] = file_result["md_content"]
+                elif "markdown" in file_result:
+                    normalized["markdown"] = file_result["markdown"]
+                elif "content" in file_result:
+                    normalized["markdown"] = file_result["content"]
+                elif "text" in file_result:
+                    normalized["markdown"] = file_result["text"]
+                
+                # 提取blocks
+                if "blocks" in file_result:
+                    normalized["blocks"] = file_result["blocks"]
+                elif "elements" in file_result:
+                    normalized["blocks"] = [
+                        {
+                            "type": elem.get("type", "text"),
+                            "content": elem.get("text", elem.get("content", "")),
+                            "page": elem.get("page", elem.get("page_number")),
+                            "bbox": elem.get("bbox", elem.get("bounding_box")),
+                            "table_data": elem.get("table_data"),
+                        }
+                        for elem in file_result["elements"]
+                    ]
+                
+                # 提取tables
+                if "tables" in file_result:
+                    normalized["tables"] = file_result["tables"]
+                
+                # 提取page_count
+                if "page_count" in file_result:
+                    normalized["page_count"] = file_result["page_count"]
+                elif "pages" in file_result:
+                    normalized["page_count"] = len(file_result["pages"])
+                elif "num_pages" in file_result:
+                    normalized["page_count"] = file_result["num_pages"]
+                    
+        else:
+            # 兼容旧的返回格式
+            if "markdown" in result:
+                normalized["markdown"] = result["markdown"]
+            elif "content" in result:
+                normalized["markdown"] = result["content"]
+            elif "text" in result:
+                normalized["markdown"] = result["text"]
+            
+            if "blocks" in result:
+                normalized["blocks"] = result["blocks"]
+            elif "elements" in result:
+                normalized["blocks"] = [
+                    {
+                        "type": elem.get("type", "text"),
+                        "content": elem.get("text", elem.get("content", "")),
+                        "page": elem.get("page", elem.get("page_number")),
+                        "bbox": elem.get("bbox", elem.get("bounding_box")),
+                        "table_data": elem.get("table_data"),
+                    }
+                    for elem in result["elements"]
+                ]
+            
+            if "tables" in result:
+                normalized["tables"] = result["tables"]
+            
+            if "page_count" in result:
+                normalized["page_count"] = result["page_count"]
+            elif "pages" in result:
+                normalized["page_count"] = len(result["pages"])
+            elif "num_pages" in result:
+                normalized["page_count"] = result["num_pages"]
         
         return normalized
     
