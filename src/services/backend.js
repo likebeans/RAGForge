@@ -333,6 +333,48 @@ class BackendClient {
     }
     return response.json()
   }
+
+  // 保存项目并入库到向量库
+  async saveAndIngest(kbId, extractedFields, file) {
+    const token = authService.getToken()
+    const formData = new FormData()
+    formData.append('kb_id', kbId || '71dd8415-8a4b-4543-b6f0-8f11e3b88176')
+    formData.append('extracted_fields', JSON.stringify(extractedFields))
+    formData.append('file', file)
+    
+    const response = await fetch(`${this.baseUrl}/api/ragforge/extraction-schemas/save-and-ingest`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: formData
+    })
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }))
+      throw new Error(error.detail || `HTTP ${response.status}`)
+    }
+    
+    return response.json()
+  }
+
+  // 使用 Qwen-PLUS 提取 PDF 字段（无需模板）
+  async extractFromPdfsWithQwen(file) {
+    const token = authService.getToken()
+    const formData = new FormData()
+    formData.append('file', file)
+    
+    const response = await fetch(`${this.baseUrl}/api/ragforge/extraction-schemas/extract/qwen-plus`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: formData
+    })
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }))
+      throw new Error(error.detail || `HTTP ${response.status}`)
+    }
+    
+    return response.json()
+  }
 }
 
 export const backendClient = new BackendClient()

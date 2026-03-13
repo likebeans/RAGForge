@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Upload, FileSpreadsheet, FilePlus, Trash2, FileText, Download, Loader2, Check, AlertCircle } from 'lucide-react'
+import { X, Upload, FileSpreadsheet, FilePlus, Trash2, FileText, Download, Loader2, Check, AlertCircle, Save, Database } from 'lucide-react'
 import backendClient from '../../../services/backend'
 
 export default function PdfExtractModal({ show, onClose }) {
-  const [step, setStep] = useState(1) // 1: 选择模板, 2: 上传PDF, 3: 提取结果
+  const [step, setStep] = useState(1) // 1: 选择模板, 2: 上传PDF, 3: 提取结果, 4: 入库结果
   const [schemas, setSchemas] = useState([])
   const [selectedSchema, setSelectedSchema] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -21,6 +21,10 @@ export default function PdfExtractModal({ show, onClose }) {
   // 提取结果
   const [extractResult, setExtractResult] = useState(null)
   const [extracting, setExtracting] = useState(false)
+  
+  // 入库状态
+  const [saving, setSaving] = useState(false)
+  const [saveResult, setSaveResult] = useState(null)
 
   useEffect(() => {
     if (show) {
@@ -29,9 +33,49 @@ export default function PdfExtractModal({ show, onClose }) {
       setSelectedSchema(null)
       setPdfFiles([])
       setExtractResult(null)
+      setSaveResult(null)
       setError('')
     }
   }, [show])
+
+  // 使用 qwen-plus 提取 PDF（不需要模板）
+  const handleExtractWithQwen = async () => {
+    if (pdfFiles.length === 0) return
+    
+    setExtracting(true)
+    setError('')
+    try {
+      // 使用 qwen-plus 接口提取
+      const result = await backendClient.extractFromPdfsWithQwen(pdfFiles[0])
+      setExtractResult(result)
+      setStep(3)
+    } catch (err) {
+      setError('提取失败: ' + err.message)
+    } finally {
+      setExtracting(false)
+    }
+  }
+
+  // 确认入库
+  const handleSaveAndIngest = async () => {
+    if (!extractResult || !pdfFiles[0]) return
+    
+    setSaving(true)
+    setError('')
+    try {
+      const result = await backendClient.saveAndIngest(
+        '71dd8415-8a4b-4543-b6f0-8f11e3b88176',
+        extractResult.extracted_fields,
+        pdfFiles[0]
+      )
+      setSaveResult(result)
+      setStep(4)
+    } catch (err) {
+      setError('入库失败: ' + err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const loadSchemas = async () => {
     setLoading(true)
@@ -186,6 +230,35 @@ export default function PdfExtractModal({ show, onClose }) {
           {/* Step 1: 选择模板 */}
           {step === 1 && (
             <div className="space-y-4">
+              {/* 默认模板选项 */}
+              <div 
+                onClick={() => { setSelectedSchema(null); setStep(2) }}
+                className={`p-4 border-2 rounded-xl cursor-pointer transition-all ${
+                  selectedSchema === null
+                    ? 'border-violet-500 bg-violet-50'
+                    : 'border-gray-200 hover:border-violet-300 hover:bg-gray-50'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                    selectedSchema === null ? 'bg-violet-500 text-white' : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    <FileText className="w-5 h-5" />
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-medium text-gray-900">默认模板 (Qwen-PLUS)</h4>
+                    <p className="text-sm text-gray-500">使用系统默认的30个字段模板，无需创建模板</p>
+                  </div>
+                  {selectedSchema === null && <Check className="w-5 h-5 text-violet-600" />}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 text-gray-400">
+                <div className="flex-1 h-px bg-gray-200"></div>
+                <span className="text-sm">或选择已有模板</span>
+                <div className="flex-1 h-px bg-gray-200"></div>
+              </div>
+
               <div className="flex items-center justify-between">
                 <h3 className="font-medium text-gray-900">选择提取模板</h3>
                 <button
@@ -306,7 +379,9 @@ export default function PdfExtractModal({ show, onClose }) {
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-medium text-gray-900">上传 PDF 文件</h3>
-                  <p className="text-sm text-gray-500">已选模板: {selectedSchema?.name}</p>
+                  <p className="text-sm text-gray-500">
+                    {selectedSchema ? `已选模板: ${selectedSchema.name}` : '使用默认30字段模板'}
+                  </p>
                 </div>
               </div>
 
@@ -363,16 +438,26 @@ export default function PdfExtractModal({ show, onClose }) {
                 <div>
                   <h3 className="font-medium text-gray-900">提取完成</h3>
                   <p className="text-sm text-gray-500">
-                    成功: {extractResult.success || 0} / 失败: {extractResult.failed || 0}
+                    共提取 {extractResult.extracted_fields?.length || 0} 个项目
+                  </p>
+                </div>
+              </div>
+
+              {/* 确认入库按钮 */}
+              <div className="flex gap-3 p-4 bg-blue-50 border border-blue-200 rounded-xl">
+                <div className="flex-1">
+                  <h4 className="font-medium text-blue-900">确认入库</h4>
+                  <p className="text-sm text-blue-700">
+                    将提取的项目保存到数据库并入库到向量库
                   </p>
                 </div>
                 <button
-                  onClick={downloadExcel}
-                  disabled={extracting}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
+                  onClick={handleSaveAndIngest}
+                  disabled={saving}
+                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2 self-center"
                 >
-                  {extracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                  下载 Excel
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+                  确认入库
                 </button>
               </div>
 
@@ -382,26 +467,63 @@ export default function PdfExtractModal({ show, onClose }) {
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 sticky top-0">
                       <tr>
-                        <th className="px-4 py-3 text-left font-medium text-gray-600">文件名</th>
-                        {selectedSchema?.fields?.map((f, i) => (
-                          <th key={i} className="px-4 py-3 text-left font-medium text-gray-600">{f.name}</th>
-                        ))}
+                        <th className="px-4 py-3 text-left font-medium text-gray-600">#</th>
+                        <th className="px-4 py-3 text-left font-medium text-gray-600">项目</th>
+                        <th className="px-4 py-3 text-left font-medium text-gray-600">靶点</th>
+                        <th className="px-4 py-3 text-left font-medium text-gray-600">适应症</th>
+                        <th className="px-4 py-3 text-left font-medium text-gray-600">研究阶段</th>
+                        <th className="px-4 py-3 text-left font-medium text-gray-600">研发机构</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {extractResult.results?.map((item, idx) => (
+                      {extractResult.extracted_fields?.map((item, idx) => (
                         <tr key={idx} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 text-gray-900 font-medium">{item.filename}</td>
-                          {selectedSchema?.fields?.map((f, i) => (
-                            <td key={i} className="px-4 py-3 text-gray-600">
-                              {item.fields?.[f.name] ?? '-'}
-                            </td>
-                          ))}
+                          <td className="px-4 py-3 text-gray-500">{idx + 1}</td>
+                          <td className="px-4 py-3 text-gray-900 font-medium">{item['项目'] || '-'}</td>
+                          <td className="px-4 py-3 text-gray-600">{item['靶点'] || '-'}</td>
+                          <td className="px-4 py-3 text-gray-600">{item['适应症'] || '-'}</td>
+                          <td className="px-4 py-3 text-gray-600">{item['研究阶段'] || '-'}</td>
+                          <td className="px-4 py-3 text-gray-600">{item['研发机构'] || '-'}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Step 4: 入库结果 */}
+          {step === 4 && saveResult && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-medium text-gray-900">入库完成</h3>
+                  <p className="text-sm text-gray-500">
+                    项目已保存到数据库，向量库入库成功
+                  </p>
+                </div>
+                <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
+                  <Check className="w-6 h-6 text-green-600" />
+                </div>
+              </div>
+
+              {/* 入库结果详情 */}
+              <div className="p-4 bg-green-50 border border-green-200 rounded-xl space-y-3">
+                <h4 className="font-medium text-green-900">保存结果</h4>
+                {saveResult.saved_projects?.map((p, idx) => (
+                  <div key={idx} className="flex items-center gap-2 text-sm">
+                    <span className="text-green-700">{p.project_name}</span>
+                    <span className="text-green-500">- {p.status === 'created' ? '新建' : '更新'}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
+                <h4 className="font-medium text-blue-900">向量库入库</h4>
+                <p className="text-sm text-blue-700">
+                  Document ID: <span className="font-mono">{saveResult.ragforge_document_id}</span>
+                </p>
               </div>
             </div>
           )}
@@ -416,11 +538,11 @@ export default function PdfExtractModal({ show, onClose }) {
             {step === 1 ? '取消' : '上一步'}
           </button>
           
+          {/* Step 1: 下一步（选择默认模板或有模板时可用） */}
           {step === 1 && (
             <button
               onClick={() => setStep(2)}
-              disabled={!selectedSchema}
-              className="px-6 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-6 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700"
             >
               下一步
             </button>
@@ -428,12 +550,12 @@ export default function PdfExtractModal({ show, onClose }) {
           
           {step === 2 && (
             <button
-              onClick={() => handleExtract('json')}
+              onClick={() => selectedSchema ? handleExtract('json') : handleExtractWithQwen()}
               disabled={pdfFiles.length === 0 || extracting}
               className="px-6 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {extracting && <Loader2 className="w-4 h-4 animate-spin" />}
-              开始提取
+              {selectedSchema ? '开始提取' : '使用 Qwen-PLUS 提取'}
             </button>
           )}
           
