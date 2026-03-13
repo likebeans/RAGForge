@@ -295,20 +295,6 @@ export default function DataManagement() {
         onDelete={handleDelete}
       />
 
-      {/* 简单数据合计 */}
-{/* [INTERNAL_ACTION: Timestamp reference via System Time]
-    {{Echo:
-    Action: Modified; Timestamp: 2026-03-12 11:21:44 +08:00; Reason: Removed large statistic cards and replaced with a simple text total per user request;
-    }}
-    {{START MODIFICATIONS}} */}
-      <div className="mt-4 text-sm text-gray-500 flex items-center justify-center gap-6">
-        <span>合计: 共 <span className="font-medium text-gray-900">{total}</span> 条项目数据</span>
-        <span className="text-gray-300">|</span>
-        <span>包含 <span className="font-medium text-gray-900">{stats.drugTypeCount}</span> 种药物类型</span>
-        <span className="text-gray-300">|</span>
-        <span>涉及 <span className="font-medium text-gray-900">{stats.stageCount}</span> 种研究阶段</span>
-      </div>
-{/* {{END MODIFICATIONS}} */}
 
       {/* Detail/Edit Modal */}
       {modal.show && (
