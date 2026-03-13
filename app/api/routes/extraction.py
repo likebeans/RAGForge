@@ -7,15 +7,21 @@ from io import BytesIO
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from app.pipeline.parsers.pdf_parser import DEFAULT_EXTRACTION_FIELDS
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_tenant
 from app.models import Tenant, ExtractionSchema, KnowledgeBase, Document
 from app.db.session import SessionLocal
+from app.services.model_config import model_config_resolver
+from app.services.qwen_doc_extraction import (
+    DEFAULT_PARSE_MODE,
+    DEFAULT_QWEN_DOC_MODEL,
+    QwenDocExtractionError,
+    extract_fields_from_pdf,
+)
 from app.schemas.extraction_schema import (
     ExtractionSchemaResponse,
     ExtractionSchemaListResponse,
@@ -566,6 +572,54 @@ async def _background_extraction_ingest(
 # =============================================================================
 
 
+def _qwen_doc_error_response(
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+    model: str = DEFAULT_QWEN_DOC_MODEL,
+    file_id: str | None = None,
+) -> JSONResponse:
+    """构建 Qwen Doc 抽取接口的标准错误响应。"""
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": {
+                "code": code,
+                "message": message,
+                "model": model,
+                "file_id": file_id,
+                "parse_mode": DEFAULT_PARSE_MODE,
+            }
+        },
+    )
+
+
+async def _resolve_qwen_doc_provider_config(
+    db: AsyncSession,
+    tenant: Tenant,
+) -> dict:
+    """解析当前租户的 Qwen Doc 调用配置。"""
+    llm_merged = await model_config_resolver.get_llm_config(
+        session=db,
+        tenant=tenant,
+        request_override={
+            "llm_provider": "qwen",
+            "llm_model": DEFAULT_QWEN_DOC_MODEL,
+        },
+    )
+    provider_config = model_config_resolver.build_provider_config(
+        config=llm_merged,
+        config_type="llm",
+        tenant=tenant,
+    )
+
+    if not provider_config.get("api_key"):
+        raise ValueError("未配置 Qwen API Key")
+
+    return provider_config
+
+
 @router.post("/extract/qwen-plus")
 async def extract_with_qwen_plus(
     file: UploadFile = File(..., description="PDF 文件"),
@@ -573,129 +627,69 @@ async def extract_with_qwen_plus(
     tenant: Tenant = Depends(get_tenant),
 ):
     """
-    使用 Qwen3.5-PLUS 模型直接提取 PDF 字段
+    使用 Qwen Doc 模型直接提取 PDF 字段
 
     使用默认的30字段模板，无需创建提取模板。
-    使用阿里云 DashScope 的 qwen3.5-vl-plus 视觉模型（将PDF转为图片）。
+    直接上传 PDF 到阿里云 DashScope，再使用 qwen-doc-turbo 提取结构化字段。
 
     返回提取的结构化 JSON 数据。
     """
-    from app.config import get_settings
-    import base64
-
     filename = file.filename or "unknown.pdf"
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext != "pdf":
-        raise HTTPException(status_code=400, detail="仅支持 PDF 文件")
+        return _qwen_doc_error_response(
+            status_code=400,
+            code="INVALID_FILE_TYPE",
+            message="仅支持 PDF 文件",
+        )
 
     file_bytes = await file.read()
     if not file_bytes:
-        raise HTTPException(status_code=400, detail="文件内容为空")
-
-    settings = get_settings()
-    qwen_api_key = settings.qwen_api_key
-    qwen_base_url = (
-        settings.qwen_api_base or "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    )
-
-    if not qwen_api_key:
-        raise HTTPException(status_code=500, detail="未配置 Qwen API Key")
-
-    fields = DEFAULT_EXTRACTION_FIELDS
-    field_list = "\n".join([f"- {f['name']}" for f in fields])
-
-    prompt = f"""请从以下PDF文档的页面图片中提取所有项目的完整信息。
-
-## 需要提取的字段（每个项目都需要提取以下所有字段）
-{field_list}
-
-## 重要说明
-1. 一个PDF文档可能包含多个项目（如ND-003、ND-006、XY-001等），请提取**所有项目**
-2. "项目"字段是项目编号/名称，如ND-003、ND-006等
-3. "研发机构"是指项目的发起公司/研究机构
-4. 如果某个字段在某个项目中未提及，填写"未提及"
-5. 必须以JSON数组格式返回，每个元素是一个项目的完整信息
-
-## 输出要求
-1. 返回JSON数组格式，每个元素包含一个项目的所有字段
-2. 例如: [{{"项目": "ND-003", "靶点": "...", "研发机构": "...", ...}}, {{"项目": "ND-006", ...}}]
-3. 确保提取所有项目，不要遗漏
-4. 每个项目的30个字段都必须填写
-
-请直接返回JSON数组，不要包含任何其他文字："""
-
-    try:
-        import fitz
-        import io
-
-        doc = fitz.open(stream=file_bytes, filetype="pdf")
-        page_count = len(doc)
-
-        images_content = []
-        for page_num in range(page_count):
-            page = doc.load_page(page_num)
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-            img_bytes = pix.tobytes("png")
-            img_b64 = base64.b64encode(img_bytes).decode("utf-8")
-            images_content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{img_b64}"},
-                }
-            )
-        doc.close()
-
-        if not images_content:
-            raise HTTPException(status_code=400, detail="PDF 页面提取失败")
-
-    except Exception as e:
-        logger.error(f"PDF 转图片失败: {e}")
-        raise HTTPException(status_code=500, detail=f"PDF 处理失败: {str(e)}")
-
-    try:
-        from openai import AsyncOpenAI
-
-        client = AsyncOpenAI(api_key=qwen_api_key, base_url=qwen_base_url)
-
-        messages = [
-            {
-                "role": "user",
-                "content": [{"type": "text", "text": prompt}] + images_content,
-            }
-        ]
-
-        response = await client.chat.completions.create(
-            model="qwen3.5-vl-plus",
-            messages=messages,
-            temperature=0.1,
-            max_tokens=8192,
+        return _qwen_doc_error_response(
+            status_code=400,
+            code="EMPTY_FILE",
+            message="文件内容为空",
         )
 
-        content_response = response.choices[0].message.content
-    except Exception as e:
-        logger.error(f"Qwen3.5-PLUS 调用失败: {e}")
-        raise HTTPException(status_code=500, detail=f"LLM 调用失败: {str(e)}")
+    try:
+        provider_config = await _resolve_qwen_doc_provider_config(db=db, tenant=tenant)
+    except ValueError as exc:
+        return _qwen_doc_error_response(
+            status_code=500,
+            code="QWEN_CONFIG_MISSING",
+            message=str(exc),
+        )
+    except Exception as exc:
+        logger.error("加载 Qwen Doc 配置失败: %s", exc)
+        return _qwen_doc_error_response(
+            status_code=500,
+            code="INTERNAL_ERROR",
+            message="加载 Qwen 配置失败",
+        )
 
-    import json
-
-    json_str = content_response.strip()
-
-    if "```json" in json_str:
-        json_str = json_str.split("```json")[1].split("```")[0]
-    elif "```" in json_str:
-        json_str = json_str.split("```")[1].split("```")[0]
+    model = provider_config.get("model") or DEFAULT_QWEN_DOC_MODEL
 
     try:
-        extracted_data = json.loads(json_str.strip())
-    except json.JSONDecodeError as e:
-        logger.warning(f"JSON 解析失败: {e}")
-        extracted_data = {
-            "_raw_response": content_response[:2000],
-            "_parse_error": str(e),
-        }
-
-    return {
-        "filename": filename,
-        "page_count": page_count,
-        "extracted_fields": extracted_data,
-    }
+        return await extract_fields_from_pdf(
+            file_bytes=file_bytes,
+            filename=filename,
+            api_key=provider_config["api_key"],
+            base_url=provider_config.get("base_url", ""),
+            model=model,
+        )
+    except QwenDocExtractionError as exc:
+        return _qwen_doc_error_response(
+            status_code=exc.status_code,
+            code=exc.code,
+            message=exc.message,
+            model=model,
+            file_id=exc.file_id,
+        )
+    except Exception as exc:
+        logger.error("Qwen Doc 抽取失败: %s", exc)
+        return _qwen_doc_error_response(
+            status_code=500,
+            code="INTERNAL_ERROR",
+            message="PDF 字段提取失败",
+            model=model,
+        )
