@@ -115,15 +115,11 @@ export default function ProjectTable({
                     {(() => {
                       const items = formatIndication(project.indication)
                       if (!items || items.length === 0) return <span className="text-sm text-gray-400">-</span>
-                      return items.slice(0, 3).map((item, i) => (
+                      return items.map((item, i) => (
                         <span key={i} className="inline-block px-1.5 py-0.5 bg-blue-50 text-blue-700 text-xs rounded">
                           {item}
                         </span>
-                      )).concat(
-                        items.length > 3
-                          ? [<span key="more" className="text-xs text-gray-400">+{items.length - 3}</span>]
-                          : []
-                      )
+                      ))
                     })()}
                   </div>
                 </td>
